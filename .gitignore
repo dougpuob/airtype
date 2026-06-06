@@ -1,0 +1,6 @@
+backend/records/
+__pycache__/
+*.py[cod]
+.venv/
+.vscode/
+.claude/
