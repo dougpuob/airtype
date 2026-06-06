@@ -1,0 +1,16 @@
+[project]
+name = "airtype-tray"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6>=6.6",
+    "pynput>=1.7",
+]
+entry-points = { "airtype-tray" = "main:main" }
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main", "tray_icon", "floating_dialog", "key_listener"]

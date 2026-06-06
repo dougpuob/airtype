@@ -1,0 +1,731 @@
+"""
+whisper.cpp integration for transcript generation.
+"""
+from __future__ import annotations
+
+import json
+import os
+import shlex
+import shutil
+import socket
+import subprocess
+import tempfile
+import threading
+import time
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
+import wave
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+
+from opencc import OpenCC
+
+
+DEFAULT_WHISPER_CPP_ROOT = Path(
+    os.getenv(
+        "WHISPER_CPP_ROOT",
+        "/Users/dougpuob/workdata/dougpuob/workspace/whisper.cpp/whisper.cpp.git",
+    )
+)
+
+LANGUAGE_ALIASES = {
+    "zh-tw": "zh",
+    "zh-cn": "zh",
+}
+
+OPENCC_CONFIGS = {
+    "zh-tw": "s2twp",
+    "zh-cn": "t2s",
+}
+
+
+class WhisperCppNotConfigured(RuntimeError):
+    """Raised when whisper.cpp is not available on this machine."""
+
+
+class WhisperCppTranscriber:
+    """Run ffmpeg + whisper.cpp against audio or video sources."""
+
+    def __init__(self) -> None:
+        self.default_model = os.getenv("WHISPER_CPP_MODEL") or self._default_model_path()
+        self._server_lock = threading.Lock()
+        self._server_process: Optional[subprocess.Popen] = None
+        self._server_endpoint: Optional[str] = None
+        self._server_model: Optional[str] = None
+        self._server_args: list[str] = []
+        self._opencc: Dict[str, OpenCC] = {}
+
+    @property
+    def binary(self) -> Optional[str]:
+        configured = os.getenv("WHISPER_CPP_BIN")
+        if configured:
+            return configured
+
+        for candidate in ("whisper-cli", "whisper-cpp", "main"):
+            path = shutil.which(candidate)
+            if path:
+                return path
+
+        for candidate in (
+            DEFAULT_WHISPER_CPP_ROOT / "build/bin/whisper-cli",
+            DEFAULT_WHISPER_CPP_ROOT / "build--coreml=1/bin/whisper-cli",
+            DEFAULT_WHISPER_CPP_ROOT / "build--coreml=0/bin/whisper-cli",
+            DEFAULT_WHISPER_CPP_ROOT / "build~/bin/whisper-cli",
+        ):
+            if candidate.exists():
+                return str(candidate)
+        return None
+
+    @property
+    def server_binary(self) -> Optional[str]:
+        configured = os.getenv("WHISPER_CPP_SERVER_BIN")
+        if configured:
+            return configured
+
+        path = shutil.which("whisper-server")
+        if path:
+            return path
+
+        for candidate in (
+            DEFAULT_WHISPER_CPP_ROOT / "build/bin/whisper-server",
+            DEFAULT_WHISPER_CPP_ROOT / "build--coreml=1/bin/whisper-server",
+            DEFAULT_WHISPER_CPP_ROOT / "build--coreml=0/bin/whisper-server",
+            DEFAULT_WHISPER_CPP_ROOT / "build~/bin/whisper-server",
+        ):
+            if candidate.exists():
+                return str(candidate)
+        return None
+
+    def _default_model_path(self) -> str:
+        for candidate in (
+            DEFAULT_WHISPER_CPP_ROOT / "models/ggml-large-v3-turbo.bin",
+            DEFAULT_WHISPER_CPP_ROOT / "models/ggml-base.bin",
+        ):
+            if candidate.exists():
+                return str(candidate)
+        return "models/ggml-base.bin"
+
+    def transcribe(
+        self,
+        source_path: str,
+        model_path: Optional[str] = None,
+        server_endpoint: Optional[str] = None,
+        server_args: Optional[str] = None,
+        language: Optional[str] = None,
+        temperature: float = 0.0,
+        beam_size: int = 5,
+        response_format: Optional[str] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+        cancel_event: Optional[threading.Event] = None,
+        process_callback: Optional[Callable[[subprocess.Popen], None]] = None,
+        segment_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
+        total_started_at = time.monotonic()
+        self._raise_if_cancelled(cancel_event)
+        self._progress(progress_callback, 5, "Preparing whisper.cpp server")
+
+        selected_model = model_path or self.default_model
+        output_language = language
+        whisper_language = self._whisper_language(language)
+        use_local_server = not (server_endpoint or "").strip()
+        if use_local_server and not Path(selected_model).exists():
+            raise WhisperCppNotConfigured(
+                f"whisper.cpp model not found: {selected_model}. Set WHISPER_CPP_MODEL to a ggml model file."
+            )
+
+        with tempfile.TemporaryDirectory(prefix="airtype-transcribe-") as work_dir:
+            wav_path = os.path.join(work_dir, "input.wav")
+            output_prefix = os.path.join(work_dir, "transcript")
+            self._progress(progress_callback, 15, "Extracting audio with ffmpeg")
+            convert_started_at = time.monotonic()
+            conversion_mode = self._convert_to_wav(source_path, wav_path, cancel_event, process_callback)
+            convert_ms = self._elapsed_ms(convert_started_at)
+            self._raise_if_cancelled(cancel_event)
+            endpoint = (server_endpoint or "").strip()
+            server_ready_started_at = time.monotonic()
+            if not endpoint:
+                endpoint = self._ensure_local_server(selected_model, server_args, progress_callback)
+            server_ready_ms = self._elapsed_ms(server_ready_started_at)
+            self._progress(progress_callback, 35, "Sending audio to whisper.cpp server")
+            result = self._transcribe_with_server(
+                endpoint=endpoint,
+                model_path=selected_model,
+                wav_path=wav_path,
+                language=whisper_language,
+                output_language=output_language,
+                temperature=temperature,
+                beam_size=beam_size,
+                response_format=response_format,
+                progress_callback=progress_callback,
+                cancel_event=cancel_event,
+                segment_callback=segment_callback,
+            )
+            self._raise_if_cancelled(cancel_event)
+            self._progress(progress_callback, 92, "Reading transcript")
+            timing = result.setdefault("debug", {}).setdefault("timing_ms", {})
+            timing.update(
+                {
+                    "convert_wav": convert_ms,
+                    "server_ready": server_ready_ms,
+                    "total_backend": self._elapsed_ms(total_started_at),
+                }
+            )
+            result["debug"]["conversion_mode"] = conversion_mode
+            return result
+
+    def _convert_to_wav(
+        self,
+        source_path: str,
+        wav_path: str,
+        cancel_event: Optional[threading.Event],
+        process_callback: Optional[Callable[[subprocess.Popen], None]],
+    ) -> str:
+        if self._copy_if_target_wav(source_path, wav_path):
+            return "direct_wav_copy"
+
+        command = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            source_path,
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            wav_path,
+        ]
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if process_callback:
+            process_callback(process)
+        while process.poll() is None:
+            self._raise_if_cancelled(cancel_event, process)
+            time.sleep(0.25)
+        stdout, stderr = process.communicate()
+        self._raise_if_cancelled(cancel_event)
+        if process.returncode != 0:
+            raise RuntimeError(f"ffmpeg failed: {(stderr or stdout).strip()}")
+        return "ffmpeg"
+
+    def _elapsed_ms(self, started_at: float) -> int:
+        return round((time.monotonic() - started_at) * 1000)
+
+    def _copy_if_target_wav(self, source_path: str, wav_path: str) -> bool:
+        try:
+            with wave.open(source_path, "rb") as wav_file:
+                is_target_format = (
+                    wav_file.getnchannels() == 1
+                    and wav_file.getframerate() == 16000
+                    and wav_file.getsampwidth() == 2
+                    and wav_file.getcomptype() == "NONE"
+                )
+        except (OSError, EOFError, wave.Error):
+            return False
+
+        if not is_target_format:
+            return False
+
+        shutil.copyfile(source_path, wav_path)
+        return True
+
+    def _ensure_local_server(
+        self,
+        model_path: str,
+        server_args: Optional[str],
+        progress_callback: Optional[Callable[[int, str], None]],
+    ) -> str:
+        configured_endpoint = os.getenv("WHISPER_CPP_SERVER_ENDPOINT", "").strip()
+        if configured_endpoint:
+            return configured_endpoint
+
+        parsed_server_args = self._server_args_from_settings(server_args)
+
+        with self._server_lock:
+            if (
+                self._server_process
+                and self._server_process.poll() is None
+                and self._server_endpoint
+                and self._server_model == model_path
+                and self._server_args == parsed_server_args
+            ):
+                return self._server_endpoint
+
+            if self._server_process and self._server_process.poll() is None:
+                self._server_process.terminate()
+                try:
+                    self._server_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self._server_process.kill()
+
+            server_bin = self.server_binary
+            if not server_bin:
+                raise WhisperCppNotConfigured(
+                    "whisper.cpp server executable not found. Set WHISPER_CPP_SERVER_BIN to whisper-server."
+                )
+
+            host = os.getenv("WHISPER_CPP_SERVER_HOST", "127.0.0.1")
+            port = int(os.getenv("WHISPER_CPP_SERVER_PORT") or self._free_port())
+            endpoint = f"http://{host}:{port}"
+            command = [
+                server_bin,
+                "-m",
+                model_path,
+                "--host",
+                host,
+                "--port",
+                str(port),
+            ]
+            command.extend(parsed_server_args)
+            self._progress(progress_callback, 20, "Starting local whisper.cpp server")
+            self._server_process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self._server_endpoint = endpoint
+            self._server_model = model_path
+            self._server_args = parsed_server_args
+            self._wait_for_server(endpoint)
+            return endpoint
+
+    def shutdown(self) -> None:
+        """Stop the managed local whisper.cpp server, if this process started one."""
+        with self._server_lock:
+            process = self._server_process
+            self._server_process = None
+            self._server_endpoint = None
+            self._server_model = None
+            self._server_args = []
+
+        if not process or process.poll() is not None:
+            return
+
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+    def _server_args_from_settings(self, server_args: Optional[str]) -> list[str]:
+        raw_args = (server_args if server_args is not None else os.getenv("WHISPER_CPP_SERVER_ARGS", "")).strip()
+        if not raw_args:
+            return []
+        try:
+            return shlex.split(raw_args)
+        except ValueError as exc:
+            raise WhisperCppNotConfigured(f"Invalid whisper-server args: {exc}") from exc
+
+    def _free_port(self) -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return int(sock.getsockname()[1])
+
+    def _wait_for_server(self, endpoint: str) -> None:
+        last_error: Optional[Exception] = None
+        for _ in range(60):
+            if self._server_process and self._server_process.poll() is not None:
+                output = ""
+                if self._server_process.stdout:
+                    output = self._server_process.stdout.read()
+                raise WhisperCppNotConfigured(f"whisper-server exited early: {output.strip()}")
+            try:
+                urllib.request.urlopen(endpoint, timeout=1).close()
+                return
+            except urllib.error.HTTPError as exc:
+                if exc.code < 500:
+                    return
+                last_error = exc
+                time.sleep(0.5)
+            except Exception as exc:
+                last_error = exc
+                time.sleep(0.5)
+        raise WhisperCppNotConfigured(f"whisper-server did not become ready: {last_error}")
+
+    def _transcribe_with_server(
+        self,
+        endpoint: str,
+        model_path: str,
+        wav_path: str,
+        language: Optional[str],
+        output_language: Optional[str],
+        temperature: float,
+        beam_size: int,
+        response_format: Optional[str],
+        progress_callback: Optional[Callable[[int, str], None]],
+        cancel_event: Optional[threading.Event],
+        segment_callback: Optional[Callable[[Dict[str, Any]], None]],
+    ) -> Dict[str, Any]:
+        self._raise_if_cancelled(cancel_event)
+        total_started_at = time.monotonic()
+        url = self._inference_url(endpoint)
+        multipart_started_at = time.monotonic()
+        fields = self._server_request_fields(url, temperature, beam_size, response_format)
+        if language:
+            fields.append(("language", language))
+
+        data, content_type = self._multipart_form_data(fields, "file", wav_path)
+        multipart_ms = self._elapsed_ms(multipart_started_at)
+        request = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": content_type},
+            method="POST",
+        )
+        self._progress(progress_callback, 45, "Transcribing with whisper.cpp server")
+        try:
+            request_started_at = time.monotonic()
+            with urllib.request.urlopen(request, timeout=60 * 60) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            whisper_http_ms = self._elapsed_ms(request_started_at)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"whisper.cpp server failed: {detail}") from exc
+
+        self._raise_if_cancelled(cancel_event)
+        parse_started_at = time.monotonic()
+        segments = self._normalize_segments(payload)
+        debug = self._server_debug(url, fields, payload, len(segments))
+        if not segments and payload.get("text"):
+            segments = self._text_segments_without_timestamps(payload.get("text", ""))
+            debug["fallback"] = "split text by line because server returned no timestamp segments"
+        else:
+            debug["fallback"] = None
+        debug["final_segment_count"] = len(segments)
+        segments = [self._convert_segment_language(segment, output_language) for segment in segments]
+        for segment in segments:
+            if segment_callback:
+                segment_callback(segment)
+        text = " ".join(segment["text"].strip() for segment in segments).strip()
+        if not text:
+            text = self._convert_text_language(payload.get("text", ""), output_language)
+        duration = segments[-1]["end"] if segments else 0
+        parse_ms = self._elapsed_ms(parse_started_at)
+        debug["timing_ms"] = {
+            "multipart": multipart_ms,
+            "whisper_http": whisper_http_ms,
+            "parse": parse_ms,
+            "transcribe_with_server": self._elapsed_ms(total_started_at),
+        }
+        return {
+            "text": text,
+            "language": output_language or payload.get("params", {}).get("language", language or "unknown"),
+            "duration": duration,
+            "segments": segments,
+            "debug": debug,
+        }
+
+    def _inference_url(self, endpoint: str) -> str:
+        endpoint = endpoint.rstrip("/")
+        if endpoint.endswith("/inference") or endpoint.endswith("/v1/audio/transcriptions"):
+            return endpoint
+        return endpoint + "/inference"
+
+    def _server_request_fields(
+        self,
+        url: str,
+        temperature: float,
+        beam_size: int,
+        response_format: Optional[str] = None,
+    ) -> list[tuple[str, str]]:
+        if url.endswith("/v1/audio/transcriptions"):
+            return [
+                ("temperature", str(temperature)),
+                ("response_format", "verbose_json"),
+                ("timestamp_granularities[]", "segment"),
+            ]
+        selected_response_format = (
+            response_format
+            or os.getenv("AIRTYPE_WHISPER_RESPONSE_FORMAT", "verbose_json").strip()
+            or "verbose_json"
+        )
+        return [
+            ("temperature", str(temperature)),
+            ("response_format", selected_response_format),
+            ("beam_size", str(beam_size)),
+        ]
+
+    def _server_debug(
+        self,
+        url: str,
+        fields: list[tuple[str, str]],
+        payload: Dict[str, Any],
+        raw_segment_count: int,
+    ) -> Dict[str, Any]:
+        return {
+            "url": url,
+            "request_fields": {name: value for name, value in fields},
+            "payload_keys": sorted(payload.keys()),
+            "has_transcription": isinstance(payload.get("transcription"), list),
+            "has_segments": isinstance(payload.get("segments"), list),
+            "raw_segment_count": raw_segment_count,
+            "text_length": len(payload.get("text", "")) if isinstance(payload.get("text"), str) else None,
+        }
+
+    def _multipart_form_data(self, fields: list[tuple[str, str]], file_field: str, file_path: str) -> tuple[bytes, str]:
+        boundary = f"----AirTypeWhisper{int(time.time() * 1000)}"
+        body = bytearray()
+        for name, value in fields:
+            body.extend(f"--{boundary}\r\n".encode("utf-8"))
+            body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
+            body.extend(str(value).encode("utf-8"))
+            body.extend(b"\r\n")
+
+        filename = os.path.basename(file_path)
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(
+            f'Content-Disposition: form-data; name="{file_field}"; filename="{filename}"\r\n'.encode("utf-8")
+        )
+        body.extend(b"Content-Type: audio/wav\r\n\r\n")
+        with open(file_path, "rb") as file:
+            body.extend(file.read())
+        body.extend(b"\r\n")
+        body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+        return bytes(body), f"multipart/form-data; boundary={boundary}"
+
+    def _run_whisper_cpp(
+        self,
+        whisper_bin: str,
+        model_path: str,
+        wav_path: str,
+        output_prefix: str,
+        language: Optional[str],
+        temperature: float,
+        beam_size: int,
+        progress_callback: Optional[Callable[[int, str], None]],
+        cancel_event: Optional[threading.Event],
+        process_callback: Optional[Callable[[subprocess.Popen], None]],
+        segment_callback: Optional[Callable[[Dict[str, Any]], None]],
+    ) -> None:
+        command = [
+            whisper_bin,
+            "-m",
+            model_path,
+            "-f",
+            wav_path,
+            "-oj",
+            "-of",
+            output_prefix,
+            "-t",
+            str(max(1, os.cpu_count() or 1)),
+            "--temperature",
+            str(temperature),
+            "--beam-size",
+            str(beam_size),
+        ]
+        if language:
+            command.extend(["-l", language])
+
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        if process_callback:
+            process_callback(process)
+        output = []
+        assert process.stdout is not None
+
+        segment_state = {"count": 0}
+
+        def read_output() -> None:
+            for line in process.stdout:
+                output.append(line)
+                parsed = self._parse_stdout_segment(line, segment_state["count"])
+                if parsed:
+                    segment_state["count"] += 1
+                    if segment_callback:
+                        segment_callback(parsed)
+                    percent = min(90, 45 + segment_state["count"] * 4)
+                    self._progress(
+                        progress_callback,
+                        percent,
+                        f"Transcribing segment {segment_state['count']}",
+                    )
+
+        reader = threading.Thread(target=read_output, daemon=True)
+        reader.start()
+
+        started_at = time.monotonic()
+        last_percent = 35
+        while process.poll() is None:
+            self._raise_if_cancelled(cancel_event, process)
+            elapsed = time.monotonic() - started_at
+            heartbeat_percent = min(88, 35 + int(elapsed * 2))
+            if heartbeat_percent > last_percent:
+                last_percent = heartbeat_percent
+                if segment_state["count"]:
+                    message = f"Transcribing segment {segment_state['count']}"
+                else:
+                    message = "Loading model and transcribing"
+                self._progress(progress_callback, heartbeat_percent, message)
+            time.sleep(1)
+
+        reader.join(timeout=1)
+        self._raise_if_cancelled(cancel_event)
+
+        return_code = process.wait()
+        if return_code != 0:
+            raise RuntimeError(f"whisper.cpp failed: {''.join(output).strip()}")
+
+    def _read_result(self, output_prefix: str) -> Dict[str, Any]:
+        json_path = f"{output_prefix}.json"
+        if not os.path.exists(json_path):
+            raise RuntimeError("whisper.cpp did not produce a JSON transcript.")
+
+        with open(json_path, "r", encoding="utf-8") as file:
+            payload = json.load(file)
+
+        segments = self._normalize_segments(payload)
+        text = " ".join(segment["text"].strip() for segment in segments).strip()
+        duration = segments[-1]["end"] if segments else 0
+
+        return {
+            "text": text,
+            "language": payload.get("params", {}).get("language", "unknown"),
+            "duration": duration,
+            "segments": segments,
+        }
+
+    def _normalize_segments(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        raw_segments = payload.get("transcription") or payload.get("segments") or []
+        normalized = []
+        for index, segment in enumerate(raw_segments):
+            offsets = segment.get("offsets", {})
+            if offsets:
+                start = self._milliseconds_to_seconds(offsets.get("from", 0))
+                end = self._milliseconds_to_seconds(offsets.get("to", 0))
+            else:
+                start = self._to_seconds(segment.get("start", 0))
+                end = self._to_seconds(segment.get("end", 0))
+            normalized.append(self._segment_payload(index, start, end, segment.get("text", "")))
+        return normalized
+
+    def _text_segments_without_timestamps(self, text: str) -> List[Dict[str, Any]]:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines and text.strip():
+            lines = [text.strip()]
+        return [
+            self._segment_payload(index, None, None, line, has_timestamps=False)
+            for index, line in enumerate(lines)
+        ]
+
+    def _whisper_language(self, language: Optional[str]) -> Optional[str]:
+        if not language:
+            return None
+        return LANGUAGE_ALIASES.get(language, language)
+
+    def _convert_segment_language(self, segment: Dict[str, Any], language: Optional[str]) -> Dict[str, Any]:
+        converted_text = self._convert_text_language(segment.get("text", ""), language)
+        if converted_text == segment.get("text"):
+            return segment
+        return {
+            **segment,
+            "text": converted_text,
+            "text_length": len(converted_text),
+        }
+
+    def _convert_text_language(self, text: str, language: Optional[str]) -> str:
+        config = OPENCC_CONFIGS.get(language or "")
+        if not config or not text:
+            return text
+        converter = self._opencc.get(config)
+        if not converter:
+            converter = OpenCC(config)
+            self._opencc[config] = converter
+        return converter.convert(text)
+
+    def _segment_payload(
+        self,
+        index: int,
+        start: Optional[float],
+        end: Optional[float],
+        text: str,
+        has_timestamps: bool = True,
+    ) -> Dict[str, Any]:
+        normalized_text = text.strip()
+        duration = max(0, (end or 0) - (start or 0)) if has_timestamps else None
+        return {
+            "id": index,
+            "start": start,
+            "end": end,
+            "duration": duration,
+            "duration_text": f"{duration:.1f}s" if duration is not None else "time unavailable",
+            "time": f"{self._format_time(start or 0)} -> {self._format_time(end or 0)}" if has_timestamps else "time unavailable",
+            "text": normalized_text,
+            "text_length": len(normalized_text),
+            "has_timestamps": has_timestamps,
+        }
+
+    def _to_seconds(self, value: Any) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return number / 1000 if number > 10000 else number
+
+    def _milliseconds_to_seconds(self, value: Any) -> float:
+        try:
+            return float(value) / 1000
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _format_time(self, seconds: float) -> str:
+        total = max(0, int(seconds))
+        hours = total // 3600
+        minutes = (total % 3600) // 60
+        secs = total % 60
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    def _parse_stdout_segment(self, line: str, index: int) -> Optional[Dict[str, Any]]:
+        match = re.match(
+            r"^\[(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s+-->\s+(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\]\s*(.*)$",
+            line.strip(),
+        )
+        if not match:
+            return None
+
+        start = self._time_match_to_seconds(match, 1)
+        end = self._time_match_to_seconds(match, 5)
+        text = match.group(9).strip()
+        return self._segment_payload(index, start, end, text)
+
+    def _time_match_to_seconds(self, match: re.Match, offset: int) -> float:
+        hours = int(match.group(offset))
+        minutes = int(match.group(offset + 1))
+        seconds = int(match.group(offset + 2))
+        millis = int(match.group(offset + 3))
+        return hours * 3600 + minutes * 60 + seconds + millis / 1000
+
+    def _progress(
+        self,
+        progress_callback: Optional[Callable[[int, str], None]],
+        percent: int,
+        message: str,
+    ) -> None:
+        if progress_callback:
+            progress_callback(percent, message)
+
+    def _raise_if_cancelled(
+        self,
+        cancel_event: Optional[threading.Event],
+        process: Optional[subprocess.Popen] = None,
+    ) -> None:
+        if cancel_event and cancel_event.is_set():
+            if process and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            raise RuntimeError("Transcription cancelled")
+
+
+transcriber = WhisperCppTranscriber()
