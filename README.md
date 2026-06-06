@@ -45,7 +45,7 @@ A cross-platform desktop speech-to-text app. Double-press **Right Ctrl** to star
 - **Clipboard restore** — original clipboard content is restored after 5 seconds
 - **Background ASR** — transcription runs in a background thread with detailed timing logs
 - **Voice activity detection** — recordings below RMS threshold are skipped
-- **URL transcription** — download and transcribe audio/video from YouTube, Instagram, TikTok, etc.
+- **URL transcription** — download and transcribe audio/video from YouTube, Bilibili, Instagram, TikTok, etc.
 - **Async job queue** — long-running transcriptions run as background jobs with progress tracking
 - **Local LLM chat** — query transcripts with ollama or llama.cpp models
 - **Web UI** — settings management, transcription records, and configuration
