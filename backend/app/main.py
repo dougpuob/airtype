@@ -760,6 +760,8 @@ def _should_use_media_downloader(url: str) -> bool:
             "instagram.com",
             "threads.net",
             "tiktok.com",
+            "bilibili.com",
+            "b23.tv",
         )
     ) or "/shorts/" in path
 
@@ -767,7 +769,7 @@ def _should_use_media_downloader(url: str) -> bool:
 def _download_media_page(url: str, destination: str) -> Dict[str, Any]:
     downloader = shutil.which("yt-dlp")
     if not downloader:
-        raise RuntimeError("yt-dlp is required to download YouTube, Instagram, Threads, or Shorts URLs.")
+        raise RuntimeError("yt-dlp is required to download YouTube, Bilibili, Instagram, Threads, TikTok, or Shorts URLs.")
 
     with tempfile.TemporaryDirectory(prefix="airtype-url-media-") as work_dir:
         output_template = os.path.join(work_dir, "source.%(ext)s")
@@ -781,8 +783,9 @@ def _download_media_page(url: str, destination: str) -> Dict[str, Any]:
             "bestaudio/best",
             "-o",
             output_template,
-            url,
         ]
+        command.extend(_media_downloader_site_args(url))
+        command.append(url)
         process = subprocess.run(command, capture_output=True, text=True, timeout=60 * 30)
         if process.returncode != 0:
             detail = (process.stderr or process.stdout).strip()
@@ -805,6 +808,23 @@ def _download_media_page(url: str, destination: str) -> Dict[str, Any]:
             **metadata,
             "url": url,
         }
+
+
+def _media_downloader_site_args(url: str) -> list[str]:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc.lower()
+    if "bilibili.com" in host or "b23.tv" in host:
+        return [
+            "--referer",
+            "https://www.bilibili.com/",
+            "--user-agent",
+            (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+        ]
+    return []
 
 
 def _title_from_url_response(url: str, headers: Any) -> str:
