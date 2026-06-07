@@ -6,16 +6,16 @@ A cross-platform desktop speech-to-text app. Double-press **Right Ctrl** to star
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                        Frontend (PySide6)                     │
+│                       Frontend (SwiftUI)                      │
 │  ┌──────────────┐  ┌───────────────┐  ┌───────────────────┐  │
-│  │  System Tray  │  │ Floating Dialog│  │ Key Listener      │  │
-│  │  (A/B/C toggles)│ (timer + waveform│  │ (double Right Ctrl)│ │
+│  │ Menu Bar App  │  │ Floating Panel │  │ Key Listener      │  │
+│  │ config menus  │  │ timer + waveform│  │ double Right Ctrl│  │
 │  └──────┬───────┘  └───────┬───────┘  └───────────────────┘  │
 │         │                  │                                   │
-│         │  on_transcription│  microphone audio                 │
+│         │  transcription   │  microphone audio                  │
 │         ▼                  ▼                                   │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  paste_text_at_cursor()  →  clipboard + keyboard paste   │  │
+│  │  PasteController  →  clipboard + keyboard paste          │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────┘
                             │
@@ -56,11 +56,7 @@ A cross-platform desktop speech-to-text app. Double-press **Right Ctrl** to star
 ```
 AirType.git/
 ├── frontend/
-│   ├── main.py              # App entry point, tray, hotkey, paste logic
-│   ├── floating_dialog.py   # Floating timer panel, mic capture, ASR client
-│   ├── tray_icon.py         # System tray icon with A/B/C toggle menu
-│   ├── key_listener.py      # Global double-Right-Ctrl listener
-│   └── pyproject.toml       # Python dependencies (PySide6, pynput)
+│   └── macos/                   # Native SwiftUI menu bar frontend
 ├── backend/
 │   ├── app/
 │   │   ├── main.py          # FastAPI server, routes, job queue, LLM
@@ -87,7 +83,7 @@ AirType.git/
 ./scripts/setup.sh
 ```
 
-The setup script prints the tools and Python packages it is about to install, asks for confirmation, installs `uv` if you approve and it is missing, creates `.venv`, installs frontend/backend dependencies, and creates `config.toml` if needed.
+The setup script prints the tools and Python packages it is about to install, asks for confirmation, installs `uv` if you approve and it is missing, creates `.venv`, installs backend dependencies, and creates `config.toml` if needed.
 
 It also offers to prepare local transcription:
 
@@ -103,13 +99,35 @@ It also offers to prepare local transcription:
 ./run.sh
 ```
 
-`run.sh` starts the tray app with `.venv/bin/python`. The frontend starts the local backend automatically when `config.toml` uses `mode = "local"`.
+`run.sh` starts the native SwiftUI menu bar app. The frontend starts the local backend automatically when `config.toml` uses `mode = "local"`.
 
 ### Manual Backend
 
 ```bash
 ./scripts/start-backend.sh
 ```
+
+### SwiftUI Frontend
+
+```bash
+cd frontend/macos
+swift build
+swift run AirTypeMac
+```
+
+### Build macOS App
+
+```bash
+./scripts/build-macos-app.sh
+open dist/AirType.app
+```
+
+Runtime user data is stored outside the app:
+
+- config: `~/.airtype/config.toml`
+- Whisper models: `~/.airtype/models`
+
+macOS will ask for Microphone permission when recording. If the global hotkey or paste action does not work, grant Accessibility permission to `AirType.app` in System Settings.
 
 ## Configuration
 
@@ -174,8 +192,8 @@ It also offers to prepare local transcription:
 Global keyboard monitoring requires Accessibility permission:
 
 1. **System Settings** → **Privacy & Security** → **Accessibility**
-2. Add your Terminal or Python app
-3. Restart the app
+2. Add and enable `AirType.app` when using the packaged macOS app
+3. Restart `AirType.app`
 
 ## Hotkey
 

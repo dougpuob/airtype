@@ -228,7 +228,7 @@ default = {
         "local_endpoint": "http://localhost:8003",
         "remote_endpoint": "",
     },
-    "microphone": {"selected_order": ""},
+    "microphone": {"selected_order": "", "mode": "on_demand", "pre_roll_seconds": 2},
     "floating-dialog": {
         "position_x_ratio": 0.5,
         "position_y_ratio": 0.62,
@@ -290,8 +290,11 @@ text = "\n".join(
         f"remote_endpoint = {toml_string(merged['backend'].get('remote_endpoint', ''))}",
         "",
         "[microphone]",
-        "# Leave empty to use the system default microphone.",
+        "# Microphone Device. Leave empty to use the system default microphone.",
         f"selected_order = {toml_string(merged['microphone'].get('selected_order', ''))}",
+        '# Microphone Mode. Options: "on_demand", "always"',
+        f"mode = {toml_string(merged['microphone'].get('mode', merged['microphone'].get('warm_mode', 'on_demand')))}",
+        f"pre_roll_seconds = {merged['microphone'].get('pre_roll_seconds', 2)}",
         "",
         "[floating-dialog]",
         "# Position is stored as the dialog center ratio across the whole desktop.",
@@ -332,8 +335,11 @@ local_endpoint = "http://localhost:8003"
 remote_endpoint = ""
 
 [microphone]
-# Leave empty to use the system default microphone.
+# Microphone Device. Leave empty to use the system default microphone.
 selected_order = ""
+# Microphone Mode. Options: "on_demand", "always"
+mode = "on_demand"
+pre_roll_seconds = 2
 
 [floating-dialog]
 # Position is stored as the dialog center ratio across the whole desktop.
@@ -357,19 +363,16 @@ echo "Planned actions:"
 echo "  1. Check for uv, and offer to install it if missing"
 echo "  2. Ensure Python 3.11 is available through uv"
 echo "  3. Create or reuse .venv"
-echo "  4. Install frontend dependencies from frontend/pyproject.toml"
-echo "     - PySide6"
-echo "     - pynput"
-echo "  5. Install backend dependencies from backend/requirements.txt"
+echo "  4. Install backend dependencies from backend/requirements.txt"
 echo "     - fastapi, uvicorn, python-multipart, pydantic"
 echo "     - openai-whisper, torch, torchaudio"
 echo "     - yt-dlp, opencc-python-reimplemented"
-echo "  6. Create config.toml if it does not exist"
-echo "  7. Offer to install whisper-cpp with Homebrew on macOS"
-echo "  8. Offer to download the default Whisper model"
+echo "  5. Create config.toml if it does not exist"
+echo "  6. Offer to install whisper-cpp with Homebrew on macOS"
+echo "  7. Offer to download the default Whisper model"
 echo "     - $DEFAULT_WHISPER_MODEL_FILE"
 echo "     - stored in $MODEL_DIR"
-echo "  9. Update backend/settings.json to use the downloaded model"
+echo "  8. Update backend/settings.json to use the downloaded model"
 echo
 if ! confirm "Continue with setup?"; then
   echo "Setup cancelled."
@@ -389,10 +392,6 @@ echo "Ensuring Python 3.11 is available..."
 echo
 echo "Creating virtual environment: .venv"
 "$UV_BIN" venv --python 3.11 "$VENV_DIR"
-
-echo
-echo "Installing frontend dependencies..."
-"$UV_BIN" pip install --python "$VENV_DIR/bin/python" -e "$ROOT_DIR/frontend"
 
 echo
 echo "Installing backend dependencies..."
