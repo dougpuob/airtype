@@ -5,7 +5,6 @@ struct AirTypeConfig {
     var backend = BackendConfig()
     var microphone = MicrophoneConfig()
     var floatingDialog = FloatingDialogConfig()
-    var whisperLocal = WhisperLocalConfig()
 }
 
 struct ChineseMode {
@@ -35,11 +34,6 @@ struct FloatingDialogConfig {
     var positionXRatio = 0.5
     var positionYRatio = 0.62
     var moveLock = true
-}
-
-struct WhisperLocalConfig {
-    var whisperBinDir = "/opt/homebrew/bin"
-    var modelPath = "~/.airtype/models/ggml-large-v3-turbo-q5_0.bin"
 }
 
 final class ConfigStore: ObservableObject {
@@ -133,33 +127,29 @@ final class ConfigStore: ObservableObject {
             let key = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
             let value = unquote(parts[1].trimmingCharacters(in: .whitespacesAndNewlines))
 
-            switch (section, key) {
-            case ("chinese-mode", "mode"):
+            switch (normalizedSection(section), key) {
+            case ("frontend.chinese-mode", "mode"):
                 parsed.chineseMode.mode = normalizeLanguage(value)
-            case ("backend", "mode"):
+            case ("frontend.backend-endpoint", "mode"):
                 parsed.backend.mode = value
-            case ("backend", "local_endpoint"):
+            case ("frontend.backend-endpoint", "local_endpoint"):
                 parsed.backend.localEndpoint = value
-            case ("backend", "remote_endpoint"):
+            case ("frontend.backend-endpoint", "remote_endpoint"):
                 parsed.backend.remoteEndpoint = value
-            case ("microphone", "selected_order"):
+            case ("frontend.microphone", "selected_order"):
                 parsed.microphone.selectedOrder = value
-            case ("microphone", "mode"):
+            case ("frontend.microphone", "mode"):
                 parsed.microphone.mode = normalizeMicrophoneMode(value)
-            case ("microphone", "warm_mode"):
+            case ("frontend.microphone", "warm_mode"):
                 parsed.microphone.mode = normalizeMicrophoneMode(value)
-            case ("microphone", "pre_roll_seconds"):
+            case ("frontend.microphone", "pre_roll_seconds"):
                 parsed.microphone.preRollSeconds = Double(value) ?? 2.0
-            case ("floating-dialog", "position_x_ratio"):
+            case ("frontend.floating-dialog", "position_x_ratio"):
                 parsed.floatingDialog.positionXRatio = Double(value) ?? 0.5
-            case ("floating-dialog", "position_y_ratio"):
+            case ("frontend.floating-dialog", "position_y_ratio"):
                 parsed.floatingDialog.positionYRatio = Double(value) ?? 0.62
-            case ("floating-dialog", "move_lock"):
+            case ("frontend.floating-dialog", "move_lock"):
                 parsed.floatingDialog.moveLock = parseBool(value, defaultValue: true)
-            case ("whisper-local", "whisper_bin_dir"):
-                parsed.whisperLocal.whisperBinDir = value
-            case ("whisper-local", "model_path"):
-                parsed.whisperLocal.modelPath = value
             default:
                 continue
             }
@@ -183,34 +173,30 @@ final class ConfigStore: ObservableObject {
     private func tomlText() -> String {
         """
         # AirType user config
+        # Backend runtime settings live under [backend.*].
 
-        [chinese-mode]
+        [frontend.chinese-mode]
         # Options: "zh-tw", "zh-cn"
         mode = "\(config.chineseMode.mode)"
 
-        [backend]
+        [frontend.backend-endpoint]
         # Options: "local", "remote"
         mode = "\(config.backend.mode)"
         local_endpoint = "\(config.backend.localEndpoint)"
         remote_endpoint = "\(config.backend.remoteEndpoint)"
 
-        [microphone]
+        [frontend.microphone]
         # Microphone Device. Leave empty to use the system default microphone.
         selected_order = "\(config.microphone.selectedOrder)"
         # Microphone Mode. Options: "on_demand", "always"
         mode = "\(config.microphone.mode)"
         pre_roll_seconds = \(format(config.microphone.preRollSeconds))
 
-        [floating-dialog]
+        [frontend.floating-dialog]
         # Position is stored as the dialog center ratio across the whole desktop.
         position_x_ratio = \(format(config.floatingDialog.positionXRatio))
         position_y_ratio = \(format(config.floatingDialog.positionYRatio))
         move_lock = \(config.floatingDialog.moveLock ? "true" : "false")
-
-        [whisper-local]
-        # Local whisper.cpp runtime and model locations.
-        whisper_bin_dir = "\(config.whisperLocal.whisperBinDir)"
-        model_path = "\(config.whisperLocal.modelPath)"
 
         """
     }
@@ -226,6 +212,25 @@ final class ConfigStore: ObservableObject {
             text.removeLast()
         }
         return text.replacingOccurrences(of: "\\\"", with: "\"")
+    }
+
+    private func normalizedSection(_ section: String) -> String {
+        switch section {
+        case "chinese-mode":
+            return "frontend.chinese-mode"
+        case "backend":
+            return "frontend.backend-endpoint"
+        case "frontend.backend":
+            return "frontend.backend-endpoint"
+        case "frontend.backend_endpoint":
+            return "frontend.backend-endpoint"
+        case "microphone":
+            return "frontend.microphone"
+        case "floating-dialog":
+            return "frontend.floating-dialog"
+        default:
+            return section
+        }
     }
 
     private func normalizeLanguage(_ value: String) -> String {
@@ -283,7 +288,7 @@ final class ConfigStore: ObservableObject {
         var current = start
         while true {
             let configPath = current.appendingPathComponent("config.toml").path
-            let backendPath = current.appendingPathComponent("backend/app/main.py").path
+            let backendPath = current.appendingPathComponent("source/webui/app/main.py").path
             if FileManager.default.fileExists(atPath: configPath),
                FileManager.default.fileExists(atPath: backendPath) {
                 return current

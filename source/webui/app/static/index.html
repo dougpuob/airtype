@@ -1411,6 +1411,9 @@
 
         const defaultSettings = {
             whisper: {
+                model_dir: "",
+                model_filename: "",
+                server_bin: "",
                 endpoint: "",
                 language: "zh-tw",
                 beam: 5,
@@ -1761,7 +1764,7 @@
                 const payload = await response.json();
                 saveSettings(payload.settings || {}, { persist: false, markWhisperClean: true });
             } catch {
-                // Keep browser-local defaults when the backend settings file is unavailable.
+                // Keep browser-local defaults when config.toml is unavailable.
             }
         }
 
@@ -1780,8 +1783,13 @@
         function normalizeSettings(settings) {
             // Handle legacy flat structure
             if (settings.whisperEndpoint || settings.llmProvider) {
+                const legacyWhisperModel = settings.whisperModel || "";
+                const legacyModelParts = splitModelPath(legacyWhisperModel);
                 settings = {
                     whisper: {
+                        model_dir: legacyModelParts.modelDir,
+                        model_filename: legacyModelParts.modelFilename,
+                        server_bin: settings.whisperServerBin || "",
                         endpoint: settings.whisperEndpoint || "",
                         language: settings.whisperLanguage || "zh-tw",
                         beam: Number(settings.whisperBeam) || 5,
@@ -1856,8 +1864,12 @@
         }
 
         function readSettingsFromForm() {
+            const existingWhisper = appSettings.whisper || {};
             return {
                 whisper: {
+                    model_dir: existingWhisper.model_dir || "",
+                    model_filename: existingWhisper.model_filename || "",
+                    server_bin: existingWhisper.server_bin || "",
                     endpoint: document.getElementById("settingWhisperEndpoint").value.trim(),
                     language: document.getElementById("settingWhisperLanguage").value,
                     beam: Number(document.getElementById("settingWhisperBeam").value) || 5,
@@ -1871,6 +1883,21 @@
                     temperature: Number(document.getElementById("settingLlmTemperature").value) || 0.4,
                     system: document.getElementById("settingLlmSystem").value
                 }
+            };
+        }
+
+        function splitModelPath(modelPath) {
+            const trimmed = String(modelPath || "").trim();
+            if (!trimmed) {
+                return { modelDir: "", modelFilename: "" };
+            }
+            const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+            if (separatorIndex < 0) {
+                return { modelDir: "", modelFilename: trimmed };
+            }
+            return {
+                modelDir: trimmed.slice(0, separatorIndex),
+                modelFilename: trimmed.slice(separatorIndex + 1)
             };
         }
 

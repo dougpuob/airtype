@@ -120,7 +120,7 @@ ensure_whisper_cpp() {
     echo "whisper-server is ready: $server_bin"
   else
     echo "whisper-cpp installed, but whisper-server was not found in PATH."
-    echo "AirType may need whisper_bin_dir configured manually in config.toml."
+    echo "AirType may need [backend.whisper-server].server_bin configured manually in config.toml."
   fi
 }
 
@@ -160,157 +160,68 @@ download_whisper_model() {
 
 write_backend_settings() {
   echo
-  echo "Updating backend/settings.json..."
-  "$VENV_DIR/bin/python" - "$ROOT_DIR/backend/settings.json" "$DEFAULT_WHISPER_MODEL_PATH" <<'PY'
-import json
+  echo "Updating config.toml backend settings..."
+  "$VENV_DIR/bin/python" - "$ROOT_DIR/config.toml" "$DEFAULT_WHISPER_MODEL_PATH" "$WHISPER_BIN_DIR" <<'PY'
+import re
 import sys
-from pathlib import Path
-
-settings_path = Path(sys.argv[1])
-model_path = sys.argv[2]
-
-default = {
-    "whisper": {
-        "model": "",
-        "endpoint": "",
-        "language": "zh-tw",
-        "beam": 5,
-        "temperature": 0,
-    },
-    "llm": {
-        "provider": "llama.cpp",
-        "endpoint": "http://127.0.0.1:8080",
-        "model": "",
-        "contextLength": 8192,
-        "temperature": 0.4,
-        "system": "",
-    },
-}
-
-try:
-    current = json.loads(settings_path.read_text(encoding="utf-8"))
-    if not isinstance(current, dict):
-        current = {}
-except Exception:
-    current = {}
-
-merged = default | {key: value for key, value in current.items() if isinstance(value, dict)}
-merged["whisper"] = default["whisper"] | current.get("whisper", {})
-merged["llm"] = default["llm"] | current.get("llm", {})
-if Path(model_path).exists():
-    merged["whisper"]["model"] = model_path
-    merged["whisper"]["endpoint"] = ""
-
-settings_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-print(f"Wrote {settings_path}")
-if Path(model_path).exists():
-    print(f"Configured Whisper model: {model_path}")
-else:
-    print("Model file was not found; backend settings kept without a local model path.")
-PY
-}
-
-write_airtype_config() {
-  echo
-  echo "Updating config.toml whisper-local section..."
-  "$VENV_DIR/bin/python" - "$ROOT_DIR/config.toml" "$WHISPER_BIN_DIR" "$DEFAULT_WHISPER_MODEL_PATH" <<'PY'
-import sys
-import tomllib
 from pathlib import Path
 
 config_path = Path(sys.argv[1])
-whisper_bin_dir, model_path = sys.argv[2:4]
-
-default = {
-    "chinese-mode": {"mode": "zh-tw"},
-    "backend": {
-        "mode": "local",
-        "local_endpoint": "http://localhost:8003",
-        "remote_endpoint": "",
-    },
-    "microphone": {"selected_order": "", "mode": "on_demand", "pre_roll_seconds": 2},
-    "floating-dialog": {
-        "position_x_ratio": 0.5,
-        "position_y_ratio": 0.62,
-        "move_lock": True,
-    },
-    "whisper-local": {
-        "whisper_bin_dir": "/opt/homebrew/bin",
-        "model_path": "~/.airtype/models/ggml-large-v3-turbo-q5_0.bin",
-    },
-}
-
-try:
-    current = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    if not isinstance(current, dict):
-        current = {}
-except Exception:
-    current = {}
-
-merged = {}
-for section, values in default.items():
-    merged[section] = dict(values)
-    existing = current.get(section)
-    if isinstance(existing, dict):
-        merged[section].update(existing)
-
-merged["whisper-local"].update(
-    {
-        "whisper_bin_dir": whisper_bin_dir,
-        "model_path": model_path,
-    }
-)
+model_path, whisper_bin_dir = sys.argv[2:4]
+model = Path(model_path)
+server_bin = str(Path(whisper_bin_dir) / "whisper-server")
 
 def toml_string(value):
-    text = str(value)
+    text = str(value or "")
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
-def toml_float(value, default_value):
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        number = default_value
-    return f"{number:.4f}".rstrip("0").rstrip(".")
+def remove_backend_sections(text):
+    text = re.sub(r"(?ms)^\[backend\.(?:whisper-server|llm-server|whisper|llm)\]\n.*?(?=^\[|\Z)", "", text)
+    text = re.sub(r"(?m)^#=+\n# Backend Settings\n#=+\n(?:\n|$)", "", text)
+    return text.rstrip()
 
-def toml_bool(value):
-    return "true" if bool(value) else "false"
+model_dir = str(model.parent) if model.exists() else ""
+model_filename = model.name if model.exists() else ""
+server_bin_value = server_bin if Path(server_bin).exists() else ""
+backend_text = "\n".join([
+    "#===============================================================================",
+    "# Backend Settings",
+    "#===============================================================================",
+    "",
+    "[backend.whisper-server]",
+    f"model_dir = {toml_string(model_dir)}",
+    f"model_filename = {toml_string(model_filename)}",
+    f"server_bin = {toml_string(server_bin_value)}",
+    'endpoint = ""',
+    'language = "zh-tw"',
+    "beam = 5",
+    "temperature = 0",
+    "",
+    "[backend.llm-server]",
+    'provider = "llama.cpp"',
+    'endpoint = "http://127.0.0.1:8080"',
+    'model = ""',
+    "contextLength = 8192",
+    "temperature = 0.4",
+    'system = ""',
+])
 
-text = "\n".join(
-    [
-        "# AirType user config",
-        "",
-        "[chinese-mode]",
-        '# Options: "zh-tw", "zh-cn"',
-        f"mode = {toml_string(merged['chinese-mode'].get('mode', 'zh-tw'))}",
-        "",
-        "[backend]",
-        '# Options: "local", "remote"',
-        f"mode = {toml_string(merged['backend'].get('mode', 'local'))}",
-        f"local_endpoint = {toml_string(merged['backend'].get('local_endpoint', 'http://localhost:8003'))}",
-        f"remote_endpoint = {toml_string(merged['backend'].get('remote_endpoint', ''))}",
-        "",
-        "[microphone]",
-        "# Microphone Device. Leave empty to use the system default microphone.",
-        f"selected_order = {toml_string(merged['microphone'].get('selected_order', ''))}",
-        '# Microphone Mode. Options: "on_demand", "always"',
-        f"mode = {toml_string(merged['microphone'].get('mode', merged['microphone'].get('warm_mode', 'on_demand')))}",
-        f"pre_roll_seconds = {merged['microphone'].get('pre_roll_seconds', 2)}",
-        "",
-        "[floating-dialog]",
-        "# Position is stored as the dialog center ratio across the whole desktop.",
-        f"position_x_ratio = {toml_float(merged['floating-dialog'].get('position_x_ratio'), 0.5)}",
-        f"position_y_ratio = {toml_float(merged['floating-dialog'].get('position_y_ratio'), 0.62)}",
-        f"move_lock = {toml_bool(merged['floating-dialog'].get('move_lock', True))}",
-        "",
-        "[whisper-local]",
-        "# Local whisper.cpp runtime and model locations.",
-        f"whisper_bin_dir = {toml_string(merged['whisper-local'].get('whisper_bin_dir', '/opt/homebrew/bin'))}",
-        f"model_path = {toml_string(merged['whisper-local'].get('model_path', '~/.airtype/models/ggml-large-v3-turbo-q5_0.bin'))}",
-        "",
-    ]
-)
-config_path.write_text(text, encoding="utf-8")
+try:
+    text = config_path.read_text(encoding="utf-8")
+except OSError:
+    text = "# AirType user config\n"
+
+text = remove_backend_sections(text)
+config_path.write_text(f"{text}\n\n{backend_text}\n", encoding="utf-8")
 print(f"Wrote {config_path}")
+if model.exists():
+    print(f"Configured Whisper model: {model_path}")
+else:
+    print("Model file was not found; backend settings kept without a local model path.")
+if Path(server_bin).exists():
+    print(f"Configured whisper-server: {server_bin}")
+else:
+    print("whisper-server was not found; backend settings kept without a local server_bin path.")
 PY
 }
 
@@ -321,38 +232,8 @@ ensure_config() {
     return
   fi
 
-  cat > "$config" <<'CONFIG'
-# AirType user config
-
-[chinese-mode]
-# Options: "zh-tw", "zh-cn"
-mode = "zh-tw"
-
-[backend]
-# Options: "local", "remote"
-mode = "local"
-local_endpoint = "http://localhost:8003"
-remote_endpoint = ""
-
-[microphone]
-# Microphone Device. Leave empty to use the system default microphone.
-selected_order = ""
-# Microphone Mode. Options: "on_demand", "always"
-mode = "on_demand"
-pre_roll_seconds = 2
-
-[floating-dialog]
-# Position is stored as the dialog center ratio across the whole desktop.
-position_x_ratio = 0.5
-position_y_ratio = 0.62
-move_lock = true
-
-[whisper-local]
-# Local whisper.cpp runtime and model locations.
-whisper_bin_dir = "/opt/homebrew/bin"
-model_path = "~/.airtype/models/ggml-large-v3-turbo-q5_0.bin"
-CONFIG
-  echo "Created config.toml"
+  cp "$ROOT_DIR/config.example.toml" "$config"
+  echo "Created config.toml from config.example.toml"
 }
 
 echo "AirType setup"
@@ -363,7 +244,7 @@ echo "Planned actions:"
 echo "  1. Check for uv, and offer to install it if missing"
 echo "  2. Ensure Python 3.11 is available through uv"
 echo "  3. Create or reuse .venv"
-echo "  4. Install backend dependencies from backend/requirements.txt"
+echo "  4. Install backend dependencies from source/webui/requirements.txt"
 echo "     - fastapi, uvicorn, python-multipart, pydantic"
 echo "     - openai-whisper, torch, torchaudio"
 echo "     - yt-dlp, opencc-python-reimplemented"
@@ -372,7 +253,7 @@ echo "  6. Offer to install whisper-cpp with Homebrew on macOS"
 echo "  7. Offer to download the default Whisper model"
 echo "     - $DEFAULT_WHISPER_MODEL_FILE"
 echo "     - stored in $MODEL_DIR"
-echo "  8. Update backend/settings.json to use the downloaded model"
+echo "  8. Update config.toml backend settings to use the downloaded model"
 echo
 if ! confirm "Continue with setup?"; then
   echo "Setup cancelled."
@@ -395,7 +276,7 @@ echo "Creating virtual environment: .venv"
 
 echo
 echo "Installing backend dependencies..."
-"$UV_BIN" pip install --python "$VENV_DIR/bin/python" -r "$ROOT_DIR/backend/requirements.txt"
+"$UV_BIN" pip install --python "$VENV_DIR/bin/python" -r "$ROOT_DIR/source/webui/requirements.txt"
 
 echo
 echo "Checking config..."
@@ -404,7 +285,6 @@ ensure_config
 ensure_whisper_cpp
 download_whisper_model
 write_backend_settings
-write_airtype_config
 
 echo
 echo "Setup complete."

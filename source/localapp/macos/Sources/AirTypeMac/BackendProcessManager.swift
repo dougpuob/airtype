@@ -32,7 +32,7 @@ final class BackendProcessManager {
         }
 
         let port = URLComponents(string: config.backend.selectedEndpoint)?.port ?? 8003
-        let backendDir = projectRoot.appendingPathComponent("backend")
+        let backendDir = projectRoot.appendingPathComponent("source/webui")
         let process = Process()
         process.executableURL = python
         process.currentDirectoryURL = backendDir
@@ -45,10 +45,6 @@ final class BackendProcessManager {
             "--port",
             String(port)
         ]
-
-        var environment = ProcessInfo.processInfo.environment
-        applyWhisperEnvironment(config: config, environment: &environment)
-        process.environment = environment
 
         do {
             try process.run()
@@ -153,26 +149,6 @@ final class BackendProcessManager {
 
     private func isProcessRunning(_ pid: pid_t) -> Bool {
         kill(pid, 0) == 0
-    }
-
-    private func applyWhisperEnvironment(config: AirTypeConfig, environment: inout [String: String]) {
-        let whisperDir = NSString(string: config.whisperLocal.whisperBinDir).expandingTildeInPath
-        let modelPath = NSString(string: config.whisperLocal.modelPath).expandingTildeInPath
-        let serverBin = URL(fileURLWithPath: whisperDir).appendingPathComponent("whisper-server").path
-        let cliBin = URL(fileURLWithPath: whisperDir).appendingPathComponent("whisper-cli").path
-
-        if environment["WHISPER_CPP_SERVER_BIN"] == nil,
-           FileManager.default.isExecutableFile(atPath: serverBin) {
-            environment["WHISPER_CPP_SERVER_BIN"] = serverBin
-        }
-        if environment["WHISPER_CPP_BIN"] == nil,
-           FileManager.default.isExecutableFile(atPath: cliBin) {
-            environment["WHISPER_CPP_BIN"] = cliBin
-        }
-        if environment["WHISPER_CPP_MODEL"] == nil,
-           FileManager.default.fileExists(atPath: modelPath) {
-            environment["WHISPER_CPP_MODEL"] = modelPath
-        }
     }
 
     private func isLocalEndpoint(_ endpoint: String) -> Bool {
