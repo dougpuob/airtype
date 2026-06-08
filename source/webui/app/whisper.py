@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import re
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,16 +41,109 @@ OPENCC_CONFIGS = {
     "zh-cn": "t2s",
 }
 
+SETTINGS_PATH = Path(__file__).resolve().parents[1] / "settings.json"
+
+
+def _find_config_path() -> Path:
+    configured = os.getenv("AIRTYPE_CONFIG_PATH")
+    if configured:
+        return Path(configured).expanduser().resolve()
+
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "config.toml"
+        if candidate.exists():
+            return candidate
+    return Path(__file__).resolve().parents[3] / "config.toml"
+
+
+CONFIG_PATH = _find_config_path()
+
 
 class WhisperCppNotConfigured(RuntimeError):
     """Raised when whisper.cpp is not available on this machine."""
+
+
+def _strip_json_line_comments(text: str) -> str:
+    result: list[str] = []
+    in_string = False
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+        if escaped:
+            result.append(char)
+            escaped = False
+        elif char == "\\" and in_string:
+            result.append(char)
+            escaped = True
+        elif char == '"':
+            result.append(char)
+            in_string = not in_string
+        elif char == "/" and next_char == "/" and not in_string:
+            while index < len(text) and text[index] not in "\r\n":
+                index += 1
+            continue
+        else:
+            result.append(char)
+        index += 1
+    return "".join(result)
+
+
+def _read_backend_settings() -> Dict[str, Any]:
+    config_settings = _read_backend_config_settings()
+    if config_settings:
+        return config_settings
+
+    if not SETTINGS_PATH.exists():
+        return {}
+
+    try:
+        text = SETTINGS_PATH.read_text(encoding="utf-8")
+        settings = json.loads(_strip_json_line_comments(text))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    return settings if isinstance(settings, dict) else {}
+
+
+def _read_backend_config_settings() -> Dict[str, Any]:
+    if not CONFIG_PATH.exists():
+        return {}
+
+    try:
+        with CONFIG_PATH.open("rb") as config_file:
+            config = tomllib.load(config_file)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+    backend = config.get("backend", {})
+    if not isinstance(backend, dict):
+        return {}
+
+    settings: Dict[str, Any] = {}
+    for key, section_names in {
+        "whisper": ("whisper-server", "whisper"),
+        "llm": ("llm-server", "llm"),
+    }.items():
+        value = next(
+            (
+                backend.get(section_name)
+                for section_name in section_names
+                if isinstance(backend.get(section_name), dict)
+            ),
+            None,
+        )
+        if isinstance(value, dict):
+            settings[key] = value
+    return settings
 
 
 class WhisperCppTranscriber:
     """Run ffmpeg + whisper.cpp against audio or video sources."""
 
     def __init__(self) -> None:
-        self.default_model = os.getenv("WHISPER_CPP_MODEL") or self._default_model_path()
+        self.default_model = self._configured_model_path() or self._default_model_path()
         self._server_lock = threading.Lock()
         self._server_process: Optional[subprocess.Popen] = None
         self._server_endpoint: Optional[str] = None
@@ -84,6 +178,10 @@ class WhisperCppTranscriber:
         if configured:
             return configured
 
+        configured = self._configured_server_bin()
+        if configured:
+            return configured
+
         path = shutil.which("whisper-server")
         if path:
             return path
@@ -107,6 +205,41 @@ class WhisperCppTranscriber:
                 return str(candidate)
         return "models/ggml-base.bin"
 
+    def _configured_model_path(self) -> Optional[str]:
+        configured = os.getenv("WHISPER_CPP_MODEL")
+        if configured:
+            return str(Path(configured).expanduser())
+
+        settings = self._whisper_local_config()
+        model_dir = settings.get("model_dir")
+        model_filename = settings.get("model_filename")
+        if (
+            isinstance(model_dir, str)
+            and model_dir.strip()
+            and isinstance(model_filename, str)
+            and model_filename.strip()
+        ):
+            return str(Path(model_dir.strip()).expanduser() / model_filename.strip())
+
+        legacy_value = settings.get("model") or settings.get("model_path")
+        if isinstance(legacy_value, str) and legacy_value.strip():
+            return str(Path(legacy_value.strip()).expanduser())
+        return None
+
+    def _configured_server_bin(self) -> Optional[str]:
+        value = self._whisper_local_config().get("server_bin")
+        if isinstance(value, str) and value.strip():
+            return str(Path(value.strip()).expanduser())
+
+        legacy_dir = self._whisper_local_config().get("whisper_bin_dir")
+        if isinstance(legacy_dir, str) and legacy_dir.strip():
+            return str(Path(legacy_dir.strip()).expanduser() / "whisper-server")
+        return None
+
+    def _whisper_local_config(self) -> Dict[str, Any]:
+        whisper_settings = _read_backend_settings().get("whisper", {})
+        return whisper_settings if isinstance(whisper_settings, dict) else {}
+
     def transcribe(
         self,
         source_path: str,
@@ -126,13 +259,13 @@ class WhisperCppTranscriber:
         self._raise_if_cancelled(cancel_event)
         self._progress(progress_callback, 5, "Preparing whisper.cpp server")
 
-        selected_model = model_path or self.default_model
+        selected_model = model_path or self._configured_model_path() or self.default_model
         output_language = language
         whisper_language = self._whisper_language(language)
         use_local_server = not (server_endpoint or "").strip()
         if use_local_server and not Path(selected_model).exists():
             raise WhisperCppNotConfigured(
-                f"whisper.cpp model not found: {selected_model}. Set WHISPER_CPP_MODEL to a ggml model file."
+                f"whisper.cpp model not found: {selected_model}. Set [backend.whisper-server].model_dir and model_filename in config.toml."
             )
 
         with tempfile.TemporaryDirectory(prefix="airtype-transcribe-") as work_dir:
@@ -264,7 +397,7 @@ class WhisperCppTranscriber:
             server_bin = self.server_binary
             if not server_bin:
                 raise WhisperCppNotConfigured(
-                    "whisper.cpp server executable not found. Set WHISPER_CPP_SERVER_BIN to whisper-server."
+                    "whisper.cpp server executable not found. Set [backend.whisper-server].server_bin in config.toml."
                 )
 
             host = os.getenv("WHISPER_CPP_SERVER_HOST", "127.0.0.1")

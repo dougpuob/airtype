@@ -18,6 +18,7 @@ import urllib.request
 import uuid
 import json
 import time
+import tomllib
 
 from .whisper import WhisperCppNotConfigured, transcriber
 
@@ -35,15 +36,37 @@ app.add_middleware(
 # Get the static directory path
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _find_config_path() -> str:
+    configured = os.getenv("AIRTYPE_CONFIG_PATH")
+    if configured:
+        return os.path.abspath(os.path.expanduser(configured))
+
+    current = os.path.abspath(APP_DIR)
+    while True:
+        candidate = os.path.join(current, "config.toml")
+        if os.path.exists(candidate):
+            return candidate
+
+        parent = os.path.dirname(current)
+        if parent == current:
+            return os.path.abspath(os.path.join(APP_DIR, "..", "..", "..", "config.toml"))
+        current = parent
+
+
 RECORDS_DIR = os.path.abspath(os.path.join(APP_DIR, "..", "records"))
 TRANSCRIPT_RECORD_TYPE = "transcript"
 IME_RECORD_TYPE = "ime"
 SETTINGS_PATH = os.path.abspath(os.path.join(APP_DIR, "..", "settings.json"))
+CONFIG_PATH = _find_config_path()
 RECORD_ID_PATTERN = re.compile(r"\d{8}-\d{6}")
 
 DEFAULT_APP_SETTINGS: Dict[str, Any] = {
     "whisper": {
-        "model": "",
+        "model_dir": "",
+        "model_filename": "",
+        "server_bin": "",
         "endpoint": "",
         "language": "zh-tw",
         "beam": 5,
@@ -128,10 +151,11 @@ def _print_timing(label: str, timing: Dict[str, Any]) -> None:
 @app.get("/api/settings")
 async def get_app_settings():
     settings = _read_app_settings()
+    whisper_settings = settings.get("whisper", {})
     # Flatten for backward compatibility
     flattened = {
         "whisperEndpoint": settings.get("whisper", {}).get("endpoint", ""),
-        "whisperModel": settings.get("whisper", {}).get("model", ""),
+        "whisperModel": _whisper_model_path_from_settings(whisper_settings) or "",
         "whisperLanguage": settings.get("whisper", {}).get("language", "zh-tw"),
         "whisperBeam": settings.get("whisper", {}).get("beam", 5),
         "whisperTemperature": settings.get("whisper", {}).get("temperature", 0),
@@ -149,15 +173,23 @@ async def get_app_settings():
 async def update_app_settings(request: AppSettingsRequest):
     # Accept both flat and nested formats from frontend
     flat = request.settings
+    existing_whisper = _read_app_settings().get("whisper", {})
     if "whisper" in flat and isinstance(flat["whisper"], dict):
         # Already nested format (current frontend)
+        whisper_input = flat["whisper"]
+        model_dir, model_filename = _split_whisper_model_settings(
+            whisper_input,
+            existing_whisper,
+        )
         nested = {
             "whisper": {
-                "endpoint": flat["whisper"].get("endpoint", ""),
-                "model": flat["whisper"].get("model", ""),
-                "language": flat["whisper"].get("language", "zh-tw"),
-                "beam": flat["whisper"].get("beam", 5),
-                "temperature": flat["whisper"].get("temperature", 0),
+                "endpoint": whisper_input.get("endpoint", ""),
+                "model_dir": model_dir,
+                "model_filename": model_filename,
+                "server_bin": whisper_input.get("server_bin", existing_whisper.get("server_bin", "")),
+                "language": whisper_input.get("language", "zh-tw"),
+                "beam": whisper_input.get("beam", 5),
+                "temperature": whisper_input.get("temperature", 0),
             },
             "llm": {
                 "provider": flat.get("llm", {}).get("provider", "llama.cpp"),
@@ -170,10 +202,16 @@ async def update_app_settings(request: AppSettingsRequest):
         }
     else:
         # Legacy flat format
+        model_dir, model_filename = _split_whisper_model_settings(
+            {"model": flat.get("whisperModel", "")},
+            existing_whisper,
+        )
         nested = {
             "whisper": {
                 "endpoint": flat.get("whisperEndpoint", ""),
-                "model": flat.get("whisperModel", ""),
+                "model_dir": model_dir,
+                "model_filename": model_filename,
+                "server_bin": existing_whisper.get("server_bin", ""),
                 "language": flat.get("whisperLanguage", "zh-tw"),
                 "beam": flat.get("whisperBeam", 5),
                 "temperature": flat.get("whisperTemperature", 0),
@@ -610,18 +648,12 @@ def _is_supported_media(content_type: Optional[str], filename: Optional[str]) ->
 
 
 def _read_app_settings() -> Dict[str, Any]:
-    settings: Dict[str, Any] = {}
-    if os.path.exists(SETTINGS_PATH):
-        try:
-            with open(SETTINGS_PATH, "r", encoding="utf-8") as settings_file:
-                loaded = json.load(settings_file)
-                if isinstance(loaded, dict):
-                    settings = loaded
-        except (OSError, json.JSONDecodeError):
-            settings = {}
+    settings = _read_backend_config_settings()
+    if not settings:
+        settings = _read_legacy_json_settings()
 
     merged = _normalize_app_settings({**DEFAULT_APP_SETTINGS, **settings})
-    if not os.path.exists(SETTINGS_PATH):
+    if not _has_backend_config_sections():
         _write_app_settings(merged)
     return merged
 
@@ -634,10 +666,129 @@ def _write_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
             **{key: value for key, value in settings.items() if key in allowed},
         }
     )
-    os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
-    with open(SETTINGS_PATH, "w", encoding="utf-8") as settings_file:
-        json.dump(merged, settings_file, ensure_ascii=False, indent=2)
+    _write_backend_config_settings(merged)
     return merged
+
+
+def _read_backend_config_settings() -> Dict[str, Any]:
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+
+    try:
+        with open(CONFIG_PATH, "rb") as config_file:
+            config = tomllib.load(config_file)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+    backend = config.get("backend", {})
+    if not isinstance(backend, dict):
+        return {}
+
+    settings: Dict[str, Any] = {}
+    for key, section_names in {
+        "whisper": ("whisper-server", "whisper"),
+        "llm": ("llm-server", "llm"),
+    }.items():
+        value = next(
+            (
+                backend.get(section_name)
+                for section_name in section_names
+                if isinstance(backend.get(section_name), dict)
+            ),
+            None,
+        )
+        if isinstance(value, dict):
+            settings[key] = value
+    return settings
+
+
+def _read_legacy_json_settings() -> Dict[str, Any]:
+    if not os.path.exists(SETTINGS_PATH):
+        return {}
+
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as settings_file:
+            loaded = json.loads(_strip_json_line_comments(settings_file.read()))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _has_backend_config_sections() -> bool:
+    settings = _read_backend_config_settings()
+    return bool(settings.get("whisper") or settings.get("llm"))
+
+
+def _write_backend_config_settings(settings: Dict[str, Any]) -> None:
+    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as config_file:
+            text = config_file.read()
+    except OSError:
+        text = "# AirType user config\n"
+
+    text = _remove_backend_setting_sections(text).rstrip()
+    backend_text = _backend_settings_toml(settings)
+    if text:
+        text = f"{text}\n\n{backend_text}\n"
+    else:
+        text = f"{backend_text}\n"
+
+    with open(CONFIG_PATH, "w", encoding="utf-8") as config_file:
+        config_file.write(text)
+
+
+def _remove_backend_setting_sections(text: str) -> str:
+    pattern = re.compile(r"(?ms)^\[backend\.(?:whisper-server|llm-server|whisper|llm)\]\n.*?(?=^\[|\Z)")
+    text = pattern.sub("", text)
+    header_pattern = re.compile(
+        r"(?m)^#=+\n# Backend Settings\n#=+\n(?:\n|$)"
+    )
+    return header_pattern.sub("", text)
+
+
+def _backend_settings_toml(settings: Dict[str, Any]) -> str:
+    whisper = settings.get("whisper", {})
+    llm = settings.get("llm", {})
+    lines = [
+        "#===============================================================================",
+        "# Backend Settings",
+        "#===============================================================================",
+        "",
+        "[backend.whisper-server]",
+        f"model_dir = {_toml_string(whisper.get('model_dir', ''))}",
+        f"model_filename = {_toml_string(whisper.get('model_filename', ''))}",
+        f"server_bin = {_toml_string(whisper.get('server_bin', ''))}",
+        f"endpoint = {_toml_string(whisper.get('endpoint', ''))}",
+        f"language = {_toml_string(whisper.get('language', 'zh-tw'))}",
+        f"beam = {_toml_number(whisper.get('beam', 5), 5)}",
+        f"temperature = {_toml_number(whisper.get('temperature', 0), 0)}",
+        "",
+        "[backend.llm-server]",
+        f"provider = {_toml_string(llm.get('provider', 'llama.cpp'))}",
+        f"endpoint = {_toml_string(llm.get('endpoint', 'http://127.0.0.1:8080'))}",
+        f"model = {_toml_string(llm.get('model', ''))}",
+        f"contextLength = {_toml_number(llm.get('contextLength', 8192), 8192)}",
+        f"temperature = {_toml_number(llm.get('temperature', 0.4), 0.4)}",
+        f"system = {_toml_string(llm.get('system', ''))}",
+    ]
+    return "\n".join(lines)
+
+
+def _toml_string(value: Any) -> str:
+    text = str(value or "")
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _toml_number(value: Any, default_value: int | float) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = float(default_value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.4f}".rstrip("0").rstrip(".")
 
 
 def _normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -645,11 +796,20 @@ def _normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     
     # Handle legacy flat structure
     if "whisperEndpoint" in normalized:
+        legacy_model = normalized.pop("whisperModel", "")
+        model_dir = ""
+        model_filename = ""
+        if legacy_model:
+            model_path = os.path.expanduser(legacy_model)
+            model_dir = os.path.dirname(model_path)
+            model_filename = os.path.basename(model_path)
         normalized["whisper"] = {
             "endpoint": normalized.pop("whisperEndpoint", ""),
             "language": normalized.pop("whisperLanguage", "zh-tw"),
             "beam": normalized.pop("whisperBeam", 5),
             "temperature": normalized.pop("whisperTemperature", 0),
+            "model_dir": model_dir,
+            "model_filename": model_filename,
         }
     if "llmProvider" in normalized:
         normalized["llm"] = {
@@ -663,12 +823,86 @@ def _normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     
     # Merge with defaults
     whisper = {**DEFAULT_APP_SETTINGS["whisper"], **normalized.get("whisper", {})}
+    model_dir, model_filename = _split_whisper_model_settings(whisper)
+    whisper["model_dir"] = model_dir
+    whisper["model_filename"] = model_filename
+    whisper.pop("model", None)
+    whisper.pop("model_path", None)
     llm = {**DEFAULT_APP_SETTINGS["llm"], **normalized.get("llm", {})}
     
     return {
         "whisper": whisper,
         "llm": llm,
     }
+
+
+def _strip_json_line_comments(text: str) -> str:
+    result: list[str] = []
+    in_string = False
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+        if escaped:
+            result.append(char)
+            escaped = False
+        elif char == "\\" and in_string:
+            result.append(char)
+            escaped = True
+        elif char == '"':
+            result.append(char)
+            in_string = not in_string
+        elif char == "/" and next_char == "/" and not in_string:
+            while index < len(text) and text[index] not in "\r\n":
+                index += 1
+            continue
+        else:
+            result.append(char)
+        index += 1
+    return "".join(result)
+
+
+def _whisper_model_path_from_settings(whisper_settings: Dict[str, Any]) -> Optional[str]:
+    model_dir = whisper_settings.get("model_dir")
+    model_filename = whisper_settings.get("model_filename")
+    if (
+        isinstance(model_dir, str)
+        and model_dir.strip()
+        and isinstance(model_filename, str)
+        and model_filename.strip()
+    ):
+        return os.path.join(os.path.expanduser(model_dir.strip()), model_filename.strip())
+
+    legacy_model = whisper_settings.get("model") or whisper_settings.get("model_path")
+    if isinstance(legacy_model, str) and legacy_model.strip():
+        return os.path.expanduser(legacy_model.strip())
+    return None
+
+
+def _split_whisper_model_settings(
+    whisper_settings: Dict[str, Any],
+    fallback_settings: Optional[Dict[str, Any]] = None,
+) -> tuple[str, str]:
+    model_dir = whisper_settings.get("model_dir")
+    model_filename = whisper_settings.get("model_filename")
+    if (
+        isinstance(model_dir, str)
+        and model_dir.strip()
+        and isinstance(model_filename, str)
+        and model_filename.strip()
+    ):
+        return os.path.expanduser(model_dir.strip()), model_filename.strip()
+
+    legacy_model = whisper_settings.get("model") or whisper_settings.get("model_path")
+    if isinstance(legacy_model, str) and legacy_model.strip():
+        model_path = os.path.expanduser(legacy_model.strip())
+        return os.path.dirname(model_path), os.path.basename(model_path)
+
+    if fallback_settings:
+        return _split_whisper_model_settings(fallback_settings)
+
+    return "", ""
 
 
 def _settings_transcribe_options(
@@ -682,7 +916,7 @@ def _settings_transcribe_options(
 ) -> Dict[str, Any]:
     settings = _read_app_settings()
     whisper_settings = settings.get("whisper", {})
-    selected_model = model or whisper_settings.get("model") or None
+    selected_model = model or _whisper_model_path_from_settings(whisper_settings)
     
     endpoint = whisper_endpoint if whisper_endpoint is not None else whisper_settings.get("endpoint", "")
     if not (endpoint or "").strip():

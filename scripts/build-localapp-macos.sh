@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FRONTEND_DIR="$ROOT_DIR/frontend/macos"
+FRONTEND_DIR="$ROOT_DIR/source/localapp/macos"
 APP_NAME="AirType"
 BUNDLE_ID="com.airtype.app"
 DIST_DIR="$ROOT_DIR/dist"

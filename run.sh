@@ -14,6 +14,9 @@ fi
 if [[ ! -f "$ROOT_DIR/config.toml" ]]; then
   echo "config.toml is missing."
   echo
+  echo "Create one from the example:"
+  echo "  cp config.example.toml config.toml"
+  echo
   echo "Run setup first:"
   echo "  ./scripts/setup.sh"
   exit 1
@@ -27,5 +30,5 @@ if ! command -v swift >/dev/null 2>&1; then
   exit 1
 fi
 
-cd "$ROOT_DIR/frontend/macos"
+cd "$ROOT_DIR/source/localapp/macos"
 exec swift run AirTypeMac

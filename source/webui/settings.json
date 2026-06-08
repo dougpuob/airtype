@@ -1,0 +1,3 @@
+{
+  // Deprecated: backend settings moved to ../config.toml under [backend.*].
+}

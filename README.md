@@ -5,36 +5,41 @@ A cross-platform desktop speech-to-text app. Double-press **Right Ctrl** to star
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                       Frontend (SwiftUI)                      │
-│  ┌──────────────┐  ┌───────────────┐  ┌───────────────────┐  │
-│  │ Menu Bar App  │  │ Floating Panel │  │ Key Listener      │  │
-│  │ config menus  │  │ timer + waveform│  │ double Right Ctrl│  │
-│  └──────┬───────┘  └───────┬───────┘  └───────────────────┘  │
-│         │                  │                                   │
-│         │  transcription   │  microphone audio                  │
-│         ▼                  ▼                                   │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  PasteController  →  clipboard + keyboard paste          │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
-                            │
-              HTTP POST /api/transcribe (multipart WAV)
-                            │
-┌──────────────────────────────────────────────────────────────┐
-│                       Backend (FastAPI)                       │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │  whisper.cpp server (local or remote endpoint)          │  │
-│  │  ffmpeg → WAV conversion → transcription → JSON output  │  │
-│  └────────────────────────────────────────────────────────┘  │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────┐  │
-│  │  Job Queue   │  │  URL Transcribe│  │  Local LLM Chat   │  │
-│  │  (async)     │  │  (yt-dlp)     │  │  (ollama/llama.cpp)│  │
-│  └──────────────┘  └──────────────┘  └───────────────────┘  │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │  Web UI (static/index.html) — settings, records, config │  │
-│  └────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                    LocalApp (macOS / Windows / Linux)                        │
+│  ┌──────────────────┐  ┌───────────────────┐  ┌──────────────────────────┐   │
+│  │ Tray/Menu App    │  │ Floating Panel    │  │ Hotkey Listener          │   │
+│  │ config menus     │  │ timer + waveform  │  │ double Right Ctrl        │   │
+│  └──────────────────┘  └─────────┬─────────┘  └──────────────────────────┘   │
+│                                  │ microphone audio                          │
+│                                  ▼                                           │
+│  ┌──────────────────────────────────────────────────────────────────────┐    │
+│  │ Paste controller → clipboard + keyboard paste                        │    │
+│  └──────────────────────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                    HTTP API /api/transcribe, /api/settings
+                                      │
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              WebUI (FastAPI)                                 │
+│  ┌──────────────────┐  ┌───────────────────┐  ┌──────────────────────────┐   │
+│  │ API Routes       │  │ Job Queue         │  │ Web UI                   │   │
+│  │ multipart upload │  │ async jobs        │  │ settings + records       │   │
+│  └──────────────────┘  └───────────────────┘  └──────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────────────┐    │
+│  │ ffmpeg / yt-dlp / records / config.toml coordination                 │    │
+│  └──────────────────────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                    Server calls (local or remote endpoints)
+                                      │
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              Server (Whisper / LLM)                          │
+│  ┌──────────────────────────────────┐  ┌──────────────────────────────────┐  │
+│  │ whisper-server                   │  │ LLM server                       │  │
+│  │ whisper.cpp + model files        │  │ Ollama / llama.cpp               │  │
+│  └──────────────────────────────────┘  └──────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Features
@@ -55,16 +60,17 @@ A cross-platform desktop speech-to-text app. Double-press **Right Ctrl** to star
 
 ```
 AirType.git/
-├── frontend/
-│   └── macos/                   # Native SwiftUI menu bar frontend
-├── backend/
-│   ├── app/
-│   │   ├── main.py          # FastAPI server, routes, job queue, LLM
-│   │   ├── whisper.py       # whisper.cpp integration, ffmpeg, OpenCC
-│   │   └── static/          # Web UI (index.html)
-│   ├── settings.json        # Whisper + LLM configuration
-│   ├── requirements.txt     # Python dependencies
-│   └── start.sh             # Startup script
+├── config.example.toml      # Example local configuration
+├── source/
+│   ├── localapp/
+│   │   └── macos/               # Native SwiftUI menu bar frontend
+│   └── webui/
+│       ├── app/
+│       │   ├── main.py          # FastAPI server, routes, job queue, LLM
+│       │   ├── whisper.py       # whisper.cpp integration, ffmpeg, OpenCC
+│       │   └── static/          # Web UI (index.html)
+│       ├── requirements.txt     # Python dependencies
+│       └── start.sh             # Startup script
 └── reference/               # Design references
 ```
 
@@ -83,15 +89,15 @@ AirType.git/
 ./scripts/setup.sh
 ```
 
-The setup script prints the tools and Python packages it is about to install, asks for confirmation, installs `uv` if you approve and it is missing, creates `.venv`, installs backend dependencies, and creates `config.toml` if needed.
+The setup script prints the tools and Python packages it is about to install, asks for confirmation, installs `uv` if you approve and it is missing, creates `.venv`, installs backend dependencies, and creates `config.toml` from `config.example.toml` if needed.
 
 It also offers to prepare local transcription:
 
 - installs `whisper-cpp` with Homebrew on macOS
 - downloads the default model `ggml-large-v3-turbo-q5_0.bin`
 - stores the model in `~/.airtype/models`
-- updates `backend/settings.json` to use that model
-- records local whisper.cpp paths in `config.toml` under `[whisper-local]`
+- updates `config.toml` backend settings to use that model
+- records local whisper.cpp paths in `config.toml` under `[backend.whisper-server]`
 
 ### Run
 
@@ -110,7 +116,7 @@ It also offers to prepare local transcription:
 ### SwiftUI Frontend
 
 ```bash
-cd frontend/macos
+cd source/localapp/macos
 swift build
 swift run AirTypeMac
 ```
@@ -124,7 +130,7 @@ open dist/AirType.app
 
 Runtime user data is stored outside the app:
 
-- config: `~/.airtype/config.toml`
+- config: local `config.toml` or `AIRTYPE_CONFIG_PATH` (many installs symlink this to `~/.airtype/config.toml`)
 - Whisper models: `~/.airtype/models`
 
 macOS will ask for Microphone permission when recording. If the global hotkey or paste action does not work, grant Accessibility permission to `AirType.app` in System Settings.
@@ -139,53 +145,52 @@ macOS will ask for Microphone permission when recording. If the global hotkey or
 | `AIRTYPE_WHISPER_LANGUAGE` | — | Whisper language code (e.g. `zh-tw`) |
 | `AIRTYPE_FLOATING_WHISPER_BEAM_SIZE` | `1` | Beam size for floating dialog transcription |
 | `WHISPER_CPP_ROOT` | `~/whisper.cpp/whisper.cpp.git` | whisper.cpp source directory |
-| `WHISPER_CPP_MODEL` | — | Path to GGML model file |
-| `WHISPER_CPP_BIN` | — | Override whisper-cli binary path |
-| `WHISPER_CPP_SERVER_BIN` | — | Override whisper-server binary path |
+| `WHISPER_CPP_MODEL` | `[backend.whisper-server] model_dir` + `model_filename` in `config.toml` | Optional override for the GGML model file |
+| `WHISPER_CPP_SERVER_BIN` | `[backend.whisper-server] server_bin` in `config.toml` | Optional override for whisper-server |
 | `WHISPER_CPP_SERVER_ENDPOINT` | — | Remote whisper.cpp server URL |
 | `WHISPER_CPP_SERVER_HOST` | `127.0.0.1` | Local server bind host |
 | `WHISPER_CPP_SERVER_PORT` | — | Local server bind port (auto if unset) |
 | `WHISPER_CPP_SERVER_ARGS` | — | Extra args for whisper-server |
 
-### Backend Settings (`backend/settings.json`)
+### Backend Settings (`config.toml`)
 
-```json
-{
-  "whisper": {
-    "endpoint": "http://localhost:8005/",
-    "language": "zh-tw",
-    "beam": 5,
-    "temperature": 0
-  },
-  "llm": {
-    "provider": "llama.cpp",
-    "endpoint": "http://127.0.0.1:8088/",
-    "model": "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL",
-    "contextLength": 8192,
-    "temperature": 0.4,
-    "system": ""
-  }
-}
+```toml
+[backend.whisper-server]
+model_dir = "~/.airtype/models"
+model_filename = "ggml-large-v3-turbo-q5_0.bin"
+server_bin = "/opt/homebrew/bin/whisper-server"
+endpoint = ""
+language = "zh-tw"
+beam = 5
+temperature = 0
+
+[backend.llm-server]
+provider = "llama.cpp"
+endpoint = "http://127.0.0.1:8088/"
+model = "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL"
+contextLength = 8192
+temperature = 0.4
+system = ""
 ```
 
 ## API Endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/` | Health check |
-| `GET` | `/api/settings` | Get app settings |
-| `PUT` | `/api/settings` | Update app settings |
-| `POST` | `/api/transcribe` | Transcribe uploaded audio |
-| `POST` | `/api/transcribe/url` | Transcribe from URL (sync) |
-| `POST` | `/api/transcribe/jobs` | Create async transcription job |
-| `GET` | `/api/transcribe/jobs/:id` | Get job status |
-| `POST` | `/api/transcribe/jobs/:id/cancel` | Cancel a job |
-| `GET` | `/api/transcribe/records` | List all records |
-| `GET` | `/api/transcribe/records/:id` | Get a record |
-| `PATCH` | `/api/transcribe/records/:id` | Update record title |
-| `DELETE` | `/api/transcribe/records/:id` | Delete a record |
-| `POST` | `/api/local-llm/models` | List local LLM models |
-| `POST` | `/api/local-llm/chat` | Chat with local LLM |
+| Method 	| Path                            	| Description                    	|
+|--------	|---------------------------------	|--------------------------------	|
+| GET    	| /                               	| Health check                   	|
+| GET    	| /api/settings                   	| Get app settings               	|
+| PUT    	| /api/settings                   	| Update app settings            	|
+| POST   	| /api/transcribe                 	| Transcribe uploaded audio      	|
+| POST   	| /api/transcribe/url             	| Transcribe from URL (sync)     	|
+| POST   	| /api/transcribe/jobs            	| Create async transcription job 	|
+| GET    	| /api/transcribe/jobs/:id        	| Get job status                 	|
+| POST   	| /api/transcribe/jobs/:id/cancel 	| Cancel a job                   	|
+| GET    	| /api/transcribe/records         	| List all records               	|
+| GET    	| /api/transcribe/records/:id     	| Get a record                   	|
+| PATCH  	| /api/transcribe/records/:id     	| Update record title            	|
+| DELETE 	| /api/transcribe/records/:id     	| Delete a record                	|
+| POST   	| /api/local-llm/models           	| List local LLM models          	|
+| POST   	| /api/local-llm/chat             	| Chat with local LLM            	|
 
 ## macOS Setup
 

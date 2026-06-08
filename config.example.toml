@@ -1,0 +1,52 @@
+# AirType user config
+# Backend runtime settings live under [backend.*] below.
+
+#===============================================================================
+# Frontend Settings
+#===============================================================================
+
+[frontend.chinese-mode]
+# Options: "zh-tw", "zh-cn"
+mode = "zh-tw"
+
+[frontend.backend-endpoint]
+# Options: "local", "remote"
+mode = "local"
+local_endpoint = "http://localhost:8003"
+remote_endpoint = ""
+
+[frontend.microphone]
+# Microphone Device. Leave empty to use the system default microphone.
+selected_order = "7"
+# Microphone Mode. Options: "on_demand", "always"
+mode = "on_demand"
+pre_roll_seconds = 2
+
+[frontend.floating-dialog]
+# Position is stored as the dialog center ratio across the whole desktop.
+position_x_ratio = 0.2598
+position_y_ratio = 0.0597
+move_lock = false
+
+
+
+#===============================================================================
+# Backend Settings
+#===============================================================================
+
+[backend.whisper-server]
+model_dir = "~/.airtype/models"
+model_filename = "ggml-large-v3-turbo-q5_0.bin"
+server_bin = "/opt/homebrew/bin/whisper-server"
+endpoint = ""
+language = "zh-tw"
+beam = 5
+temperature = 0
+
+[backend.llm-server]
+provider = "llama.cpp"
+endpoint = "http://114.34.75.131:8088/"
+model = "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL"
+contextLength = 8192
+temperature = 0.4
+system = ""
