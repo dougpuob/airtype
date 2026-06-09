@@ -20,7 +20,18 @@ final class AudioRecorder {
     private var activeMicrophoneOrder = ""
 
     static func inputDevices() -> [AVCaptureDevice] {
-        AVCaptureDevice.devices(for: .audio)
+        let deviceTypes: [AVCaptureDevice.DeviceType]
+        if #available(macOS 14.0, *) {
+            deviceTypes = [.microphone, .externalUnknown]
+        } else {
+            deviceTypes = [.builtInMicrophone, .externalUnknown]
+        }
+
+        return AVCaptureDevice.DiscoverySession(
+            deviceTypes: deviceTypes,
+            mediaType: .audio,
+            position: .unspecified
+        ).devices
     }
 
     func prepare(microphoneOrder: String, preRollSeconds: Double) {

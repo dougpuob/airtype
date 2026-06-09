@@ -13,7 +13,6 @@ import tempfile
 import threading
 import time
 import re
-import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,6 +21,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from opencc import OpenCC
+
+from .config_schema import read_webui_settings
 
 
 DEFAULT_WHISPER_CPP_ROOT = Path(
@@ -108,35 +109,7 @@ def _read_backend_settings() -> Dict[str, Any]:
 
 
 def _read_backend_config_settings() -> Dict[str, Any]:
-    if not CONFIG_PATH.exists():
-        return {}
-
-    try:
-        with CONFIG_PATH.open("rb") as config_file:
-            config = tomllib.load(config_file)
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
-
-    webui = config.get("webui", {})
-    if not isinstance(webui, dict):
-        return {}
-
-    settings: Dict[str, Any] = {}
-    for key, section_names in {
-        "whisper": ("whisper-server", "whisper"),
-        "llm": ("llm-server", "llm"),
-    }.items():
-        value = next(
-            (
-                webui.get(section_name)
-                for section_name in section_names
-                if isinstance(webui.get(section_name), dict)
-            ),
-            None,
-        )
-        if isinstance(value, dict):
-            settings[key] = value
-    return settings
+    return read_webui_settings(CONFIG_PATH)
 
 
 class WhisperCppTranscriber:

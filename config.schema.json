@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airtype.local/config.schema.json",
+  "title": "AirType config.toml",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "localapp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chinese-mode": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "type": "string", "enum": ["zh-tw", "zh-cn"], "default": "zh-tw" }
+          }
+        },
+        "backend-endpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "type": "string", "enum": ["local", "remote"], "default": "local" },
+            "local_endpoint": { "type": "string", "default": "http://localhost:8003" },
+            "remote_endpoint": { "type": "string", "default": "" }
+          }
+        },
+        "microphone": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "selected_order": { "type": "string", "default": "" },
+            "mode": { "type": "string", "enum": ["on_demand", "always"], "default": "on_demand" },
+            "pre_roll_seconds": { "type": "number", "minimum": 0, "maximum": 5, "default": 2 }
+          }
+        },
+        "floating-dialog": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "position_x_ratio": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5 },
+            "position_y_ratio": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.62 },
+            "move_lock": { "type": "boolean", "default": true }
+          }
+        },
+        "hotkey": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "trigger": { "type": "string", "enum": ["right_ctrl", "right_option"], "default": "right_ctrl" }
+          }
+        }
+      }
+    },
+    "webui": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "whisper-server": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model_dir": { "type": "string", "default": "" },
+            "model_filename": { "type": "string", "default": "" },
+            "server_bin": { "type": "string", "default": "" },
+            "endpoint": { "type": "string", "default": "" },
+            "language": { "type": "string", "enum": ["zh-tw", "zh-cn", "en", "ja", "ko"], "default": "zh-tw" },
+            "beam": { "type": "integer", "minimum": 1, "maximum": 16, "default": 5 },
+            "temperature": { "type": "number", "minimum": 0, "maximum": 2, "default": 0 }
+          }
+        },
+        "llm-server": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "provider": { "type": "string", "default": "llama.cpp" },
+            "endpoint": { "type": "string", "default": "http://127.0.0.1:8080" },
+            "model": { "type": "string", "default": "" },
+            "contextLength": { "type": "integer", "minimum": 1, "default": 8192 },
+            "temperature": { "type": "number", "minimum": 0, "maximum": 2, "default": 0.4 },
+            "system": {
+              "type": "string",
+              "default": "Summarize and answer questions using the transcript as the source of truth."
+            }
+          }
+        }
+      }
+    }
+  }
+}
