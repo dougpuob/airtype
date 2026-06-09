@@ -1,8 +1,10 @@
 import AVFoundation
+import AudioToolbox
 import Foundation
 
 final class AudioRecorder {
     private let outputSampleRate: Double = 16_000
+    private let minimumSpeechRMSLevel = 0.025
     private var preRollSeconds: Double = 2.0
     private let audioLock = NSLock()
     private let engine = AVAudioEngine()
@@ -15,21 +17,26 @@ final class AudioRecorder {
     private var recordingStartedAt: Date?
     private var firstBufferLogged = false
     private var firstVoiceLogged = false
+    private var activeMicrophoneOrder = ""
 
     static func inputDevices() -> [AVCaptureDevice] {
         AVCaptureDevice.devices(for: .audio)
     }
 
     func prepare(microphoneOrder: String, preRollSeconds: Double) {
-        audioLock.lock()
-        self.preRollSeconds = min(5.0, max(0.0, preRollSeconds))
-        audioLock.unlock()
+        let normalizedOrder = normalizeMicrophoneOrder(microphoneOrder)
 
         audioLock.lock()
+        self.preRollSeconds = min(5.0, max(0.0, preRollSeconds))
         let alreadyPrepared = prepared
+        let sameMicrophone = activeMicrophoneOrder == normalizedOrder
         audioLock.unlock()
-        if alreadyPrepared {
+
+        if alreadyPrepared, sameMicrophone {
             return
+        }
+        if alreadyPrepared {
+            stop()
         }
 
         audioLock.lock()
@@ -37,7 +44,7 @@ final class AudioRecorder {
         pcm = Data()
         audioLock.unlock()
 
-        Logger.shared.log("Audio recorder preparing: selected_microphone_order=\(microphoneOrder.isEmpty ? "default" : microphoneOrder)")
+        Logger.shared.log("Audio recorder preparing: selected_microphone_order=\(normalizedOrder.isEmpty ? "default" : normalizedOrder)")
 
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             if !granted {
@@ -46,6 +53,7 @@ final class AudioRecorder {
         }
 
         let input = engine.inputNode
+        applyPreferredInputDevice(microphoneOrder: normalizedOrder)
         let inputFormat = input.inputFormat(forBus: 0)
         sampleRate = outputSampleRate
         let outputFormat = AVAudioFormat(
@@ -75,6 +83,7 @@ final class AudioRecorder {
             try engine.start()
             audioLock.lock()
             prepared = true
+            activeMicrophoneOrder = normalizedOrder
             audioLock.unlock()
             Logger.shared.log(
                 "Microphone input warmed: input_sample_rate=\(Int(inputFormat.sampleRate)), "
@@ -109,12 +118,83 @@ final class AudioRecorder {
         audioLock.lock()
         isRecording = false
         prepared = false
+        activeMicrophoneOrder = ""
         onLevel = nil
         recordingStartedAt = nil
         pcm = Data()
         preRollPCM = Data()
         audioLock.unlock()
         Logger.shared.log("Audio recorder stopped and pre-roll cleared")
+    }
+
+    private func normalizeMicrophoneOrder(_ microphoneOrder: String) -> String {
+        let trimmed = microphoneOrder.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let order = Int(trimmed), order > 0 else { return "" }
+        return String(order)
+    }
+
+    private func selectedInputDevice(microphoneOrder: String) -> AVCaptureDevice? {
+        guard let order = Int(microphoneOrder), order > 0 else { return nil }
+        let devices = Self.inputDevices()
+        let index = order - 1
+        guard devices.indices.contains(index) else {
+            Logger.shared.log("Selected microphone order not found, using system default: \(microphoneOrder)")
+            return nil
+        }
+        return devices[index]
+    }
+
+    private func applyPreferredInputDevice(microphoneOrder: String) {
+        guard let device = selectedInputDevice(microphoneOrder: microphoneOrder) else {
+            Logger.shared.log("Using system default microphone input")
+            return
+        }
+        guard var deviceID = audioDeviceID(for: device) else {
+            Logger.shared.log("Could not resolve CoreAudio device for microphone: \(device.localizedName)")
+            return
+        }
+        guard let audioUnit = engine.inputNode.audioUnit else {
+            Logger.shared.log("Could not access input audio unit for microphone: \(device.localizedName)")
+            return
+        }
+
+        let status = AudioUnitSetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &deviceID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        if status == noErr {
+            Logger.shared.log("Microphone input selected: order=\(microphoneOrder), name=\(device.localizedName), device_id=\(deviceID)")
+        } else {
+            Logger.shared.log("Could not select microphone input: order=\(microphoneOrder), name=\(device.localizedName), status=\(status)")
+        }
+    }
+
+    private func audioDeviceID(for device: AVCaptureDevice) -> AudioDeviceID? {
+        let uid = device.uniqueID as CFString
+        var deviceID = AudioDeviceID(kAudioObjectUnknown)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyTranslateUIDToDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let qualifierSize = UInt32(MemoryLayout<CFString>.size)
+        let status = withUnsafePointer(to: uid) { uidPointer in
+            AudioObjectGetPropertyData(
+                AudioObjectID(kAudioObjectSystemObject),
+                &address,
+                qualifierSize,
+                uidPointer,
+                &size,
+                &deviceID
+            )
+        }
+        guard status == noErr, deviceID != kAudioObjectUnknown else { return nil }
+        return deviceID
     }
 
     func stopAndMakeWav() -> Data? {
@@ -130,8 +210,21 @@ final class AudioRecorder {
             Logger.shared.log("Recording too short: pcm_bytes=\(recordedPCM.count), sample_rate=\(Int(sampleRate))")
             return nil
         }
+
+        let rmsLevel = level(from: recordedPCM)
+        guard rmsLevel >= minimumSpeechRMSLevel else {
+            Logger.shared.log(
+                "Recording skipped: RMS too low, rms_level=\(String(format: "%.4f", rmsLevel)), "
+                + "threshold=\(String(format: "%.4f", minimumSpeechRMSLevel)), pcm_bytes=\(recordedPCM.count)"
+            )
+            return nil
+        }
+
         let wav = makeWav(pcm: recordedPCM, sampleRate: Int(sampleRate))
-        Logger.shared.log("WAV created: pcm_bytes=\(recordedPCM.count), wav_bytes=\(wav.count), sample_rate=\(Int(sampleRate))")
+        Logger.shared.log(
+            "WAV created: pcm_bytes=\(recordedPCM.count), wav_bytes=\(wav.count), "
+            + "sample_rate=\(Int(sampleRate)), rms_level=\(String(format: "%.4f", rmsLevel))"
+        )
         return wav
     }
 

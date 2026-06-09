@@ -58,12 +58,34 @@ final class AirTypeCoordinator: ObservableObject {
     }
 
     private func setupHotkey() {
-        hotkeyMonitor = HotkeyMonitor {
+        hotkeyMonitor = HotkeyMonitor(trigger: configStore.config.hotkey.trigger) {
             Task { @MainActor in
                 self.toggleRecording()
             }
         }
         hotkeyMonitor?.start()
+    }
+
+    private func applyMicrophoneRuntimeSettings(reason: String) {
+        let config = configStore.config
+        Logger.shared.log(
+            "Applying microphone settings: reason=\(reason), mode=\(config.microphone.mode), "
+            + "selected_order=\(config.microphone.selectedOrder.isEmpty ? "default" : config.microphone.selectedOrder), "
+            + "pre_roll_seconds=\(config.microphone.preRollSeconds)"
+        )
+
+        if recordingState == .preparing || recordingState == .recording {
+            Logger.shared.log("Recording is active while microphone settings changed; stopping current recording before applying settings")
+            stopRecording()
+        }
+
+        audioRecorder.stop()
+        if config.microphone.mode == "always" {
+            audioRecorder.prepare(
+                microphoneOrder: config.microphone.selectedOrder,
+                preRollSeconds: config.microphone.preRollSeconds
+            )
+        }
     }
 
     private func toggleRecording() {
@@ -189,6 +211,13 @@ final class AirTypeCoordinator: ObservableObject {
         microphoneModeItem.submenu = microphoneModeMenu
         menu.addItem(microphoneModeItem)
 
+        let hotkeyMenu = NSMenu()
+        addHotkeyItem(to: hotkeyMenu, title: "Right Ctrl x2", trigger: .rightControl)
+        addHotkeyItem(to: hotkeyMenu, title: "Right Option x2", trigger: .rightOption)
+        let hotkeyItem = NSMenuItem(title: "Hotkey", action: nil, keyEquivalent: "")
+        hotkeyItem.submenu = hotkeyMenu
+        menu.addItem(hotkeyItem)
+
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
@@ -236,6 +265,14 @@ final class AirTypeCoordinator: ObservableObject {
         menu.addItem(item)
     }
 
+    private func addHotkeyItem(to menu: NSMenu, title: String, trigger: HotkeyKey) {
+        let item = NSMenuItem(title: title, action: #selector(selectHotkey(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = trigger.rawValue
+        item.state = configStore.config.hotkey.trigger == trigger ? .on : .off
+        menu.addItem(item)
+    }
+
     @objc private func toggleMoveLock(_ sender: NSMenuItem) {
         configStore.updateMoveLock(!configStore.config.floatingDialog.moveLock)
         rebuildMenu()
@@ -250,26 +287,22 @@ final class AirTypeCoordinator: ObservableObject {
     @objc private func selectMicrophone(_ sender: NSMenuItem) {
         guard let order = sender.representedObject as? String else { return }
         configStore.updateMicrophone(order)
-        if configStore.config.microphone.mode == "always" {
-            audioRecorder.stop()
-            audioRecorder.prepare(
-                microphoneOrder: configStore.config.microphone.selectedOrder,
-                preRollSeconds: configStore.config.microphone.preRollSeconds
-            )
-        }
+        applyMicrophoneRuntimeSettings(reason: "menu_microphone")
         rebuildMenu()
     }
 
     @objc private func selectMicrophoneMode(_ sender: NSMenuItem) {
         guard let mode = sender.representedObject as? String else { return }
         configStore.updateMicrophoneMode(mode)
-        audioRecorder.stop()
-        if mode == "always" {
-            audioRecorder.prepare(
-                microphoneOrder: configStore.config.microphone.selectedOrder,
-                preRollSeconds: configStore.config.microphone.preRollSeconds
-            )
-        }
+        applyMicrophoneRuntimeSettings(reason: "menu_microphone_mode")
+        rebuildMenu()
+    }
+
+    @objc private func selectHotkey(_ sender: NSMenuItem) {
+        guard let rawTrigger = sender.representedObject as? String else { return }
+        let trigger = HotkeyKey(configValue: rawTrigger)
+        configStore.updateHotkeyTrigger(trigger)
+        hotkeyMonitor?.updateTrigger(trigger)
         rebuildMenu()
     }
 
