@@ -3,17 +3,28 @@ import Foundation
 
 final class HotkeyMonitor {
     private let onDoublePress: () -> Void
+    private let stateLock = NSLock()
     private var eventTap: CFMachPort?
     private var globalMonitor: Any?
     private var runLoop: CFRunLoop?
     private var thread: Thread?
     private var callback: CGEventTapCallBack?
-    private var lastRightControlPress: TimeInterval = 0
+    private var lastPressByKey: [HotkeyKey: TimeInterval] = [:]
     private var lastEmit: TimeInterval = 0
     private let threshold: TimeInterval = 0.4
+    private var trigger: HotkeyKey
 
-    init(onDoublePress: @escaping () -> Void) {
+    init(trigger: HotkeyKey, onDoublePress: @escaping () -> Void) {
+        self.trigger = trigger
         self.onDoublePress = onDoublePress
+    }
+
+    func updateTrigger(_ trigger: HotkeyKey) {
+        stateLock.lock()
+        self.trigger = trigger
+        lastPressByKey.removeAll()
+        stateLock.unlock()
+        Logger.shared.log("Hotkey trigger updated: \(trigger.displayName) x2")
     }
 
     func start() {
@@ -48,10 +59,11 @@ final class HotkeyMonitor {
                 guard let self else { return }
                 let keycode = Int64(event.keyCode)
                 let flags = event.modifierFlags
-                if keycode == 62, flags.contains(.control) {
-                    self.handleRightControlPress(source: "nsevent")
-                } else if keycode == 59 || keycode == 62 {
-                    Logger.shared.log("NSEvent control flagsChanged keycode=\(keycode) flags=\(flags.rawValue)")
+                let trigger = self.currentTrigger()
+                if let hotkeyKey = HotkeyKey.nseventKey(for: keycode, flags: flags), hotkeyKey == trigger {
+                    self.handleHotkeyPress(hotkeyKey, source: "nsevent")
+                } else if HotkeyKey.monitoredKeycodes.contains(keycode) {
+                    Logger.shared.log("NSEvent modifier flagsChanged keycode=\(keycode) flags=\(flags.rawValue)")
                 }
             }
             Logger.shared.log("NSEvent global flagsChanged monitor started")
@@ -86,7 +98,7 @@ final class HotkeyMonitor {
         runLoop = CFRunLoopGetCurrent()
         CFRunLoopAddSource(runLoop, source, .commonModes)
         CGEvent.tapEnable(tap: eventTap, enable: true)
-        Logger.shared.log("Quartz hotkey listener started: Right Ctrl x2")
+        Logger.shared.log("Quartz hotkey listener started: \(currentTrigger().displayName) x2")
         CFRunLoopRun()
     }
 
@@ -101,29 +113,90 @@ final class HotkeyMonitor {
         guard type == .flagsChanged else { return }
         let keycode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
-        let rightControlKeycode: Int64 = 62
 
-        if keycode == rightControlKeycode, flags.contains(.maskControl) {
-            handleRightControlPress(source: "quartz")
-        } else if keycode == 59 || keycode == 62 {
-            Logger.shared.log("Control flagsChanged keycode=\(keycode) flags=\(flags.rawValue)")
+        let trigger = currentTrigger()
+        if let hotkeyKey = HotkeyKey.quartzKey(for: keycode, flags: flags), hotkeyKey == trigger {
+            handleHotkeyPress(hotkeyKey, source: "quartz")
+        } else if HotkeyKey.monitoredKeycodes.contains(keycode) {
+            Logger.shared.log("Modifier flagsChanged keycode=\(keycode) flags=\(flags.rawValue)")
         }
     }
 
-    private func handleRightControlPress(source: String) {
+    private func handleHotkeyPress(_ hotkeyKey: HotkeyKey, source: String) {
         let now = Date().timeIntervalSinceReferenceDate
-        Logger.shared.log("Right Ctrl press detected by \(source)")
-        if now - lastRightControlPress < threshold {
+        Logger.shared.log("\(hotkeyKey.displayName) press detected by \(source)")
+
+        var shouldEmit = false
+        stateLock.lock()
+        let lastPress = lastPressByKey[hotkeyKey] ?? 0
+        if now - lastPress < threshold {
             if now - lastEmit > 0.5 {
                 lastEmit = now
-                DispatchQueue.main.async { [onDoublePress] in
-                    onDoublePress()
-                }
-                Logger.shared.log("Right Ctrl double-press emitted by \(source)")
+                shouldEmit = true
             }
-            lastRightControlPress = 0
+            lastPressByKey[hotkeyKey] = 0
         } else {
-            lastRightControlPress = now
+            lastPressByKey[hotkeyKey] = now
         }
+        stateLock.unlock()
+
+        if shouldEmit {
+            DispatchQueue.main.async { [onDoublePress] in
+                onDoublePress()
+            }
+            Logger.shared.log("\(hotkeyKey.displayName) double-press emitted by \(source)")
+        }
+    }
+
+    private func currentTrigger() -> HotkeyKey {
+        stateLock.lock()
+        let value = trigger
+        stateLock.unlock()
+        return value
+    }
+}
+
+enum HotkeyKey: String, CaseIterable, Hashable {
+    case rightControl = "right_ctrl"
+    case rightOption = "right_option"
+
+    static let monitoredKeycodes: Set<Int64> = [58, 59, 61, 62]
+
+    init(configValue: String) {
+        switch configValue.lowercased() {
+        case "right_option", "right-option", "right option", "option":
+            self = .rightOption
+        default:
+            self = .rightControl
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .rightControl:
+            return "Right Ctrl"
+        case .rightOption:
+            return "Right Option"
+        }
+    }
+
+    static func nseventKey(for keycode: Int64, flags: NSEvent.ModifierFlags) -> HotkeyKey? {
+        if keycode == 62, flags.contains(.control) {
+            return .rightControl
+        }
+        if keycode == 61, flags.contains(.option) {
+            return .rightOption
+        }
+        return nil
+    }
+
+    static func quartzKey(for keycode: Int64, flags: CGEventFlags) -> HotkeyKey? {
+        if keycode == 62, flags.contains(.maskControl) {
+            return .rightControl
+        }
+        if keycode == 61, flags.contains(.maskAlternate) {
+            return .rightOption
+        }
+        return nil
     }
 }

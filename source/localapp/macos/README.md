@@ -15,10 +15,11 @@ swift run AirTypeMac
 - Chinese mode menu: `zh-tw`, `zh-cn`
 - microphone device menu with system device order
 - microphone mode menu: `on_demand`, `always`
+- hotkey menu: `right_ctrl`, `right_option`
 - move lock
 - floating recording dialog
 - desktop-ratio dialog position persisted to `config.toml`
-- right Ctrl double-press hotkey via Quartz event tap
+- configured right Ctrl or right Option double-press hotkey via Quartz event tap
 - microphone recording through `AVAudioEngine`
 - automatic local FastAPI backend startup when `[frontend.backend-endpoint].mode = "local"`
 - `/api/transcribe/ime` multipart upload

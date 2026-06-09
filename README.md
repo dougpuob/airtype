@@ -1,6 +1,6 @@
 # AirType
 
-A cross-platform desktop speech-to-text app. Double-press **Right Ctrl** to start recording — your voice is transcribed and pasted at the cursor in real time.
+A cross-platform desktop speech-to-text app. Double-press the configured hotkey to start recording — your voice is transcribed and pasted at the cursor in real time.
 
 ## Architecture
 
@@ -9,7 +9,7 @@ A cross-platform desktop speech-to-text app. Double-press **Right Ctrl** to star
 │                    LocalApp (macOS / Windows / Linux)                        │
 │  ┌──────────────────┐  ┌───────────────────┐  ┌──────────────────────────┐   │
 │  │ Tray/Menu App    │  │ Floating Panel    │  │ Hotkey Listener          │   │
-│  │ config menus     │  │ timer + waveform  │  │ double Right Ctrl        │   │
+│  │ config menus     │  │ timer + waveform  │  │ configurable double key  │   │
 │  └──────────────────┘  └─────────┬─────────┘  └──────────────────────────┘   │
 │                                  │ microphone audio                          │
 │                                  ▼                                           │
@@ -45,7 +45,7 @@ A cross-platform desktop speech-to-text app. Double-press **Right Ctrl** to star
 ## Features
 
 - **Floating dialog** — always-on-top panel with live timer and waveform visualization
-- **Global hotkey** — double-press Right Ctrl to toggle recording (cross-platform)
+- **Global hotkey** — double-press the configured Right Ctrl or Right Option key to toggle recording
 - **Real-time paste** — transcription result is pasted at the cursor in the active app
 - **Clipboard restore** — original clipboard content is restored after 5 seconds
 - **Background ASR** — transcription runs in a background thread with detailed timing logs
@@ -204,7 +204,9 @@ Global keyboard monitoring requires Accessibility permission:
 
 | Action | Key |
 |---|---|
-| Start/Stop recording | Double-press **Right Ctrl** |
+| Start/Stop recording | Double-press configured **Right Ctrl** or **Right Option** |
+
+Configure it in the macOS menu under **Hotkey**, or set `[frontend.hotkey] trigger = "right_ctrl"` / `"right_option"` in `config.toml`.
 
 ## License
 

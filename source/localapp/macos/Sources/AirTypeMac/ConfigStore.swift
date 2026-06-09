@@ -5,6 +5,7 @@ struct AirTypeConfig {
     var backend = BackendConfig()
     var microphone = MicrophoneConfig()
     var floatingDialog = FloatingDialogConfig()
+    var hotkey = HotkeyConfig()
 }
 
 struct ChineseMode {
@@ -34,6 +35,10 @@ struct FloatingDialogConfig {
     var positionXRatio = 0.5
     var positionYRatio = 0.62
     var moveLock = true
+}
+
+struct HotkeyConfig {
+    var trigger: HotkeyKey = .rightControl
 }
 
 final class ConfigStore: ObservableObject {
@@ -88,6 +93,11 @@ final class ConfigStore: ObservableObject {
 
     func updateMoveLock(_ locked: Bool) {
         config.floatingDialog.moveLock = locked
+        save()
+    }
+
+    func updateHotkeyTrigger(_ trigger: HotkeyKey) {
+        config.hotkey.trigger = trigger
         save()
     }
 
@@ -150,6 +160,8 @@ final class ConfigStore: ObservableObject {
                 parsed.floatingDialog.positionYRatio = Double(value) ?? 0.62
             case ("frontend.floating-dialog", "move_lock"):
                 parsed.floatingDialog.moveLock = parseBool(value, defaultValue: true)
+            case ("frontend.hotkey", "trigger"):
+                parsed.hotkey.trigger = HotkeyKey(configValue: value)
             default:
                 continue
             }
@@ -198,6 +210,10 @@ final class ConfigStore: ObservableObject {
         position_y_ratio = \(format(config.floatingDialog.positionYRatio))
         move_lock = \(config.floatingDialog.moveLock ? "true" : "false")
 
+        [frontend.hotkey]
+        # Options: "right_ctrl", "right_option"
+        trigger = "\(config.hotkey.trigger.rawValue)"
+
         """
     }
 
@@ -228,6 +244,8 @@ final class ConfigStore: ObservableObject {
             return "frontend.microphone"
         case "floating-dialog":
             return "frontend.floating-dialog"
+        case "hotkey":
+            return "frontend.hotkey"
         default:
             return section
         }
