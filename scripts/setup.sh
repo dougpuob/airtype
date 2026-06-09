@@ -120,7 +120,7 @@ ensure_whisper_cpp() {
     echo "whisper-server is ready: $server_bin"
   else
     echo "whisper-cpp installed, but whisper-server was not found in PATH."
-    echo "AirType may need [backend.whisper-server].server_bin configured manually in config.toml."
+    echo "AirType may need [webui.whisper-server].server_bin configured manually in config.toml."
   fi
 }
 
@@ -160,7 +160,7 @@ download_whisper_model() {
 
 write_backend_settings() {
   echo
-  echo "Updating config.toml backend settings..."
+  echo "Updating config.toml Web UI settings..."
   "$VENV_DIR/bin/python" - "$ROOT_DIR/config.toml" "$DEFAULT_WHISPER_MODEL_PATH" "$WHISPER_BIN_DIR" <<'PY'
 import re
 import sys
@@ -176,8 +176,8 @@ def toml_string(value):
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 def remove_backend_sections(text):
-    text = re.sub(r"(?ms)^\[backend\.(?:whisper-server|llm-server|whisper|llm)\]\n.*?(?=^\[|\Z)", "", text)
-    text = re.sub(r"(?m)^#=+\n# Backend Settings\n#=+\n(?:\n|$)", "", text)
+    text = re.sub(r"(?ms)^\[webui\.(?:whisper-server|llm-server|whisper|llm)\]\n.*?(?=^\[|\Z)", "", text)
+    text = re.sub(r"(?m)^#=+\n# Web UI Settings\n#=+\n(?:\n|$)", "", text)
     return text.rstrip()
 
 model_dir = str(model.parent) if model.exists() else ""
@@ -185,10 +185,10 @@ model_filename = model.name if model.exists() else ""
 server_bin_value = server_bin if Path(server_bin).exists() else ""
 backend_text = "\n".join([
     "#===============================================================================",
-    "# Backend Settings",
+    "# Web UI Settings",
     "#===============================================================================",
     "",
-    "[backend.whisper-server]",
+    "[webui.whisper-server]",
     f"model_dir = {toml_string(model_dir)}",
     f"model_filename = {toml_string(model_filename)}",
     f"server_bin = {toml_string(server_bin_value)}",
@@ -197,7 +197,7 @@ backend_text = "\n".join([
     "beam = 5",
     "temperature = 0",
     "",
-    "[backend.llm-server]",
+    "[webui.llm-server]",
     'provider = "llama.cpp"',
     'endpoint = "http://127.0.0.1:8080"',
     'model = ""',
@@ -217,11 +217,11 @@ print(f"Wrote {config_path}")
 if model.exists():
     print(f"Configured Whisper model: {model_path}")
 else:
-    print("Model file was not found; backend settings kept without a local model path.")
+    print("Model file was not found; Web UI settings kept without a local model path.")
 if Path(server_bin).exists():
     print(f"Configured whisper-server: {server_bin}")
 else:
-    print("whisper-server was not found; backend settings kept without a local server_bin path.")
+    print("whisper-server was not found; Web UI settings kept without a local server_bin path.")
 PY
 }
 
@@ -253,7 +253,7 @@ echo "  6. Offer to install whisper-cpp with Homebrew on macOS"
 echo "  7. Offer to download the default Whisper model"
 echo "     - $DEFAULT_WHISPER_MODEL_FILE"
 echo "     - stored in $MODEL_DIR"
-echo "  8. Update config.toml backend settings to use the downloaded model"
+echo "  8. Update config.toml Web UI settings to use the downloaded model"
 echo
 if ! confirm "Continue with setup?"; then
   echo "Setup cancelled."

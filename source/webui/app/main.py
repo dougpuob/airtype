@@ -680,8 +680,8 @@ def _read_backend_config_settings() -> Dict[str, Any]:
     except (OSError, tomllib.TOMLDecodeError):
         return {}
 
-    backend = config.get("backend", {})
-    if not isinstance(backend, dict):
+    webui = config.get("webui", {})
+    if not isinstance(webui, dict):
         return {}
 
     settings: Dict[str, Any] = {}
@@ -691,9 +691,9 @@ def _read_backend_config_settings() -> Dict[str, Any]:
     }.items():
         value = next(
             (
-                backend.get(section_name)
+                webui.get(section_name)
                 for section_name in section_names
-                if isinstance(backend.get(section_name), dict)
+                if isinstance(webui.get(section_name), dict)
             ),
             None,
         )
@@ -740,10 +740,10 @@ def _write_backend_config_settings(settings: Dict[str, Any]) -> None:
 
 
 def _remove_backend_setting_sections(text: str) -> str:
-    pattern = re.compile(r"(?ms)^\[backend\.(?:whisper-server|llm-server|whisper|llm)\]\n.*?(?=^\[|\Z)")
+    pattern = re.compile(r"(?ms)^\[webui\.(?:whisper-server|llm-server|whisper|llm)\]\n.*?(?=^\[|\Z)")
     text = pattern.sub("", text)
     header_pattern = re.compile(
-        r"(?m)^#=+\n# Backend Settings\n#=+\n(?:\n|$)"
+        r"(?m)^#=+\n# Web UI Settings\n#=+\n(?:\n|$)"
     )
     return header_pattern.sub("", text)
 
@@ -753,10 +753,10 @@ def _backend_settings_toml(settings: Dict[str, Any]) -> str:
     llm = settings.get("llm", {})
     lines = [
         "#===============================================================================",
-        "# Backend Settings",
+        "# Web UI Settings",
         "#===============================================================================",
         "",
-        "[backend.whisper-server]",
+        "[webui.whisper-server]",
         f"model_dir = {_toml_string(whisper.get('model_dir', ''))}",
         f"model_filename = {_toml_string(whisper.get('model_filename', ''))}",
         f"server_bin = {_toml_string(whisper.get('server_bin', ''))}",
@@ -765,7 +765,7 @@ def _backend_settings_toml(settings: Dict[str, Any]) -> str:
         f"beam = {_toml_number(whisper.get('beam', 5), 5)}",
         f"temperature = {_toml_number(whisper.get('temperature', 0), 0)}",
         "",
-        "[backend.llm-server]",
+        "[webui.llm-server]",
         f"provider = {_toml_string(llm.get('provider', 'llama.cpp'))}",
         f"endpoint = {_toml_string(llm.get('endpoint', 'http://127.0.0.1:8080'))}",
         f"model = {_toml_string(llm.get('model', ''))}",
