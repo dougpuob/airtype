@@ -1,4 +1,5 @@
 # AirType user config
+#:schema ./config.schema.json
 # Local app settings live under [localapp.*] below.
 # Web UI runtime settings live under [webui.*] below.
 

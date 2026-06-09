@@ -9,7 +9,9 @@ DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
+RESOURCES_DIR="$CONTENTS_DIR/Resources"
 BINARY_NAME="AirTypeMac"
+ICON_NAME="AirType"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This build script is intended for macOS."
@@ -30,10 +32,13 @@ swift build --package-path "$FRONTEND_DIR" -c release
 echo
 echo "Creating $APP_NAME.app..."
 rm -rf "$APP_DIR"
-mkdir -p "$MACOS_DIR"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$FRONTEND_DIR/.build/release/$BINARY_NAME" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
+
+echo "Generating app icon..."
+swift "$ROOT_DIR/scripts/generate-airtype-icon.swift" "$RESOURCES_DIR/$ICON_NAME.icns"
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -48,6 +53,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>$APP_NAME</string>
   <key>CFBundleDisplayName</key>
   <string>$APP_NAME</string>
+  <key>CFBundleIconFile</key>
+  <string>$ICON_NAME</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

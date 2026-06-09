@@ -6,6 +6,7 @@ struct AirTypeConfig {
     var microphone = MicrophoneConfig()
     var floatingDialog = FloatingDialogConfig()
     var hotkey = HotkeyConfig()
+    var webui = WebUIConfig()
 }
 
 struct ChineseMode {
@@ -41,6 +42,30 @@ struct HotkeyConfig {
     var trigger: HotkeyKey = .rightControl
 }
 
+struct WebUIConfig {
+    var whisper = WhisperServerConfig()
+    var llm = LLMServerConfig()
+}
+
+struct WhisperServerConfig {
+    var modelDir = ""
+    var modelFilename = ""
+    var serverBin = ""
+    var endpoint = ""
+    var language = "zh-tw"
+    var beam = 5
+    var temperature = 0.0
+}
+
+struct LLMServerConfig {
+    var provider = "llama.cpp"
+    var endpoint = "http://127.0.0.1:8080"
+    var model = ""
+    var contextLength = 8192
+    var temperature = 0.4
+    var system = "Summarize and answer questions using the transcript as the source of truth."
+}
+
 final class ConfigStore: ObservableObject {
     @Published private(set) var config = AirTypeConfig()
 
@@ -68,11 +93,11 @@ final class ConfigStore: ObservableObject {
             Logger.shared.log("Could not read config: \(path.path)")
             return
         }
-        config = parse(text)
+        config = Self.parse(text)
     }
 
     func updateChineseMode(_ mode: String) {
-        config.chineseMode.mode = ["zh-tw", "zh-cn"].contains(mode) ? mode : "zh-tw"
+        config.chineseMode.mode = Self.normalizeLanguage(mode)
         save()
     }
 
@@ -82,12 +107,12 @@ final class ConfigStore: ObservableObject {
     }
 
     func updateMicrophoneMode(_ mode: String) {
-        config.microphone.mode = ["on_demand", "always"].contains(mode) ? mode : "on_demand"
+        config.microphone.mode = Self.normalizeMicrophoneMode(mode)
         save()
     }
 
     func updatePreRollSeconds(_ seconds: Double) {
-        config.microphone.preRollSeconds = min(5.0, max(0.0, seconds))
+        config.microphone.preRollSeconds = Self.clamp(seconds, minimum: 0.0, maximum: 5.0)
         save()
     }
 
@@ -102,8 +127,8 @@ final class ConfigStore: ObservableObject {
     }
 
     func updateFloatingPosition(xRatio: Double, yRatio: Double) {
-        config.floatingDialog.positionXRatio = min(1.0, max(0.0, xRatio))
-        config.floatingDialog.positionYRatio = min(1.0, max(0.0, yRatio))
+        config.floatingDialog.positionXRatio = Self.clamp(xRatio, minimum: 0.0, maximum: 1.0)
+        config.floatingDialog.positionYRatio = Self.clamp(yRatio, minimum: 0.0, maximum: 1.0)
         save()
     }
 
@@ -115,55 +140,18 @@ final class ConfigStore: ObservableObject {
             at: path.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try? defaultConfigText().write(to: path, atomically: true, encoding: .utf8)
+        try? Self.tomlText(config).write(to: path, atomically: true, encoding: .utf8)
     }
 
-    private func parse(_ text: String) -> AirTypeConfig {
+    private static func parse(_ text: String) -> AirTypeConfig {
+        let table = parseTomlTable(text)
         var parsed = AirTypeConfig()
-        var section = ""
 
-        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = rawLine.split(separator: "#", maxSplits: 1).first.map(String.init) ?? ""
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty {
-                continue
-            }
-            if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
-                section = String(trimmed.dropFirst().dropLast())
-                continue
-            }
-            let parts = trimmed.split(separator: "=", maxSplits: 1).map(String.init)
-            guard parts.count == 2 else { continue }
-            let key = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
-            let value = unquote(parts[1].trimmingCharacters(in: .whitespacesAndNewlines))
-
-            switch (normalizedSection(section), key) {
-            case ("localapp.chinese-mode", "mode"):
-                parsed.chineseMode.mode = normalizeLanguage(value)
-            case ("localapp.backend-endpoint", "mode"):
-                parsed.backend.mode = value
-            case ("localapp.backend-endpoint", "local_endpoint"):
-                parsed.backend.localEndpoint = value
-            case ("localapp.backend-endpoint", "remote_endpoint"):
-                parsed.backend.remoteEndpoint = value
-            case ("localapp.microphone", "selected_order"):
-                parsed.microphone.selectedOrder = value
-            case ("localapp.microphone", "mode"):
-                parsed.microphone.mode = normalizeMicrophoneMode(value)
-            case ("localapp.microphone", "warm_mode"):
-                parsed.microphone.mode = normalizeMicrophoneMode(value)
-            case ("localapp.microphone", "pre_roll_seconds"):
-                parsed.microphone.preRollSeconds = Double(value) ?? 2.0
-            case ("localapp.floating-dialog", "position_x_ratio"):
-                parsed.floatingDialog.positionXRatio = Double(value) ?? 0.5
-            case ("localapp.floating-dialog", "position_y_ratio"):
-                parsed.floatingDialog.positionYRatio = Double(value) ?? 0.62
-            case ("localapp.floating-dialog", "move_lock"):
-                parsed.floatingDialog.moveLock = parseBool(value, defaultValue: true)
-            case ("localapp.hotkey", "trigger"):
-                parsed.hotkey.trigger = HotkeyKey(configValue: value)
-            default:
-                continue
+        for section in schema {
+            for field in section.fields {
+                if let value = table[normalizedSection(field.section)]?[field.key] {
+                    field.apply(&parsed, value)
+                }
             }
         }
 
@@ -176,73 +164,304 @@ final class ConfigStore: ObservableObject {
             withIntermediateDirectories: true
         )
         do {
-            try tomlText().write(to: path, atomically: true, encoding: .utf8)
+            try Self.tomlText(config).write(to: path, atomically: true, encoding: .utf8)
         } catch {
             Logger.shared.log("Could not write config: \(error)")
         }
     }
 
-    private func tomlText() -> String {
-        """
-        # AirType user config
-        # Local app settings live under [localapp.*].
-        # Web UI runtime settings live under [webui.*].
+    private static func tomlText(_ config: AirTypeConfig) -> String {
+        var lines: [String] = [
+            "# AirType user config",
+            "#:schema ./config.schema.json",
+            "# Local app settings live under [localapp.*].",
+            "# Web UI runtime settings live under [webui.*].",
+            ""
+        ]
 
-        [localapp.chinese-mode]
-        # Options: "zh-tw", "zh-cn"
-        mode = "\(config.chineseMode.mode)"
+        var previousGroup = ""
+        for section in schema {
+            if section.group != previousGroup {
+                if !previousGroup.isEmpty {
+                    lines.append("")
+                }
+                lines.append("#===============================================================================")
+                lines.append("# \(section.group)")
+                lines.append("#===============================================================================")
+                lines.append("")
+                previousGroup = section.group
+            } else {
+                lines.append("")
+            }
 
-        [localapp.backend-endpoint]
-        # Options: "local", "remote"
-        mode = "\(config.backend.mode)"
-        local_endpoint = "\(config.backend.localEndpoint)"
-        remote_endpoint = "\(config.backend.remoteEndpoint)"
+            lines.append("[\(section.name)]")
+            for field in section.fields {
+                if let comment = field.comment {
+                    lines.append("# \(comment)")
+                }
+                lines.append("\(field.key) = \(field.render(config))")
+            }
+        }
 
-        [localapp.microphone]
-        # Microphone Device. Leave empty to use the system default microphone.
-        selected_order = "\(config.microphone.selectedOrder)"
-        # Microphone Mode. Options: "on_demand", "always"
-        mode = "\(config.microphone.mode)"
-        pre_roll_seconds = \(format(config.microphone.preRollSeconds))
-
-        [localapp.floating-dialog]
-        # Position is stored as the dialog center ratio across the whole desktop.
-        position_x_ratio = \(format(config.floatingDialog.positionXRatio))
-        position_y_ratio = \(format(config.floatingDialog.positionYRatio))
-        move_lock = \(config.floatingDialog.moveLock ? "true" : "false")
-
-        [localapp.hotkey]
-        # Options: "right_ctrl", "right_option"
-        trigger = "\(config.hotkey.trigger.rawValue)"
-
-        """
+        return lines.joined(separator: "\n") + "\n"
     }
 
-    private func defaultConfigText() -> String {
-        tomlText()
+    private struct ConfigSectionSchema {
+        let group: String
+        let name: String
+        let fields: [ConfigFieldSchema]
     }
 
-    private func unquote(_ value: String) -> String {
+    private struct ConfigFieldSchema {
+        let section: String
+        let key: String
+        let comment: String?
+        let apply: (inout AirTypeConfig, String) -> Void
+        let render: (AirTypeConfig) -> String
+    }
+
+    private static let schema: [ConfigSectionSchema] = [
+        ConfigSectionSchema(
+            group: "Local App Settings",
+            name: "localapp.chinese-mode",
+            fields: [
+                stringField("localapp.chinese-mode", "mode", comment: #"Options: "zh-tw", "zh-cn""#,
+                            apply: { $0.chineseMode.mode = normalizeLanguage($1) },
+                            render: { $0.chineseMode.mode })
+            ]
+        ),
+        ConfigSectionSchema(
+            group: "Local App Settings",
+            name: "localapp.backend-endpoint",
+            fields: [
+                stringField("localapp.backend-endpoint", "mode", comment: #"Options: "local", "remote""#,
+                            apply: { $0.backend.mode = ["local", "remote"].contains($1) ? $1 : "local" },
+                            render: { $0.backend.mode }),
+                stringField("localapp.backend-endpoint", "local_endpoint",
+                            apply: { $0.backend.localEndpoint = $1 },
+                            render: { $0.backend.localEndpoint }),
+                stringField("localapp.backend-endpoint", "remote_endpoint",
+                            apply: { $0.backend.remoteEndpoint = $1 },
+                            render: { $0.backend.remoteEndpoint })
+            ]
+        ),
+        ConfigSectionSchema(
+            group: "Local App Settings",
+            name: "localapp.microphone",
+            fields: [
+                stringField("localapp.microphone", "selected_order", comment: "Microphone Device. Leave empty to use the system default microphone.",
+                            apply: { $0.microphone.selectedOrder = $1 },
+                            render: { $0.microphone.selectedOrder }),
+                stringField("localapp.microphone", "mode", comment: #"Microphone Mode. Options: "on_demand", "always""#,
+                            apply: { $0.microphone.mode = normalizeMicrophoneMode($1) },
+                            render: { $0.microphone.mode }),
+                numberField("localapp.microphone", "pre_roll_seconds",
+                            apply: { $0.microphone.preRollSeconds = clamp(parseDouble($1, defaultValue: 2.0), minimum: 0.0, maximum: 5.0) },
+                            render: { format($0.microphone.preRollSeconds) })
+            ]
+        ),
+        ConfigSectionSchema(
+            group: "Local App Settings",
+            name: "localapp.floating-dialog",
+            fields: [
+                numberField("localapp.floating-dialog", "position_x_ratio", comment: "Position is stored as the dialog center ratio across the whole desktop.",
+                            apply: { $0.floatingDialog.positionXRatio = clamp(parseDouble($1, defaultValue: 0.5), minimum: 0.0, maximum: 1.0) },
+                            render: { format($0.floatingDialog.positionXRatio) }),
+                numberField("localapp.floating-dialog", "position_y_ratio",
+                            apply: { $0.floatingDialog.positionYRatio = clamp(parseDouble($1, defaultValue: 0.62), minimum: 0.0, maximum: 1.0) },
+                            render: { format($0.floatingDialog.positionYRatio) }),
+                boolField("localapp.floating-dialog", "move_lock",
+                          apply: { $0.floatingDialog.moveLock = parseBool($1, defaultValue: true) },
+                          render: { $0.floatingDialog.moveLock ? "true" : "false" })
+            ]
+        ),
+        ConfigSectionSchema(
+            group: "Local App Settings",
+            name: "localapp.hotkey",
+            fields: [
+                stringField("localapp.hotkey", "trigger", comment: #"Options: "right_ctrl", "right_option""#,
+                            apply: { $0.hotkey.trigger = HotkeyKey(configValue: $1) },
+                            render: { $0.hotkey.trigger.rawValue })
+            ]
+        ),
+        ConfigSectionSchema(
+            group: "Web UI Settings",
+            name: "webui.whisper-server",
+            fields: [
+                stringField("webui.whisper-server", "model_dir",
+                            apply: { $0.webui.whisper.modelDir = $1 },
+                            render: { $0.webui.whisper.modelDir }),
+                stringField("webui.whisper-server", "model_filename",
+                            apply: { $0.webui.whisper.modelFilename = $1 },
+                            render: { $0.webui.whisper.modelFilename }),
+                stringField("webui.whisper-server", "server_bin",
+                            apply: { $0.webui.whisper.serverBin = $1 },
+                            render: { $0.webui.whisper.serverBin }),
+                stringField("webui.whisper-server", "endpoint",
+                            apply: { $0.webui.whisper.endpoint = $1 },
+                            render: { $0.webui.whisper.endpoint }),
+                stringField("webui.whisper-server", "language",
+                            apply: { $0.webui.whisper.language = $1.isEmpty ? "zh-tw" : $1 },
+                            render: { $0.webui.whisper.language }),
+                intField("webui.whisper-server", "beam",
+                         apply: { $0.webui.whisper.beam = clamp(parseInt($1, defaultValue: 5), minimum: 1, maximum: 16) },
+                         render: { String($0.webui.whisper.beam) }),
+                numberField("webui.whisper-server", "temperature",
+                            apply: { $0.webui.whisper.temperature = clamp(parseDouble($1, defaultValue: 0), minimum: 0, maximum: 2) },
+                            render: { format($0.webui.whisper.temperature) })
+            ]
+        ),
+        ConfigSectionSchema(
+            group: "Web UI Settings",
+            name: "webui.llm-server",
+            fields: [
+                stringField("webui.llm-server", "provider",
+                            apply: { $0.webui.llm.provider = $1.isEmpty ? "llama.cpp" : $1 },
+                            render: { $0.webui.llm.provider }),
+                stringField("webui.llm-server", "endpoint",
+                            apply: { $0.webui.llm.endpoint = $1.isEmpty ? "http://127.0.0.1:8080" : $1 },
+                            render: { $0.webui.llm.endpoint }),
+                stringField("webui.llm-server", "model",
+                            apply: { $0.webui.llm.model = $1 },
+                            render: { $0.webui.llm.model }),
+                intField("webui.llm-server", "contextLength",
+                         apply: { $0.webui.llm.contextLength = max(1, parseInt($1, defaultValue: 8192)) },
+                         render: { String($0.webui.llm.contextLength) }),
+                numberField("webui.llm-server", "temperature",
+                            apply: { $0.webui.llm.temperature = clamp(parseDouble($1, defaultValue: 0.4), minimum: 0, maximum: 2) },
+                            render: { format($0.webui.llm.temperature) }),
+                stringField("webui.llm-server", "system",
+                            apply: { $0.webui.llm.system = $1 },
+                            render: { $0.webui.llm.system })
+            ]
+        )
+    ]
+
+    private static func stringField(
+        _ section: String,
+        _ key: String,
+        comment: String? = nil,
+        apply: @escaping (inout AirTypeConfig, String) -> Void,
+        render: @escaping (AirTypeConfig) -> String
+    ) -> ConfigFieldSchema {
+        ConfigFieldSchema(
+            section: section,
+            key: key,
+            comment: comment,
+            apply: apply,
+            render: { tomlString(render($0)) }
+        )
+    }
+
+    private static func numberField(
+        _ section: String,
+        _ key: String,
+        comment: String? = nil,
+        apply: @escaping (inout AirTypeConfig, String) -> Void,
+        render: @escaping (AirTypeConfig) -> String
+    ) -> ConfigFieldSchema {
+        ConfigFieldSchema(section: section, key: key, comment: comment, apply: apply, render: render)
+    }
+
+    private static func intField(
+        _ section: String,
+        _ key: String,
+        comment: String? = nil,
+        apply: @escaping (inout AirTypeConfig, String) -> Void,
+        render: @escaping (AirTypeConfig) -> String
+    ) -> ConfigFieldSchema {
+        ConfigFieldSchema(section: section, key: key, comment: comment, apply: apply, render: render)
+    }
+
+    private static func boolField(
+        _ section: String,
+        _ key: String,
+        comment: String? = nil,
+        apply: @escaping (inout AirTypeConfig, String) -> Void,
+        render: @escaping (AirTypeConfig) -> String
+    ) -> ConfigFieldSchema {
+        ConfigFieldSchema(section: section, key: key, comment: comment, apply: apply, render: render)
+    }
+
+    private static func parseTomlTable(_ text: String) -> [String: [String: String]] {
+        var table: [String: [String: String]] = [:]
+        var section = ""
+
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = stripComment(String(rawLine)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                continue
+            }
+            if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
+                section = normalizedSection(String(trimmed.dropFirst().dropLast()))
+                continue
+            }
+
+            let parts = trimmed.split(separator: "=", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            let key = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = unquote(parts[1].trimmingCharacters(in: .whitespacesAndNewlines))
+            table[section, default: [:]][key] = value
+        }
+
+        return table
+    }
+
+    private static func stripComment(_ line: String) -> String {
+        var result = ""
+        var inString = false
+        var escaped = false
+        for char in line {
+            if escaped {
+                result.append(char)
+                escaped = false
+            } else if char == "\\" && inString {
+                result.append(char)
+                escaped = true
+            } else if char == "\"" {
+                result.append(char)
+                inString.toggle()
+            } else if char == "#" && !inString {
+                break
+            } else {
+                result.append(char)
+            }
+        }
+        return result
+    }
+
+    private static func unquote(_ value: String) -> String {
         var text = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.hasPrefix("\""), text.hasSuffix("\""), text.count >= 2 {
             text.removeFirst()
             text.removeLast()
         }
-        return text.replacingOccurrences(of: "\\\"", with: "\"")
+        return text
+            .replacingOccurrences(of: "\\\"", with: "\"")
+            .replacingOccurrences(of: "\\\\", with: "\\")
     }
 
-    private func normalizedSection(_ section: String) -> String {
+    private static func tomlString(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+
+    private static func normalizedSection(_ section: String) -> String {
         switch section {
-        case "localapp.backend":
+        case "localapp.backend", "localapp.backend_endpoint":
             return "localapp.backend-endpoint"
-        case "localapp.backend_endpoint":
-            return "localapp.backend-endpoint"
+        case "webui.whisper":
+            return "webui.whisper-server"
+        case "webui.llm":
+            return "webui.llm-server"
         default:
             return section
         }
     }
 
-    private func normalizeLanguage(_ value: String) -> String {
+    private static func normalizeLanguage(_ value: String) -> String {
         let lowered = value.lowercased()
         if ["traditional_chinese", "traditional", "tw", "zh_tw"].contains(lowered) {
             return "zh-tw"
@@ -253,7 +472,7 @@ final class ConfigStore: ObservableObject {
         return ["zh-tw", "zh-cn"].contains(lowered) ? lowered : "zh-tw"
     }
 
-    private func normalizeMicrophoneMode(_ value: String) -> String {
+    private static func normalizeMicrophoneMode(_ value: String) -> String {
         let lowered = value.lowercased()
         if ["always", "always_warm", "warm"].contains(lowered) {
             return "always"
@@ -261,7 +480,7 @@ final class ConfigStore: ObservableObject {
         return "on_demand"
     }
 
-    private func parseBool(_ value: String, defaultValue: Bool) -> Bool {
+    private static func parseBool(_ value: String, defaultValue: Bool) -> Bool {
         let lowered = value.lowercased()
         if ["1", "true", "yes", "on", "locked"].contains(lowered) {
             return true
@@ -272,7 +491,23 @@ final class ConfigStore: ObservableObject {
         return defaultValue
     }
 
-    private func format(_ value: Double) -> String {
+    private static func parseDouble(_ value: String, defaultValue: Double) -> Double {
+        Double(value) ?? defaultValue
+    }
+
+    private static func parseInt(_ value: String, defaultValue: Int) -> Int {
+        Int(value) ?? Int(Double(value) ?? Double(defaultValue))
+    }
+
+    private static func clamp(_ value: Double, minimum: Double, maximum: Double) -> Double {
+        min(maximum, max(minimum, value))
+    }
+
+    private static func clamp(_ value: Int, minimum: Int, maximum: Int) -> Int {
+        min(maximum, max(minimum, value))
+    }
+
+    private static func format(_ value: Double) -> String {
         String(format: "%.4f", value)
             .replacingOccurrences(of: #"0+$"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"\.$"#, with: "", options: .regularExpression)
