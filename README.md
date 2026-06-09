@@ -96,8 +96,8 @@ It also offers to prepare local transcription:
 - installs `whisper-cpp` with Homebrew on macOS
 - downloads the default model `ggml-large-v3-turbo-q5_0.bin`
 - stores the model in `~/.airtype/models`
-- updates `config.toml` backend settings to use that model
-- records local whisper.cpp paths in `config.toml` under `[backend.whisper-server]`
+- updates `config.toml` Web UI settings to use that model
+- records local whisper.cpp paths in `config.toml` under `[webui.whisper-server]`
 
 ### Run
 
@@ -145,17 +145,17 @@ macOS will ask for Microphone permission when recording. If the global hotkey or
 | `AIRTYPE_WHISPER_LANGUAGE` | — | Whisper language code (e.g. `zh-tw`) |
 | `AIRTYPE_FLOATING_WHISPER_BEAM_SIZE` | `1` | Beam size for floating dialog transcription |
 | `WHISPER_CPP_ROOT` | `~/whisper.cpp/whisper.cpp.git` | whisper.cpp source directory |
-| `WHISPER_CPP_MODEL` | `[backend.whisper-server] model_dir` + `model_filename` in `config.toml` | Optional override for the GGML model file |
-| `WHISPER_CPP_SERVER_BIN` | `[backend.whisper-server] server_bin` in `config.toml` | Optional override for whisper-server |
+| `WHISPER_CPP_MODEL` | `[webui.whisper-server] model_dir` + `model_filename` in `config.toml` | Optional override for the GGML model file |
+| `WHISPER_CPP_SERVER_BIN` | `[webui.whisper-server] server_bin` in `config.toml` | Optional override for whisper-server |
 | `WHISPER_CPP_SERVER_ENDPOINT` | — | Remote whisper.cpp server URL |
 | `WHISPER_CPP_SERVER_HOST` | `127.0.0.1` | Local server bind host |
 | `WHISPER_CPP_SERVER_PORT` | — | Local server bind port (auto if unset) |
 | `WHISPER_CPP_SERVER_ARGS` | — | Extra args for whisper-server |
 
-### Backend Settings (`config.toml`)
+### Web UI Settings (`config.toml`)
 
 ```toml
-[backend.whisper-server]
+[webui.whisper-server]
 model_dir = "~/.airtype/models"
 model_filename = "ggml-large-v3-turbo-q5_0.bin"
 server_bin = "/opt/homebrew/bin/whisper-server"
@@ -164,7 +164,7 @@ language = "zh-tw"
 beam = 5
 temperature = 0
 
-[backend.llm-server]
+[webui.llm-server]
 provider = "llama.cpp"
 endpoint = "http://127.0.0.1:8088/"
 model = "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL"
@@ -206,7 +206,7 @@ Global keyboard monitoring requires Accessibility permission:
 |---|---|
 | Start/Stop recording | Double-press configured **Right Ctrl** or **Right Option** |
 
-Configure it in the macOS menu under **Hotkey**, or set `[frontend.hotkey] trigger = "right_ctrl"` / `"right_option"` in `config.toml`.
+Configure it in the macOS menu under **Hotkey**, or set `[localapp.hotkey] trigger = "right_ctrl"` / `"right_option"` in `config.toml`.
 
 ## License
 

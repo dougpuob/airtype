@@ -138,29 +138,29 @@ final class ConfigStore: ObservableObject {
             let value = unquote(parts[1].trimmingCharacters(in: .whitespacesAndNewlines))
 
             switch (normalizedSection(section), key) {
-            case ("frontend.chinese-mode", "mode"):
+            case ("localapp.chinese-mode", "mode"):
                 parsed.chineseMode.mode = normalizeLanguage(value)
-            case ("frontend.backend-endpoint", "mode"):
+            case ("localapp.backend-endpoint", "mode"):
                 parsed.backend.mode = value
-            case ("frontend.backend-endpoint", "local_endpoint"):
+            case ("localapp.backend-endpoint", "local_endpoint"):
                 parsed.backend.localEndpoint = value
-            case ("frontend.backend-endpoint", "remote_endpoint"):
+            case ("localapp.backend-endpoint", "remote_endpoint"):
                 parsed.backend.remoteEndpoint = value
-            case ("frontend.microphone", "selected_order"):
+            case ("localapp.microphone", "selected_order"):
                 parsed.microphone.selectedOrder = value
-            case ("frontend.microphone", "mode"):
+            case ("localapp.microphone", "mode"):
                 parsed.microphone.mode = normalizeMicrophoneMode(value)
-            case ("frontend.microphone", "warm_mode"):
+            case ("localapp.microphone", "warm_mode"):
                 parsed.microphone.mode = normalizeMicrophoneMode(value)
-            case ("frontend.microphone", "pre_roll_seconds"):
+            case ("localapp.microphone", "pre_roll_seconds"):
                 parsed.microphone.preRollSeconds = Double(value) ?? 2.0
-            case ("frontend.floating-dialog", "position_x_ratio"):
+            case ("localapp.floating-dialog", "position_x_ratio"):
                 parsed.floatingDialog.positionXRatio = Double(value) ?? 0.5
-            case ("frontend.floating-dialog", "position_y_ratio"):
+            case ("localapp.floating-dialog", "position_y_ratio"):
                 parsed.floatingDialog.positionYRatio = Double(value) ?? 0.62
-            case ("frontend.floating-dialog", "move_lock"):
+            case ("localapp.floating-dialog", "move_lock"):
                 parsed.floatingDialog.moveLock = parseBool(value, defaultValue: true)
-            case ("frontend.hotkey", "trigger"):
+            case ("localapp.hotkey", "trigger"):
                 parsed.hotkey.trigger = HotkeyKey(configValue: value)
             default:
                 continue
@@ -185,32 +185,33 @@ final class ConfigStore: ObservableObject {
     private func tomlText() -> String {
         """
         # AirType user config
-        # Backend runtime settings live under [backend.*].
+        # Local app settings live under [localapp.*].
+        # Web UI runtime settings live under [webui.*].
 
-        [frontend.chinese-mode]
+        [localapp.chinese-mode]
         # Options: "zh-tw", "zh-cn"
         mode = "\(config.chineseMode.mode)"
 
-        [frontend.backend-endpoint]
+        [localapp.backend-endpoint]
         # Options: "local", "remote"
         mode = "\(config.backend.mode)"
         local_endpoint = "\(config.backend.localEndpoint)"
         remote_endpoint = "\(config.backend.remoteEndpoint)"
 
-        [frontend.microphone]
+        [localapp.microphone]
         # Microphone Device. Leave empty to use the system default microphone.
         selected_order = "\(config.microphone.selectedOrder)"
         # Microphone Mode. Options: "on_demand", "always"
         mode = "\(config.microphone.mode)"
         pre_roll_seconds = \(format(config.microphone.preRollSeconds))
 
-        [frontend.floating-dialog]
+        [localapp.floating-dialog]
         # Position is stored as the dialog center ratio across the whole desktop.
         position_x_ratio = \(format(config.floatingDialog.positionXRatio))
         position_y_ratio = \(format(config.floatingDialog.positionYRatio))
         move_lock = \(config.floatingDialog.moveLock ? "true" : "false")
 
-        [frontend.hotkey]
+        [localapp.hotkey]
         # Options: "right_ctrl", "right_option"
         trigger = "\(config.hotkey.trigger.rawValue)"
 
@@ -232,20 +233,10 @@ final class ConfigStore: ObservableObject {
 
     private func normalizedSection(_ section: String) -> String {
         switch section {
-        case "chinese-mode":
-            return "frontend.chinese-mode"
-        case "backend":
-            return "frontend.backend-endpoint"
-        case "frontend.backend":
-            return "frontend.backend-endpoint"
-        case "frontend.backend_endpoint":
-            return "frontend.backend-endpoint"
-        case "microphone":
-            return "frontend.microphone"
-        case "floating-dialog":
-            return "frontend.floating-dialog"
-        case "hotkey":
-            return "frontend.hotkey"
+        case "localapp.backend":
+            return "localapp.backend-endpoint"
+        case "localapp.backend_endpoint":
+            return "localapp.backend-endpoint"
         default:
             return section
         }

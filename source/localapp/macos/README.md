@@ -21,19 +21,19 @@ swift run AirTypeMac
 - desktop-ratio dialog position persisted to `config.toml`
 - configured right Ctrl or right Option double-press hotkey via Quartz event tap
 - microphone recording through `AVAudioEngine`
-- automatic local FastAPI backend startup when `[frontend.backend-endpoint].mode = "local"`
+- automatic local FastAPI backend startup when `[localapp.backend-endpoint].mode = "local"`
 - `/api/transcribe/ime` multipart upload
 - paste ASR text back into the previous app
 
 ## Backend
 
-When `[frontend.backend-endpoint].mode = "local"`, the SwiftUI frontend checks `/api/health`. If the backend is not already running, it starts:
+When `[localapp.backend-endpoint].mode = "local"`, the SwiftUI frontend checks `/api/health`. If the backend is not already running, it starts:
 
 ```bash
 .venv/bin/python -m uvicorn app.main:app --host localhost --port 8003
 ```
 
-The command runs from the project `source/webui/` directory. The backend reads `[backend.whisper-server]` from `config.toml` for the local `whisper-server` and model paths.
+The command runs from the project `source/webui/` directory. The Web UI reads `[webui.whisper-server]` from `config.toml` for the local `whisper-server` and model paths.
 
 ## Config
 

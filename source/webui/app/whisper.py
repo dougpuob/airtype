@@ -117,8 +117,8 @@ def _read_backend_config_settings() -> Dict[str, Any]:
     except (OSError, tomllib.TOMLDecodeError):
         return {}
 
-    backend = config.get("backend", {})
-    if not isinstance(backend, dict):
+    webui = config.get("webui", {})
+    if not isinstance(webui, dict):
         return {}
 
     settings: Dict[str, Any] = {}
@@ -128,9 +128,9 @@ def _read_backend_config_settings() -> Dict[str, Any]:
     }.items():
         value = next(
             (
-                backend.get(section_name)
+                webui.get(section_name)
                 for section_name in section_names
-                if isinstance(backend.get(section_name), dict)
+                if isinstance(webui.get(section_name), dict)
             ),
             None,
         )
@@ -265,7 +265,7 @@ class WhisperCppTranscriber:
         use_local_server = not (server_endpoint or "").strip()
         if use_local_server and not Path(selected_model).exists():
             raise WhisperCppNotConfigured(
-                f"whisper.cpp model not found: {selected_model}. Set [backend.whisper-server].model_dir and model_filename in config.toml."
+                f"whisper.cpp model not found: {selected_model}. Set [webui.whisper-server].model_dir and model_filename in config.toml."
             )
 
         with tempfile.TemporaryDirectory(prefix="airtype-transcribe-") as work_dir:
@@ -397,7 +397,7 @@ class WhisperCppTranscriber:
             server_bin = self.server_binary
             if not server_bin:
                 raise WhisperCppNotConfigured(
-                    "whisper.cpp server executable not found. Set [backend.whisper-server].server_bin in config.toml."
+                    "whisper.cpp server executable not found. Set [webui.whisper-server].server_bin in config.toml."
                 )
 
             host = os.getenv("WHISPER_CPP_SERVER_HOST", "127.0.0.1")
