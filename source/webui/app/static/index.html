@@ -389,6 +389,7 @@
         }
 
         .content {
+            height: 100%;
             min-height: 0;
             overflow: auto;
             background: var(--panel);
@@ -651,6 +652,19 @@
             box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.72);
         }
 
+        .drop-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+            gap: 18px;
+            align-items: start;
+        }
+
+        .drop-main {
+            min-width: 0;
+            display: grid;
+            gap: 14px;
+        }
+
         .drop-zone.dragging {
             border-color: #6f8ee8;
             background: #eef4ff;
@@ -870,18 +884,19 @@
         .source-row {
             display: grid;
             grid-template-columns: 1fr auto;
-            gap: 10px;
+            gap: 8px;
         }
 
         .url-input {
             min-width: 0;
-            height: 36px;
+            height: 30px;
             color: var(--text);
             background: #ffffff;
             border: 1px solid var(--line);
             border-radius: 8px;
-            padding: 0 12px;
+            padding: 0 10px;
             outline: 0;
+            font-size: 12px;
         }
 
         .url-input:focus {
@@ -902,13 +917,18 @@
 
         .file-info {
             display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 10px;
+            grid-template-columns: 1fr;
+            gap: 6px;
+            width: 100%;
         }
 
         .file-chip {
             min-width: 0;
-            padding: 10px 12px;
+            display: grid;
+            grid-template-columns: 54px minmax(0, 1fr);
+            align-items: center;
+            gap: 8px;
+            padding: 7px 10px;
             background: #ffffff;
             border: 1px solid var(--line);
             border-radius: 8px;
@@ -920,7 +940,7 @@
             font-size: 10px;
             font-weight: 800;
             text-transform: uppercase;
-            margin-bottom: 4px;
+            margin-bottom: 0;
         }
 
         .file-chip strong {
@@ -993,6 +1013,238 @@
             to { transform: translateX(340%); }
         }
 
+        .wavebar {
+            display: none;
+        }
+
+        .transcript-import {
+            display: block;
+            padding-bottom: 12px;
+        }
+
+        #transcriptPage {
+            height: 100%;
+            overflow: hidden;
+            grid-template-rows: auto minmax(0, 1fr);
+            padding-bottom: 20px;
+        }
+
+        .transcript-workbench {
+            min-height: 0;
+            overflow: hidden;
+            border-top: 0;
+            padding-top: 0;
+            grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+            gap: 18px;
+            height: 100%;
+        }
+
+        .transcript-side-panel {
+            top: 16px;
+            height: 100%;
+            min-height: 0;
+            overflow: hidden;
+            grid-template-rows: auto auto minmax(0, 1fr);
+            background: #ffffff;
+            box-shadow: 0 1px 2px rgba(35, 45, 66, 0.04);
+        }
+
+        .transcript-side-panel h2 {
+            font-size: 18px;
+        }
+
+        .transcript-review-panel {
+            min-width: 0;
+            min-height: 0;
+            overflow: hidden;
+            display: grid;
+            gap: 14px;
+            grid-template-rows: auto minmax(0, 1fr);
+        }
+
+        .media-player-card {
+            position: sticky;
+            top: 16px;
+            z-index: 2;
+            display: grid;
+            gap: 12px;
+            padding: 16px;
+            background: #ffffff;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            box-shadow: 0 1px 2px rgba(35, 45, 66, 0.04);
+        }
+
+        .player-heading {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+        }
+
+        .player-heading h2 {
+            margin: 2px 0 0;
+            color: var(--text);
+            font-size: 18px;
+            line-height: 1.25;
+            overflow-wrap: anywhere;
+        }
+
+        .player-status {
+            flex: 0 0 auto;
+            color: #47606f;
+            background: #eef6fa;
+            border: 1px solid #d7e8ef;
+            border-radius: 999px;
+            padding: 5px 10px;
+            font-size: 11px;
+            font-weight: 800;
+        }
+
+        .media-viewer {
+            width: 100%;
+            max-height: 320px;
+            aspect-ratio: 16 / 9;
+            background: #101318;
+            border-radius: 8px;
+        }
+
+        .audio-player {
+            width: 100%;
+        }
+
+        .record-list {
+            min-height: 0;
+            overflow-y: auto;
+            padding-right: 2px;
+            overscroll-behavior: contain;
+        }
+
+        #recordList {
+            height: 100%;
+            min-height: 0;
+            overflow-y: scroll;
+            padding-right: 8px;
+            scrollbar-gutter: stable;
+            scrollbar-width: auto;
+            scrollbar-color: #9aa4b2 #edf1f6;
+            overscroll-behavior: contain;
+        }
+
+        #recordList::-webkit-scrollbar {
+            width: 12px;
+        }
+
+        #recordList::-webkit-scrollbar-track {
+            background: #edf1f6;
+            border-radius: 999px;
+        }
+
+        #recordList::-webkit-scrollbar-thumb {
+            background: #9aa4b2;
+            border: 3px solid #edf1f6;
+            border-radius: 999px;
+        }
+
+        #recordList::-webkit-scrollbar-thumb:hover {
+            background: #778292;
+        }
+
+        #transcriptScrollPanel {
+            height: clamp(260px, calc(100vh - 620px), 520px);
+            min-height: 0;
+            overflow-y: scroll;
+            padding-right: 8px;
+            scroll-behavior: smooth;
+            scroll-padding-block: 40%;
+            scrollbar-gutter: stable;
+            scrollbar-width: auto;
+            scrollbar-color: #9aa4b2 #edf1f6;
+            overscroll-behavior: contain;
+        }
+
+        #transcriptScrollPanel::-webkit-scrollbar {
+            width: 12px;
+        }
+
+        #transcriptScrollPanel::-webkit-scrollbar-track {
+            background: #edf1f6;
+            border-radius: 999px;
+        }
+
+        #transcriptScrollPanel::-webkit-scrollbar-thumb {
+            background: #9aa4b2;
+            border: 3px solid #edf1f6;
+            border-radius: 999px;
+        }
+
+        #transcriptScrollPanel::-webkit-scrollbar-thumb:hover {
+            background: #778292;
+        }
+
+        #segments {
+            min-height: 0;
+        }
+
+        .segment {
+            position: relative;
+            display: grid;
+            grid-template-columns: minmax(198px, 220px) minmax(0, 1fr);
+            align-items: center;
+            gap: 12px;
+            background: #ffffff;
+            border: 1px solid var(--line);
+            padding: 9px 12px;
+            margin-bottom: 6px;
+            box-shadow: 0 1px 2px rgba(35, 45, 66, 0.03);
+        }
+
+        .segment:hover {
+            border-color: #c8d4e3;
+        }
+
+        .segment.active {
+            background: #f3f6ff;
+            border: 1px solid #9db2ff;
+            padding: 9px 12px;
+            box-shadow: inset 3px 0 0 var(--purple-2);
+        }
+
+        .segment.active .segment-meta,
+        .segment.active .source,
+        .segment.active .segment-text {
+            color: var(--text);
+        }
+
+        .segment.active .segment-meta,
+        .segment.active .segment-time {
+            color: #4f5663;
+        }
+
+        .segment-meta {
+            color: #4f5663;
+            font-size: 11px;
+            font-weight: 500;
+            margin-bottom: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .segment-text {
+            min-width: 0;
+            font-weight: 650;
+            line-height: 1.45;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .segment-time {
+            color: #4f5663;
+            font-weight: 500;
+        }
+
         .toast {
             position: fixed;
             right: 28px;
@@ -1058,12 +1310,31 @@
                 grid-template-columns: 1fr;
             }
 
+            .drop-layout {
+                grid-template-columns: 1fr;
+            }
+
             .results-panel {
+                grid-template-columns: 1fr;
+            }
+
+            .transcript-workbench {
                 grid-template-columns: 1fr;
             }
 
             .transcript-side-panel {
                 position: static;
+                max-height: none;
+                height: auto;
+            }
+
+            .media-player-card {
+                position: static;
+            }
+
+            .record-list {
+                max-height: 48vh;
+                overflow-y: auto;
             }
 
             .settings-grid {
@@ -1165,31 +1436,35 @@
             </div>
 
             <div class="content" id="transcriptPage">
-                <section class="empty-state" id="emptyState">
+                <section class="transcript-import" id="emptyState">
                     <div class="drop-zone" id="dropZone">
-                        <div>
-                            <div class="drop-kicker">Import media</div>
-                            <div class="drop-title">Drop an audio or video file to transcribe</div>
-                            <div class="drop-copy">Supports audio and video files. AirType extracts audio with ffmpeg, then sends it to whisper.cpp for transcript segments.</div>
-                        </div>
-                        <div class="drop-actions">
-                            <label class="toolbar-btn primary" for="audioFile">Choose File</label>
-                            <button class="toolbar-btn danger" id="stopJobButton" hidden>Stop</button>
-                            <button class="toolbar-btn" id="clearTranscriptButton">Clear Transcript</button>
-                            <span class="progress" id="progressText"></span>
-                        </div>
-                        <div class="file-info" id="fileInfo">
-                            <div class="file-chip">
-                                <span>File</span>
-                                <strong id="fileName">No file selected</strong>
+                        <div class="drop-layout">
+                            <div class="drop-main">
+                                <div>
+                                    <div class="drop-kicker">Import media</div>
+                                    <div class="drop-title">Drop an audio or video file, or paste a media URL</div>
+                                    <div class="drop-copy">AirType keeps the source media with each transcript, so playback and segments can stay aligned while you review.</div>
+                                </div>
+                                <div class="drop-actions">
+                                    <label class="toolbar-btn primary" for="audioFile">Choose File</label>
+                                    <button class="toolbar-btn danger" id="stopJobButton" hidden>Stop</button>
+                                    <button class="toolbar-btn" id="clearTranscriptButton">Clear Transcript</button>
+                                    <span class="progress" id="progressText"></span>
+                                </div>
                             </div>
-                            <div class="file-chip">
-                                <span>Size</span>
-                                <strong id="fileSize">--</strong>
-                            </div>
-                            <div class="file-chip">
-                                <span>Type</span>
-                                <strong id="fileType">--</strong>
+                            <div class="file-info" id="fileInfo">
+                                <div class="file-chip">
+                                    <span>File</span>
+                                    <strong id="fileName">No file selected</strong>
+                                </div>
+                                <div class="file-chip">
+                                    <span>Size</span>
+                                    <strong id="fileSize">--</strong>
+                                </div>
+                                <div class="file-chip">
+                                    <span>Type</span>
+                                    <strong id="fileType">--</strong>
+                                </div>
                             </div>
                         </div>
                         <div class="progress-wrap" aria-label="Transcription progress">
@@ -1201,15 +1476,31 @@
                         </div>
                     </div>
                 </section>
-                <section class="results-panel">
+                <section class="results-panel transcript-workbench">
                     <aside class="transcript-side-panel">
-                        <h2 id="transcriptTitle">Transcript</h2>
-                        <p>Review timestamped segments from the current media source.</p>
+                        <div>
+                            <div class="drop-kicker">Library</div>
+                            <h2>Transcripts</h2>
+                        </div>
+                        <p>Recent media transcripts. Right-click a record to rename or delete it.</p>
                         <div class="record-list" id="recordList"></div>
                     </aside>
-                    <div class="transcript-segments-panel">
-                        <div class="debug-panel" id="transcriptDebug" hidden></div>
-                        <div id="segments"></div>
+                    <div class="transcript-review-panel">
+                        <section class="media-player-card" id="mediaPlayerCard">
+                            <div class="player-heading">
+                                <div>
+                                    <div class="drop-kicker">Now reviewing</div>
+                                    <h2 id="transcriptTitle">Transcript</h2>
+                                </div>
+                                <span class="player-status" id="playerStatus">No media loaded</span>
+                            </div>
+                            <video class="media-viewer" id="mediaViewer" controls playsinline hidden></video>
+                            <audio class="audio-player" id="audioViewer" controls hidden></audio>
+                        </section>
+                        <div class="transcript-scroll-panel" id="transcriptScrollPanel">
+                            <div class="debug-panel" id="transcriptDebug" hidden></div>
+                            <div id="segments"></div>
+                        </div>
                     </div>
                 </section>
             </div>
@@ -1372,6 +1663,7 @@
         ];
 
         const segmentsEl = document.getElementById("segments");
+        const transcriptScrollPanel = document.getElementById("transcriptScrollPanel");
         const emptyState = document.getElementById("emptyState");
         const segmentCount = document.getElementById("segmentCount");
         const toast = document.getElementById("toast");
@@ -1401,6 +1693,10 @@
         const fileName = document.getElementById("fileName");
         const fileSize = document.getElementById("fileSize");
         const fileType = document.getElementById("fileType");
+        const mediaPlayerCard = document.getElementById("mediaPlayerCard");
+        const mediaViewer = document.getElementById("mediaViewer");
+        const audioViewer = document.getElementById("audioViewer");
+        const playerStatus = document.getElementById("playerStatus");
         const transcriptPage = document.getElementById("transcriptPage");
         const imePage = document.getElementById("imePage");
         const settingsPage = document.getElementById("settingsPage");
@@ -1441,6 +1737,9 @@
         let contextRecord = null;
         let renameRecordTarget = null;
         let dropInProgress = false;
+        let activeMedia = null;
+        let mediaObjectUrl = null;
+        let lastAutoScrolledIndex = -1;
         let appSettings = loadSettings();
         let localModels = [];
         const llmProviderEndpoints = {
@@ -1475,21 +1774,23 @@
                 .forEach(({ segment, index }) => {
                     const item = document.createElement("article");
                     item.className = `segment${index === selectedIndex ? " active" : ""}`;
+                    item.dataset.segmentIndex = String(index);
                     const hasTimestamps = segment.has_timestamps !== false;
+                    const time = segment.time || "time unavailable";
                     const duration = segment.duration_text || (hasTimestamps ? `${Math.max(0, Number(segment.end || 0) - Number(segment.start || 0)).toFixed(1)}s` : "time unavailable");
-                    const textLength = typeof segment.text_length === "number" ? segment.text_length : segment.text.length;
+                    const timeline = duration === "time unavailable" ? time : `${time} (${duration})`;
                     item.innerHTML = `
                         <div class="segment-meta">
-                            <span>${segment.time || "time unavailable"}</span>
-                            <span>${duration}</span>
-                            <span>${textLength} chars</span>
-                            <span class="source">file</span>
+                            <span class="segment-time">${escapeHtml(timeline)}</span>
                         </div>
-                        <div class="segment-text">${segment.text}</div>
+                        <div class="segment-text">${escapeHtml(segment.text)}</div>
                     `;
                     item.addEventListener("click", () => {
                         selectedIndex = index;
+                        lastAutoScrolledIndex = -1;
+                        seekToSegment(segment);
                         renderSegments();
+                        scrollActiveSegmentIntoView("smooth");
                     });
                     segmentsEl.appendChild(item);
                 });
@@ -1704,6 +2005,7 @@
                 renderSegments();
                 setSourceInfo("", null, "");
                 setTranscriptTitle("");
+                clearMediaPlayer();
             }
             await loadTranscriptRecords();
             showToast("Transcript deleted");
@@ -1723,6 +2025,7 @@
                 const title = record.title || record.source?.name || "Transcript";
                 setTranscriptTitle(title);
                 setSourceInfo(title, record.source?.size ?? null, record.source?.type || "record");
+                loadRecordMedia(record);
                 applyTranscriptResult(record.transcript || {});
                 loadTranscriptRecords();
                 showToast("Transcript loaded");
@@ -2076,6 +2379,122 @@
             transcriptTitle.textContent = title || "Transcript";
         }
 
+        function setPlayerStatus(message) {
+            playerStatus.textContent = message;
+        }
+
+        function clearMediaPlayer() {
+            if (activeMedia) activeMedia.pause();
+            [mediaViewer, audioViewer].forEach(element => {
+                element.removeAttribute("src");
+                element.load();
+                element.hidden = true;
+            });
+            if (mediaObjectUrl) URL.revokeObjectURL(mediaObjectUrl);
+            mediaObjectUrl = null;
+            activeMedia = null;
+            setPlayerStatus("No media loaded");
+        }
+
+        function chooseMediaElement(type) {
+            const mediaType = (type || "").toLowerCase();
+            return mediaType.startsWith("video/") ? mediaViewer : audioViewer;
+        }
+
+        function setMediaSource(src, type, label = "Media ready") {
+            if (activeMedia) activeMedia.pause();
+            [mediaViewer, audioViewer].forEach(element => {
+                element.removeAttribute("src");
+                element.load();
+                element.hidden = true;
+            });
+            activeMedia = chooseMediaElement(type);
+            activeMedia.src = src;
+            activeMedia.hidden = false;
+            setPlayerStatus(label);
+            activeMedia.addEventListener("loadedmetadata", updatePlayerTimeline, { once: true });
+        }
+
+        function setLocalMediaSource(blob, filename) {
+            if (mediaObjectUrl) URL.revokeObjectURL(mediaObjectUrl);
+            mediaObjectUrl = URL.createObjectURL(blob);
+            setMediaSource(mediaObjectUrl, blob.type || filename, "Local media ready");
+        }
+
+        function loadRecordMedia(record) {
+            const sourceType = record?.source?.type || "";
+            if (!record?.job_id || record.record_type === "ime") {
+                clearMediaPlayer();
+                return;
+            }
+            setMediaSource(
+                `/api/transcribe/records/${encodeURIComponent(record.job_id)}/media`,
+                sourceType,
+                sourceType.startsWith("video/") ? "Video ready" : "Audio ready"
+            );
+        }
+
+        function updatePlayerTimeline() {
+            const media = activeMedia;
+            if (!media) return;
+            highlightSegmentForTime(media.currentTime || 0);
+        }
+
+        function seekToSegment(segment) {
+            if (!activeMedia || !segment?.has_timestamps) return;
+            const start = Number(segment.start);
+            if (!Number.isFinite(start)) return;
+            activeMedia.currentTime = Math.max(0, start);
+            updatePlayerTimeline();
+        }
+
+        function highlightSegmentForTime(time) {
+            if (!segments.length) return;
+            const nextIndex = segments.findIndex(segment => {
+                if (!segment.has_timestamps) return false;
+                const start = Number(segment.start);
+                const end = Number(segment.end);
+                return Number.isFinite(start) && Number.isFinite(end) && time >= start && time < Math.max(end, start + 0.25);
+            });
+            if (nextIndex !== -1 && nextIndex !== selectedIndex) {
+                selectedIndex = nextIndex;
+                renderSegments();
+                scrollActiveSegmentIntoView("smooth");
+            }
+        }
+
+        function scrollActiveSegmentIntoView(behavior = "auto") {
+            if (selectedIndex === lastAutoScrolledIndex) return;
+            const activeRow = segmentsEl.querySelector(`[data-segment-index="${selectedIndex}"]`);
+            if (!activeRow) return;
+            lastAutoScrolledIndex = selectedIndex;
+            const containerRect = transcriptScrollPanel.getBoundingClientRect();
+            const rowRect = activeRow.getBoundingClientRect();
+            const targetTop = transcriptScrollPanel.scrollTop +
+                (rowRect.top - containerRect.top) -
+                ((transcriptScrollPanel.clientHeight - activeRow.offsetHeight) / 2);
+            transcriptScrollPanel.scrollTo({
+                top: Math.max(0, targetTop),
+                behavior
+            });
+        }
+
+        function handleTranscriptPanelWheel(event) {
+            if (!transcriptScrollPanel) return;
+            const canScroll = transcriptScrollPanel.scrollHeight > transcriptScrollPanel.clientHeight;
+            if (!canScroll) return;
+            event.preventDefault();
+            transcriptScrollPanel.scrollTop += event.deltaY;
+        }
+
+        function handleRecordListWheel(event) {
+            if (!recordList) return;
+            const canScroll = recordList.scrollHeight > recordList.clientHeight;
+            if (!canScroll) return;
+            event.preventDefault();
+            recordList.scrollTop += event.deltaY;
+        }
+
         function formatBytes(bytes) {
             if (!bytes) return "0 B";
             const units = ["B", "KB", "MB", "GB"];
@@ -2149,6 +2568,7 @@
         async function transcribeBlob(blob, filename = "recording.webm") {
             setTranscriptTitle(filename);
             setSourceInfo(filename, blob.size, blob.type || "media");
+            setLocalMediaSource(blob, filename);
             const form = new FormData();
             form.append("file", blob, filename);
             appendWhisperSettings(form);
@@ -2249,6 +2669,7 @@
 
                 if (job.status === "completed") {
                     applyTranscriptResult(job.result || {});
+                    await loadTranscriptRecord(jobId);
                     loadTranscriptRecords();
                     setProgress(100, "Transcript ready", false);
                     activeJobId = null;
@@ -2289,6 +2710,7 @@
                     text_length: (result.text || "(No text returned)").length
                 }];
             selectedIndex = 0;
+            lastAutoScrolledIndex = -1;
             renderSegments();
         }
 
@@ -2332,6 +2754,7 @@
             if (nextSegments.length !== segments.length) {
                 segments = nextSegments;
                 selectedIndex = Math.max(0, Math.min(selectedIndex, segments.length - 1));
+                lastAutoScrolledIndex = -1;
                 renderSegments();
             }
         }
@@ -2443,6 +2866,15 @@
         document.getElementById("summarizeButton").addEventListener("click", summarize);
         document.getElementById("redoButton").addEventListener("click", redoSegmentation);
         document.getElementById("playButton").addEventListener("click", () => showToast("Playback preview"));
+        [mediaViewer, audioViewer].forEach(element => {
+            element.addEventListener("timeupdate", updatePlayerTimeline);
+            element.addEventListener("durationchange", updatePlayerTimeline);
+            element.addEventListener("loadedmetadata", updatePlayerTimeline);
+            element.addEventListener("play", () => setPlayerStatus(element === mediaViewer ? "Video playing" : "Audio playing"));
+            element.addEventListener("pause", () => setPlayerStatus(element.currentTime > 0 ? "Paused" : "Media ready"));
+        });
+        transcriptScrollPanel.addEventListener("wheel", handleTranscriptPanelWheel, { passive: false });
+        recordList.addEventListener("wheel", handleRecordListWheel, { passive: false });
         document.getElementById("transcribeUrlButton").addEventListener("click", async () => {
             try {
                 await transcribeUrl();
@@ -2472,6 +2904,7 @@
             setProgress(0, "", false);
             setSourceInfo("", null, "");
             setTranscriptTitle("");
+            clearMediaPlayer();
             renderSegments();
             showToast("Transcript cleared");
         });

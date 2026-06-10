@@ -1,6 +1,6 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Any, Dict, Optional
@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import os
 import re
+import mimetypes
 import shutil
 import subprocess
 import threading
@@ -550,6 +551,25 @@ async def get_transcription_record(job_id: str, record_type: Optional[str] = Non
     return {"record": record}
 
 
+@app.get("/api/transcribe/records/{job_id}/media")
+async def get_transcription_record_media(request: Request, job_id: str, record_type: Optional[str] = None):
+    if not _is_valid_record_id(job_id):
+        raise HTTPException(status_code=404, detail="Transcript media not found")
+
+    record = _read_transcription_record(job_id, record_type)
+    source = record.get("source") if record else None
+    source_path = source.get("path") if source else None
+    if (
+        not source_path
+        or not os.path.exists(source_path)
+        or not _is_job_stored_source(job_id, source_path)
+    ):
+        raise HTTPException(status_code=404, detail="Transcript media not found")
+
+    media_type = _record_source_media_type(source, source_path)
+    return _media_file_response(source_path, media_type, request.headers.get("range"))
+
+
 @app.patch("/api/transcribe/records/{job_id}")
 async def update_transcription_record(job_id: str, request: RecordUpdateRequest, record_type: Optional[str] = None):
     record = _update_transcription_record(job_id, request.title, record_type)
@@ -781,7 +801,8 @@ def _settings_request_info(request_info: Dict[str, Any], options: Dict[str, Any]
 def _download_url(url: str, destination: str, max_bytes: int = 2 * 1024 * 1024 * 1024) -> Dict[str, Any]:
     if _should_use_media_downloader(url):
         metadata = _download_media_page(url, destination)
-        if os.path.getsize(destination) > max_bytes:
+        downloaded_path = metadata.get("downloaded_path") if isinstance(metadata.get("downloaded_path"), str) else destination
+        if os.path.getsize(downloaded_path) > max_bytes:
             raise ValueError("Remote file is larger than 2GB.")
         return metadata
 
@@ -838,21 +859,12 @@ def _download_media_page(url: str, destination: str) -> Dict[str, Any]:
         raise RuntimeError("yt-dlp is required to download YouTube, Bilibili, Instagram, Threads, TikTok, or Shorts URLs.")
 
     with tempfile.TemporaryDirectory(prefix="airtype-url-media-") as work_dir:
-        output_template = os.path.join(work_dir, "source.%(ext)s")
-        command = [
+        process = _run_media_downloader(
             downloader,
-            "--no-playlist",
-            "--max-filesize",
-            "2G",
-            "--write-info-json",
-            "-f",
+            work_dir,
+            url,
             "bestaudio/best",
-            "-o",
-            output_template,
-        ]
-        command.extend(_media_downloader_site_args(url))
-        command.append(url)
-        process = subprocess.run(command, capture_output=True, text=True, timeout=60 * 30)
+        )
         if process.returncode != 0:
             detail = (process.stderr or process.stdout).strip()
             raise RuntimeError(f"Could not download media URL with yt-dlp: {detail}")
@@ -868,12 +880,49 @@ def _download_media_page(url: str, destination: str) -> Dict[str, Any]:
 
         media_path = max(downloaded_files, key=os.path.getsize)
         metadata = _yt_dlp_metadata(work_dir)
+        destination = _destination_with_media_extension(destination, media_path)
         shutil.move(media_path, destination)
         return {
-            "download_method": "yt-dlp",
+            "download_method": "yt-dlp-audio",
             **metadata,
             "url": url,
+            "downloaded_path": destination,
         }
+
+
+def _destination_with_media_extension(destination: str, media_path: str) -> str:
+    media_ext = os.path.splitext(media_path)[1]
+    if not media_ext:
+        return destination
+
+    destination_ext = os.path.splitext(destination)[1]
+    if destination_ext == media_ext:
+        return destination
+
+    return os.path.splitext(destination)[0] + media_ext
+
+
+def _run_media_downloader(
+    downloader: str,
+    work_dir: str,
+    url: str,
+    format_selector: str,
+) -> subprocess.CompletedProcess[str]:
+    output_template = os.path.join(work_dir, "source.%(ext)s")
+    command = [
+        downloader,
+        "--no-playlist",
+        "--max-filesize",
+        "2G",
+        "--write-info-json",
+        "-f",
+        format_selector,
+        "-o",
+        output_template,
+    ]
+    command.extend(_media_downloader_site_args(url))
+    command.append(url)
+    return subprocess.run(command, capture_output=True, text=True, timeout=60 * 30)
 
 
 def _media_downloader_site_args(url: str) -> list[str]:
@@ -933,6 +982,10 @@ def _yt_dlp_metadata(work_dir: str) -> Dict[str, Any]:
             "original_url",
             "extractor",
             "extractor_key",
+            "ext",
+            "format",
+            "format_id",
+            "resolution",
             "upload_date",
             "timestamp",
         )
@@ -1432,6 +1485,7 @@ def _run_url_transcription_job(
             return
         _update_job(job_id, status="downloading", progress=5, message="Downloading source URL")
         metadata = _download_url(url, temp_path)
+        downloaded_path = metadata.get("downloaded_path") if isinstance(metadata.get("downloaded_path"), str) else temp_path
         metadata_title = _metadata_title(metadata)
         if metadata_title:
             _update_job(
@@ -1442,8 +1496,11 @@ def _run_url_transcription_job(
             )
         elif metadata:
             _update_job(job_id, source_metadata=metadata)
-        _update_job_source(job_id, temp_path)
-        _run_transcription_job(job_id, temp_path, options)
+        media_type = _guess_media_type(downloaded_path, metadata)
+        if media_type:
+            _update_job(job_id, source_type=media_type)
+        _update_job_source(job_id, downloaded_path)
+        _run_transcription_job(job_id, downloaded_path, options)
     except Exception as e:
         if _is_job_cancelled(job_id):
             _update_job(job_id, status="cancelled", progress=100, message="Stopped by user")
@@ -1511,6 +1568,127 @@ def _is_job_stored_source(job_id: str, source_path: str) -> bool:
         return os.path.commonpath([os.path.abspath(source_path), _job_dir(job_id)]) == _job_dir(job_id)
     except ValueError:
         return False
+
+
+def _record_source_media_type(source: Dict[str, Any], source_path: str) -> str:
+    source_type = source.get("type")
+    if isinstance(source_type, str) and "/" in source_type:
+        return source_type
+    return _guess_media_type(source_path, source.get("metadata")) or "application/octet-stream"
+
+
+def _media_file_response(source_path: str, media_type: str, range_header: Optional[str]) -> StreamingResponse:
+    file_size = os.path.getsize(source_path)
+    start = 0
+    end = file_size - 1
+    status_code = 200
+
+    if range_header:
+        range_match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip())
+        if not range_match:
+            raise HTTPException(
+                status_code=416,
+                detail="Invalid range",
+                headers={"Content-Range": f"bytes */{file_size}"},
+            )
+
+        start_text, end_text = range_match.groups()
+        if start_text:
+            start = int(start_text)
+            end = int(end_text) if end_text else file_size - 1
+        elif end_text:
+            suffix_length = int(end_text)
+            start = max(0, file_size - suffix_length)
+            end = file_size - 1
+        else:
+            raise HTTPException(
+                status_code=416,
+                detail="Invalid range",
+                headers={"Content-Range": f"bytes */{file_size}"},
+            )
+
+        if start >= file_size or end < start:
+            raise HTTPException(
+                status_code=416,
+                detail="Range not satisfiable",
+                headers={"Content-Range": f"bytes */{file_size}"},
+            )
+        end = min(end, file_size - 1)
+        status_code = 206
+
+    content_length = end - start + 1
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(content_length),
+        "Content-Disposition": "inline",
+    }
+    if status_code == 206:
+        headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+
+    return StreamingResponse(
+        _read_file_range(source_path, start, end),
+        status_code=status_code,
+        media_type=media_type,
+        headers=headers,
+    )
+
+
+def _read_file_range(source_path: str, start: int, end: int):
+    chunk_size = 1024 * 1024
+    with open(source_path, "rb") as source_file:
+        source_file.seek(start)
+        remaining = end - start + 1
+        while remaining > 0:
+            chunk = source_file.read(min(chunk_size, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            yield chunk
+
+
+def _guess_media_type(source_path: str, metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    content_type = (metadata or {}).get("content_type")
+    if isinstance(content_type, str) and content_type:
+        return content_type.split(";")[0].strip()
+
+    guessed, _ = mimetypes.guess_type(source_path)
+    if guessed:
+        return guessed
+
+    metadata_ext = (metadata or {}).get("ext")
+    if isinstance(metadata_ext, str) and metadata_ext:
+        ext = f".{metadata_ext.lstrip('.').lower()}"
+    else:
+        ext = os.path.splitext(source_path)[1].lower()
+    if ext in {".mp4", ".mov", ".m4v", ".webm", ".mkv"}:
+        return "video/mp4" if ext in {".mp4", ".m4v"} else "video/webm"
+    if ext in {".mp3", ".m4a", ".wav", ".aac", ".ogg", ".opus", ".flac"}:
+        return "audio/mpeg" if ext == ".mp3" else "audio/wav" if ext == ".wav" else "audio/mp4"
+    sniffed = _sniff_media_type(source_path)
+    if sniffed:
+        return sniffed
+    return None
+
+
+def _sniff_media_type(source_path: str) -> Optional[str]:
+    try:
+        with open(source_path, "rb") as source_file:
+            header = source_file.read(16)
+    except OSError:
+        return None
+
+    if header.startswith(b"\x1a\x45\xdf\xa3"):
+        return "audio/webm"
+    if header.startswith(b"ID3"):
+        return "audio/mpeg"
+    if header.startswith(b"OggS"):
+        return "audio/ogg"
+    if header.startswith(b"RIFF") and header[8:12] == b"WAVE":
+        return "audio/wav"
+    if len(header) >= 12 and header[4:8] == b"ftyp":
+        brand = header[8:12].lower()
+        return "audio/mp4" if brand in {b"m4a ", b"m4b ", b"mp42"} else "video/mp4"
+    return None
 
 
 def _is_job_cancelled(job_id: str) -> bool:
