@@ -837,6 +837,44 @@ def _download_url(url: str, destination: str, max_bytes: int = 2 * 1024 * 1024 *
         return _download_media_page(url, destination)
 
 
+def _preview_url_metadata(url: str) -> Dict[str, Any]:
+    if not _should_use_media_downloader(url):
+        return {}
+
+    downloader = shutil.which("yt-dlp")
+    if not downloader:
+        return {}
+
+    command = [
+        downloader,
+        "--no-playlist",
+        "--skip-download",
+        "--dump-json",
+    ]
+    command.extend(_media_downloader_site_args(url))
+    command.extend(_media_downloader_cookie_args())
+    command.append(url)
+    try:
+        process = subprocess.run(command, capture_output=True, text=True, timeout=45)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+
+    if process.returncode != 0:
+        return {}
+
+    for line in reversed((process.stdout or "").splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            metadata = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(metadata, dict):
+            return {"download_method": "yt-dlp-preview", "url": url, **metadata}
+    return {}
+
+
 def _should_use_media_downloader(url: str) -> bool:
     parsed = urllib.parse.urlparse(url)
     host = parsed.netloc.lower()
@@ -1218,6 +1256,7 @@ def _public_job(job: Dict[str, Any]) -> Dict[str, Any]:
         "status": job["status"],
         "progress": job["progress"],
         "message": job["message"],
+        "title": job.get("title"),
         "source_name": job["source_name"],
         "source_size": job["source_size"],
         "source_type": job["source_type"],
@@ -1526,6 +1565,21 @@ def _run_url_transcription_job(
     options: Dict[str, Any],
 ) -> None:
     try:
+        if _is_job_cancelled(job_id):
+            return
+        _update_job(job_id, status="downloading", progress=3, message="Reading media title")
+        preview_metadata = _preview_url_metadata(url)
+        preview_title = _metadata_title(preview_metadata)
+        if preview_title:
+            _update_job(
+                job_id,
+                title=preview_title,
+                source_name=preview_title,
+                source_metadata=preview_metadata,
+                message="Media title loaded",
+            )
+        elif preview_metadata:
+            _update_job(job_id, source_metadata=preview_metadata)
         if _is_job_cancelled(job_id):
             return
         _update_job(job_id, status="downloading", progress=5, message="Downloading source URL")
