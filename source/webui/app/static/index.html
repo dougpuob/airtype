@@ -727,11 +727,14 @@
         }
 
         .record-list {
-            display: grid;
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
             gap: 8px;
         }
 
         .record-item {
+            flex: 0 0 auto;
             width: 100%;
             min-width: 0;
             text-align: left;
@@ -1113,14 +1116,16 @@
 
         .media-viewer {
             width: 100%;
-            max-height: 320px;
+            max-height: 220px;
             aspect-ratio: 16 / 9;
             background: #101318;
             border-radius: 8px;
+            object-fit: contain;
         }
 
         .audio-player {
             width: 100%;
+            height: 40px;
         }
 
         .record-list {
@@ -2424,6 +2429,22 @@
             activeMedia.hidden = false;
             setPlayerStatus(label);
             activeMedia.addEventListener("loadedmetadata", updatePlayerTimeline, { once: true });
+            if (activeMedia === mediaViewer) {
+                activeMedia.addEventListener("loadedmetadata", () => {
+                    if (mediaViewer.videoWidth || mediaViewer.videoHeight) return;
+                    const currentTime = mediaViewer.currentTime || 0;
+                    mediaViewer.hidden = true;
+                    mediaViewer.pause();
+                    mediaViewer.removeAttribute("src");
+                    mediaViewer.load();
+                    audioViewer.src = src;
+                    audioViewer.hidden = false;
+                    activeMedia = audioViewer;
+                    setPlayerStatus("Audio ready");
+                    if (currentTime) audioViewer.currentTime = currentTime;
+                    updatePlayerTimeline();
+                }, { once: true });
+            }
         }
 
         function setLocalMediaSource(blob, filename) {

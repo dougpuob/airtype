@@ -56,6 +56,17 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "storage": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "data_dir": {
+              "type": "string",
+              "default": "~/.airtype/data",
+              "description": "Web UI runtime data directory. Records are stored under data_dir/records/{ime,transcript}."
+            }
+          }
+        },
         "whisper-server": {
           "type": "object",
           "additionalProperties": false,
