@@ -870,18 +870,53 @@
             background: #f8fbff;
             border: 1px solid var(--line);
             border-radius: 8px;
-            padding: 10px 12px;
+            padding: 0;
             margin-bottom: 12px;
             font-size: 12px;
             line-height: 1.55;
         }
 
-        .debug-panel strong {
-            display: block;
-            font-size: 11px;
-            text-transform: uppercase;
+        .debug-panel-header {
+            width: 100%;
+            min-height: 34px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
             color: #596273;
-            margin-bottom: 4px;
+            background: transparent;
+            padding: 8px 11px;
+            cursor: pointer;
+            text-align: left;
+        }
+
+        .debug-panel-title {
+            font-size: 11px;
+            line-height: 1;
+            text-transform: uppercase;
+            font-weight: 800;
+        }
+
+        .debug-panel-icon {
+            width: 8px;
+            height: 8px;
+            border-right: 2px solid currentColor;
+            border-bottom: 2px solid currentColor;
+            transform: rotate(45deg);
+            transition: transform 0.16s ease;
+        }
+
+        .debug-panel.expanded .debug-panel-icon {
+            transform: rotate(225deg);
+        }
+
+        .debug-panel-body {
+            display: none;
+            padding: 0 12px 10px;
+        }
+
+        .debug-panel.expanded .debug-panel-body {
+            display: block;
         }
 
         .source-row {
@@ -1051,7 +1086,7 @@
             min-height: 0;
             overflow: hidden;
             grid-template-rows: auto auto minmax(0, 1fr);
-            background: #ffffff;
+            background: #f8fbff;
             box-shadow: 0 1px 2px rgba(35, 45, 66, 0.04);
         }
 
@@ -1068,7 +1103,7 @@
             grid-template-rows: auto minmax(0, 1fr);
             align-self: stretch;
             height: 100%;
-            background: #ffffff;
+            background: #f8fbff;
             border: 1px solid var(--line);
             border-radius: 8px;
             box-shadow: 0 1px 2px rgba(35, 45, 66, 0.04);
@@ -1081,7 +1116,7 @@
             display: grid;
             gap: 8px;
             padding: 12px 14px;
-            background: transparent;
+            background: #f8fbff;
             border: 0;
             border-bottom: 1px solid var(--line);
             border-radius: 0;
@@ -1459,7 +1494,6 @@
                                 <div>
                                     <div class="drop-kicker">Import media</div>
                                     <div class="drop-title">Drop an audio or video file, or paste a media URL</div>
-                                    <div class="drop-copy">AirType keeps the source media with each transcript, so playback and segments can stay aligned while you review.</div>
                                 </div>
                                 <div class="drop-actions">
                                     <label class="toolbar-btn primary" for="audioFile">Choose File</label>
@@ -1498,7 +1532,6 @@
                             <div class="drop-kicker">Library</div>
                             <h2>Transcripts</h2>
                         </div>
-                        <p>Recent media transcripts. Right-click a record to rename or delete it.</p>
                         <div class="record-list" id="recordList"></div>
                     </aside>
                     <div class="transcript-review-panel">
@@ -2675,6 +2708,8 @@
         async function watchJob(jobId) {
             activeJobId = jobId;
             stopJobButton.hidden = false;
+            let displayedJobTitle = "";
+            let displayedJobSourceInfo = "";
             while (activeJobId === jobId) {
                 const response = await fetch(`/api/transcribe/jobs/${jobId}`);
                 if (!response.ok) {
@@ -2683,6 +2718,17 @@
                 }
 
                 const job = await response.json();
+                const jobTitle = job.title || job.source_metadata?.title || job.source_metadata?.fulltitle || "";
+                const jobSourceInfo = `${jobTitle}|${job.source_size ?? ""}|${job.source_type || ""}`;
+                if (jobTitle && jobSourceInfo !== displayedJobSourceInfo) {
+                    if (jobTitle !== displayedJobTitle) {
+                        displayedJobTitle = jobTitle;
+                        setTranscriptTitle(jobTitle);
+                        loadTranscriptRecords();
+                    }
+                    displayedJobSourceInfo = jobSourceInfo;
+                    setSourceInfo(jobTitle, job.source_size, job.source_type || "remote url");
+                }
                 if (Array.isArray(job.partial_segments) && job.partial_segments.length) {
                     updatePartialSegments(job.partial_segments);
                 }
@@ -2756,15 +2802,26 @@
             const fields = debug.request_fields || {};
             const keys = Array.isArray(debug.payload_keys) ? debug.payload_keys.join(", ") : "";
             transcriptDebug.hidden = false;
+            transcriptDebug.classList.remove("expanded");
             transcriptDebug.innerHTML = `
-                <strong>Whisper server debug</strong>
-                <div>URL: ${escapeHtml(debug.url || "")}</div>
-                <div>Request: ${escapeHtml(Object.entries(fields).map(([key, value]) => `${key}=${value}`).join(", "))}</div>
-                <div>Payload keys: ${escapeHtml(keys || "(none)")}</div>
-                <div>transcription: ${debug.has_transcription ? "yes" : "no"} · segments: ${debug.has_segments ? "yes" : "no"}</div>
-                <div>Raw segments: ${debug.raw_segment_count ?? 0} · Final segments: ${debug.final_segment_count ?? 0} · Text length: ${debug.text_length ?? "unknown"}</div>
-                ${debug.fallback ? `<div>Fallback: ${escapeHtml(debug.fallback)}</div>` : ""}
+                <button class="debug-panel-header" type="button" aria-expanded="false">
+                    <span class="debug-panel-title">Whisper server debug</span>
+                    <span class="debug-panel-icon" aria-hidden="true"></span>
+                </button>
+                <div class="debug-panel-body">
+                    <div>URL: ${escapeHtml(debug.url || "")}</div>
+                    <div>Request: ${escapeHtml(Object.entries(fields).map(([key, value]) => `${key}=${value}`).join(", "))}</div>
+                    <div>Payload keys: ${escapeHtml(keys || "(none)")}</div>
+                    <div>transcription: ${debug.has_transcription ? "yes" : "no"} · segments: ${debug.has_segments ? "yes" : "no"}</div>
+                    <div>Raw segments: ${debug.raw_segment_count ?? 0} · Final segments: ${debug.final_segment_count ?? 0} · Text length: ${debug.text_length ?? "unknown"}</div>
+                    ${debug.fallback ? `<div>Fallback: ${escapeHtml(debug.fallback)}</div>` : ""}
+                </div>
             `;
+            const toggleButton = transcriptDebug.querySelector(".debug-panel-header");
+            toggleButton.addEventListener("click", () => {
+                const expanded = transcriptDebug.classList.toggle("expanded");
+                toggleButton.setAttribute("aria-expanded", String(expanded));
+            });
         }
 
         function normalizeSegment(segment, index) {
