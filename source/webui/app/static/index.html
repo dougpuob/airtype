@@ -1138,6 +1138,13 @@
             overflow-wrap: anywhere;
         }
 
+        .player-actions {
+            flex: 0 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
         .player-status {
             flex: 0 0 auto;
             color: #47606f;
@@ -1541,7 +1548,10 @@
                                     <div class="drop-kicker">Now reviewing</div>
                                     <h2 id="transcriptTitle">Transcript</h2>
                                 </div>
-                                <span class="player-status" id="playerStatus">No media loaded</span>
+                                <div class="player-actions">
+                                    <button class="toolbar-btn" id="copyTranscriptTextButton" type="button">Copy Text</button>
+                                    <span class="player-status" id="playerStatus">No media loaded</span>
+                                </div>
                             </div>
                             <video class="media-viewer" id="mediaViewer" controls playsinline hidden></video>
                             <audio class="audio-player" id="audioViewer" controls hidden></audio>
@@ -2589,6 +2599,22 @@
             return segments.map(segment => segment.text).join("\n");
         }
 
+        function transcriptPlainText() {
+            return segments
+                .map(segment => (segment.text || "").trim())
+                .filter(Boolean)
+                .join("\n");
+        }
+
+        function copyTranscriptPlainText() {
+            const text = transcriptPlainText();
+            if (!text) {
+                showToast("No transcript text to copy");
+                return;
+            }
+            copyText(text);
+        }
+
         async function copyText(text) {
             try {
                 await navigator.clipboard.writeText(text);
@@ -2944,6 +2970,7 @@
         transcriptPage.addEventListener("drop", handleDrop);
 
         document.getElementById("copyButton").addEventListener("click", () => copyText(selectedText()));
+        document.getElementById("copyTranscriptTextButton").addEventListener("click", copyTranscriptPlainText);
         document.getElementById("cutButton").addEventListener("click", () => {
             if (segments.length === 0) return;
             const removed = segments.splice(selectedIndex, 1);
