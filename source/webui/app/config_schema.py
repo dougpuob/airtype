@@ -25,6 +25,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "system": "Summarize and answer questions using the transcript as the source of truth.",
     },
 }
+DEFAULT_WEBUI_DATA_DIR = "~/.airtype/data"
 
 WEBUI_SECTION_ALIASES = {
     "whisper": ("whisper-server", "whisper"),
@@ -65,6 +66,19 @@ def read_webui_settings(path: str | Path) -> Dict[str, Any]:
         if isinstance(value, dict):
             settings[key] = value
     return normalize_app_settings(settings) if settings else {}
+
+
+def read_webui_data_dir(path: str | Path) -> str:
+    config_path = Path(path)
+    config = read_config(config_path)
+    webui = config.get("webui", {})
+    storage = webui.get("storage", {}) if isinstance(webui, dict) else {}
+    configured = storage.get("data_dir") if isinstance(storage, dict) else None
+    data_dir = str(configured or DEFAULT_WEBUI_DATA_DIR).strip() or DEFAULT_WEBUI_DATA_DIR
+    expanded = Path(os.path.expanduser(data_dir))
+    if not expanded.is_absolute():
+        expanded = config_path.parent / expanded
+    return str(expanded.resolve())
 
 
 def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:

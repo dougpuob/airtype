@@ -155,6 +155,10 @@ macOS will ask for Microphone permission when recording. If the global hotkey or
 ### Web UI Settings (`config.toml`)
 
 ```toml
+[webui.storage]
+# Records are stored under data_dir/records/{ime,transcript}.
+data_dir = "~/.airtype/data"
+
 [webui.whisper-server]
 model_dir = "~/.airtype/models"
 model_filename = "ggml-large-v3-turbo-q5_0.bin"

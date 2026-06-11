@@ -23,6 +23,7 @@ import time
 from .config_schema import (
     DEFAULT_APP_SETTINGS,
     normalize_app_settings,
+    read_webui_data_dir,
     read_webui_settings,
     remove_webui_sections,
     render_webui_settings_toml,
@@ -64,11 +65,12 @@ def _find_config_path() -> str:
         current = parent
 
 
-RECORDS_DIR = os.path.abspath(os.path.join(APP_DIR, "..", "records"))
 TRANSCRIPT_RECORD_TYPE = "transcript"
 IME_RECORD_TYPE = "ime"
 SETTINGS_PATH = os.path.abspath(os.path.join(APP_DIR, "..", "settings.json"))
 CONFIG_PATH = _find_config_path()
+WEBUI_DATA_DIR = read_webui_data_dir(CONFIG_PATH)
+RECORDS_DIR = os.path.join(WEBUI_DATA_DIR, "records")
 RECORD_ID_PATTERN = re.compile(r"\d{8}-\d{6}")
 
 # Mount static files at /app route (must be before @app.get routes)
