@@ -867,7 +867,8 @@ def _download_media_page(url: str, destination: str) -> Dict[str, Any]:
         )
         if process.returncode != 0:
             detail = (process.stderr or process.stdout).strip()
-            raise RuntimeError(f"Could not download media URL with yt-dlp: {detail}")
+            hint = _media_downloader_failure_hint(url, detail)
+            raise RuntimeError(f"Could not download media URL with yt-dlp: {detail}{hint}")
 
         downloaded_files = [
             os.path.join(work_dir, name)
@@ -914,6 +915,10 @@ def _run_media_downloader(
         "--no-playlist",
         "--max-filesize",
         "2G",
+        "--retries",
+        "3",
+        "--fragment-retries",
+        "3",
         "--write-info-json",
         "-f",
         format_selector,
@@ -921,6 +926,7 @@ def _run_media_downloader(
         output_template,
     ]
     command.extend(_media_downloader_site_args(url))
+    command.extend(_media_downloader_cookie_args())
     command.append(url)
     return subprocess.run(command, capture_output=True, text=True, timeout=60 * 30)
 
@@ -929,17 +935,54 @@ def _media_downloader_site_args(url: str) -> list[str]:
     parsed = urllib.parse.urlparse(url)
     host = parsed.netloc.lower()
     if "bilibili.com" in host or "b23.tv" in host:
+        referer = "https://www.bilibili.com/"
         return [
             "--referer",
-            "https://www.bilibili.com/",
+            referer,
             "--user-agent",
             (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/125.0.0.0 Safari/537.36"
             ),
+            "--add-header",
+            "Accept:application/json, text/plain, */*",
+            "--add-header",
+            "Accept-Language:zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+            "--add-header",
+            f"Origin:{referer.rstrip('/')}",
+            "--add-header",
+            "Sec-Fetch-Dest:empty",
+            "--add-header",
+            "Sec-Fetch-Mode:cors",
+            "--add-header",
+            "Sec-Fetch-Site:same-site",
         ]
     return []
+
+
+def _media_downloader_cookie_args() -> list[str]:
+    cookies_path = os.environ.get("AIRTYPE_YTDLP_COOKIES", "").strip()
+    if cookies_path:
+        return ["--cookies", os.path.expanduser(cookies_path)]
+
+    cookies_browser = os.environ.get("AIRTYPE_YTDLP_COOKIES_FROM_BROWSER", "").strip()
+    if cookies_browser:
+        return ["--cookies-from-browser", cookies_browser]
+
+    return []
+
+
+def _media_downloader_failure_hint(url: str, detail: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc.lower()
+    if ("bilibili.com" in host or "b23.tv" in host) and "HTTP Error 412" in detail:
+        return (
+            " BiliBili rejected the metadata request. If this video still fails, update yt-dlp "
+            "or provide logged-in cookies with AIRTYPE_YTDLP_COOKIES=/path/to/cookies.txt "
+            "or AIRTYPE_YTDLP_COOKIES_FROM_BROWSER=chrome."
+        )
+    return ""
 
 
 def _title_from_url_response(url: str, headers: Any) -> str:
