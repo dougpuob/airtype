@@ -1,6 +1,16 @@
 import AppKit
 import Foundation
 
+private final class LLMModelMenuSelection: NSObject {
+    let serverName: String
+    let modelName: String
+
+    init(serverName: String, modelName: String) {
+        self.serverName = serverName
+        self.modelName = modelName
+    }
+}
+
 @MainActor
 final class AirTypeCoordinator: ObservableObject {
     private let configStore = ConfigStore()
@@ -218,6 +228,12 @@ final class AirTypeCoordinator: ObservableObject {
         hotkeyItem.submenu = hotkeyMenu
         menu.addItem(hotkeyItem)
 
+        let llmServerMenu = NSMenu()
+        rebuildLLMServerMenu(llmServerMenu)
+        let llmServerItem = NSMenuItem(title: "LLM Server", action: nil, keyEquivalent: "")
+        llmServerItem.submenu = llmServerMenu
+        menu.addItem(llmServerItem)
+
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
@@ -273,6 +289,98 @@ final class AirTypeCoordinator: ObservableObject {
         menu.addItem(item)
     }
 
+    private func rebuildLLMServerMenu(_ menu: NSMenu) {
+        let servers = configStore.availableLLMServers()
+        if servers.isEmpty {
+            let item = NSMenuItem(title: "No LLM servers configured", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+            return
+        }
+
+        var modelMenusByServer: [String: NSMenu] = [:]
+        var loadingItemsByServer: [String: NSMenuItem] = [:]
+        for server in servers {
+            let displayName = server.name == server.provider ? server.name : "\(server.name) (\(server.provider))"
+            let item = NSMenuItem(
+                title: displayName,
+                action: nil,
+                keyEquivalent: ""
+            )
+            item.representedObject = server.name
+            item.state = configStore.config.webui.selectedServerName == server.name ? .on : .off
+            let modelMenu = NSMenu()
+            if server.models.isEmpty {
+                let loadingItem = NSMenuItem(title: "Loading models...", action: nil, keyEquivalent: "")
+                loadingItem.isEnabled = false
+                modelMenu.addItem(loadingItem)
+                loadingItemsByServer[server.name] = loadingItem
+            } else {
+                for modelName in server.models {
+                    addLLMModelItem(to: modelMenu, title: modelName, serverName: server.name, model: modelName)
+                }
+            }
+            modelMenusByServer[server.name] = modelMenu
+            item.submenu = modelMenu
+            menu.addItem(item)
+        }
+
+        // Fetch models asynchronously from all configured servers
+        let backendEndpoint = configStore.config.backend.selectedEndpoint
+        Task {
+            do {
+                let models = try await backendClient.fetchAllLLMModels(endpoint: backendEndpoint)
+                await MainActor.run {
+                    let modelsByServer = Dictionary(grouping: models) { model in
+                        model.server ?? ""
+                    }
+                    let modelNamesByServer = modelsByServer.mapValues { serverModels in
+                        serverModels.map(\.name)
+                    }
+                    configStore.updateLLMServerModels(modelNamesByServer)
+                    for server in servers {
+                        guard let modelMenu = modelMenusByServer[server.name] else { continue }
+                        modelMenu.removeAllItems()
+                        let serverModels = modelsByServer[server.name] ?? []
+                        if serverModels.isEmpty {
+                            let emptyItem = NSMenuItem(title: "No models found", action: nil, keyEquivalent: "")
+                            emptyItem.isEnabled = false
+                            modelMenu.addItem(emptyItem)
+                        } else {
+                            for model in serverModels {
+                                addLLMModelItem(to: modelMenu, title: model.name, serverName: server.name, model: model.name)
+                            }
+                        }
+                    }
+                }
+            } catch {
+                Logger.shared.log("Failed to fetch LLM models: \(error)")
+                await MainActor.run {
+                    for server in servers {
+                        guard let modelMenu = modelMenusByServer[server.name] else { continue }
+                        if let loadingItem = loadingItemsByServer[server.name] {
+                            modelMenu.removeItem(loadingItem)
+                        }
+                        let errorItem = NSMenuItem(title: "Failed to load models", action: nil, keyEquivalent: "")
+                        errorItem.isEnabled = false
+                        modelMenu.addItem(errorItem)
+                    }
+                }
+            }
+        }
+    }
+
+    private func addLLMModelItem(to menu: NSMenu, title: String, serverName: String, model: String) {
+        let item = NSMenuItem(title: title, action: #selector(selectLLMModel(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = LLMModelMenuSelection(serverName: serverName, modelName: model)
+        let currentModel = configStore.config.webui.selectedModelName.isEmpty
+            ? configStore.config.webui.llm.selectedModel
+            : configStore.config.webui.selectedModelName
+        item.state = configStore.config.webui.selectedServerName == serverName && currentModel == model ? .on : .off
+        menu.addItem(item)
+    }
+
     @objc private func toggleMoveLock(_ sender: NSMenuItem) {
         configStore.updateMoveLock(!configStore.config.floatingDialog.moveLock)
         rebuildMenu()
@@ -303,6 +411,18 @@ final class AirTypeCoordinator: ObservableObject {
         let trigger = HotkeyKey(configValue: rawTrigger)
         configStore.updateHotkeyTrigger(trigger)
         hotkeyMonitor?.updateTrigger(trigger)
+        rebuildMenu()
+    }
+
+    @objc private func selectLLMServer(_ sender: NSMenuItem) {
+        guard let serverName = sender.representedObject as? String else { return }
+        configStore.updateLLMServer(serverName)
+        rebuildMenu()
+    }
+
+    @objc private func selectLLMModel(_ sender: NSMenuItem) {
+        guard let selection = sender.representedObject as? LLMModelMenuSelection else { return }
+        configStore.updateLLMSelection(serverName: selection.serverName, modelName: selection.modelName)
         rebuildMenu()
     }
 

@@ -442,7 +442,7 @@
         }
 
         .settings-panel h2 {
-            font-size: 15px;
+            font-size: 14px;
             margin: 0;
         }
 
@@ -480,8 +480,14 @@
             background: #101012;
             border: 1px solid #303037;
             border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.35;
             padding: 9px 11px;
             outline: 0;
+        }
+
+        .settings-panel .toolbar-btn {
+            font-size: 13px;
         }
 
         .setting-field textarea {
@@ -1619,11 +1625,9 @@
                         <h2>Local LLM model</h2>
                         <p>Reserved for summary, Ask AI, and later transcript post-processing workflows.</p>
                         <div class="setting-field">
-                            <label for="settingLlmProvider">Provider</label>
-                            <select id="settingLlmProvider">
-                                <option value="llama.cpp">llama.cpp server</option>
-                                <option value="ollama">Ollama</option>
-                                <option value="openai-compatible">OpenAI-compatible local endpoint</option>
+                            <label for="settingLlmName">Name</label>
+                            <select id="settingLlmName">
+                                <option value="default">default</option>
                             </select>
                         </div>
                         <div class="setting-field">
@@ -1634,9 +1638,9 @@
                             <label for="settingLlmModelSelect">Loaded local models</label>
                             <div class="model-load-row">
                                 <select id="settingLlmModelSelect">
-                                    <option value="">Load models to choose</option>
+                                    <option value="">Fetch model list to choose</option>
                                 </select>
-                                <button class="toolbar-btn" id="loadLlmModelsButton">Load Models</button>
+                                <button class="toolbar-btn" id="loadLlmModelsButton">Refetch</button>
                             </div>
                         </div>
                         <div class="setting-row">
@@ -1775,13 +1779,18 @@
                 temperature: 0,
             },
             llm: {
+                name: "default",
                 provider: "llama.cpp",
                 endpoint: "http://127.0.0.1:8080",
                 model: "",
+                models: [],
+                selected_model: "",
                 contextLength: 8192,
                 temperature: 0.4,
                 system: "Summarize and answer questions using the transcript as the source of truth."
-            }
+            },
+            llm_servers: [],
+            default_llm_server_name: "default"
         };
 
         let segments = [];
@@ -1801,12 +1810,6 @@
         let lastAutoScrolledIndex = -1;
         let appSettings = loadSettings();
         let localModels = [];
-        const llmProviderEndpoints = {
-            "llama.cpp": "http://127.0.0.1:8080",
-            "ollama": "http://127.0.0.1:11434",
-            "openai-compatible": "http://127.0.0.1:8080"
-        };
-
         function showToast(message) {
             toast.textContent = message;
             toast.classList.add("show");
@@ -2119,9 +2122,13 @@
             }
         }
 
-        async function loadServerSettings() {
+        async function loadServerSettings(options = {}) {
             try {
-                const response = await fetch("/api/settings");
+                const url = options.force ? `/api/settings?ts=${Date.now()}` : "/api/settings";
+                const response = await fetch(url, {
+                    cache: "no-store",
+                    headers: { "Cache-Control": "no-cache" }
+                });
                 if (!response.ok) return;
                 const payload = await response.json();
                 saveSettings(payload.settings || {}, { persist: false, markWhisperClean: true });
@@ -2158,9 +2165,12 @@
                         temperature: Number(settings.whisperTemperature) || 0
                     },
                     llm: {
+                        name: "default",
                         provider: settings.llmProvider || "llama.cpp",
                         endpoint: settings.llmEndpoint || "http://127.0.0.1:8080",
                         model: settings.llmModel || "",
+                        models: [],
+                        selected_model: settings.llmModel || "",
                         contextLength: Number(settings.llmContextLength) || 8192,
                         temperature: Number(settings.llmTemperature) || 0.4,
                         system: settings.llmSystem || ""
@@ -2170,12 +2180,50 @@
             
             // Merge with defaults
             const whisper = { ...defaultSettings.whisper, ...(settings.whisper || {}) };
-            const llm = { ...defaultSettings.llm, ...(settings.llm || {}) };
+            let llm = normalizeLlmServer({ ...defaultSettings.llm, ...(settings.llm || {}) });
+            let llmServers = Array.isArray(settings.llm_servers)
+                ? settings.llm_servers.map(server => normalizeLlmServer(server)).filter(server => server.name)
+                : [];
+            if (!llmServers.length && llm.name) {
+                llmServers = [llm];
+            }
+            const defaultName = settings.default_llm_server_name || llm.name || llmServers[0]?.name || "default";
+            const selectedServer = llmServers.find(server => server.name === defaultName)
+                || llmServers.find(server => server.name === llm.name)
+                || llmServers[0];
+            if (selectedServer) {
+                llm = { ...selectedServer };
+            }
             
             return {
                 whisper,
-                llm
+                llm,
+                llm_servers: llmServers,
+                default_llm_server_name: llm.name || defaultName
             };
+        }
+
+        function normalizeLlmServer(server) {
+            const llm = { ...defaultSettings.llm, ...(server || {}) };
+            llm.name = llm.name || "default";
+            llm.models = Array.isArray(llm.models) ? llm.models.filter(Boolean) : [];
+            llm.selected_model = llm.selected_model || llm["selected-model"] || llm.default_model || llm.model || "";
+            llm.model = llm.selected_model || llm.model || "";
+            return llm;
+        }
+
+        function currentLlmServersWithSelected(selectedLlm = appSettings.llm || {}) {
+            const selected = normalizeLlmServer(selectedLlm);
+            const servers = Array.isArray(appSettings.llm_servers)
+                ? appSettings.llm_servers.map(server => normalizeLlmServer(server)).filter(server => server.name)
+                : [];
+            const index = servers.findIndex(server => server.name === selected.name);
+            if (index >= 0) {
+                servers[index] = selected;
+            } else {
+                servers.push(selected);
+            }
+            return servers;
         }
         function markWhisperSettingsClean() {
             updateSaveSettingsButtonState();
@@ -2200,8 +2248,9 @@
             }
             updateSaveSettingsButtonState();
             if (shouldPersist) {
-                persistSettingsToServer(appSettings);
+                return persistSettingsToServer(appSettings);
             }
+            return Promise.resolve();
         }
 
         function applySettingsToForm() {
@@ -2212,8 +2261,22 @@
             document.getElementById("settingWhisperLanguage").value = whisper.language || "zh-tw";
             document.getElementById("settingWhisperBeam").value = whisper.beam || 5;
             document.getElementById("settingWhisperTemperature").value = whisper.temperature || 0;
-            document.getElementById("settingLlmProvider").value = llm.provider || "llama.cpp";
+            const llmNameSelect = document.getElementById("settingLlmName");
+            const llmServers = Array.isArray(appSettings.llm_servers) && appSettings.llm_servers.length
+                ? appSettings.llm_servers
+                : [llm];
+            llmNameSelect.innerHTML = llmServers
+                .map(server => `<option value="${escapeHtml(server.name || "default")}">${escapeHtml(server.name || "default")}</option>`)
+                .join("");
+            llmNameSelect.value = llm.name || appSettings.default_llm_server_name || "default";
             document.getElementById("settingLlmEndpoint").value = llm.endpoint || "http://127.0.0.1:8080";
+            if (Array.isArray(llm.models) && llm.models.length) {
+                llmModelSelect.innerHTML = llm.models
+                    .map(modelName => `<option value="${escapeHtml(modelName)}">${escapeHtml(modelName)}</option>`)
+                    .join("");
+            } else {
+                llmModelSelect.innerHTML = `<option value="">Fetch model list to choose</option>`;
+            }
             if ([...llmModelSelect.options].some(option => option.value === llm.model)) {
                 llmModelSelect.value = llm.model;
             }
@@ -2227,6 +2290,19 @@
 
         function readSettingsFromForm() {
             const existingWhisper = appSettings.whisper || {};
+            const existingLlm = appSettings.llm || {};
+            const selectedModel = llmModelSelect.value || "";
+            const selectedName = document.getElementById("settingLlmName").value || existingLlm.name || "default";
+            const selectedLlm = {
+                ...existingLlm,
+                name: selectedName,
+                endpoint: document.getElementById("settingLlmEndpoint").value.trim(),
+                model: selectedModel,
+                selected_model: selectedModel,
+                contextLength: Number(document.getElementById("settingLlmContext").value) || 8192,
+                temperature: Number(document.getElementById("settingLlmTemperature").value) || 0.4,
+                system: document.getElementById("settingLlmSystem").value
+            };
             return {
                 whisper: {
                     model_dir: existingWhisper.model_dir || "",
@@ -2237,14 +2313,9 @@
                     beam: Number(document.getElementById("settingWhisperBeam").value) || 5,
                     temperature: Number(document.getElementById("settingWhisperTemperature").value) || 0
                 },
-                llm: {
-                    provider: document.getElementById("settingLlmProvider").value,
-                    endpoint: document.getElementById("settingLlmEndpoint").value.trim(),
-                    model: llmModelSelect.value || "",
-                    contextLength: Number(document.getElementById("settingLlmContext").value) || 8192,
-                    temperature: Number(document.getElementById("settingLlmTemperature").value) || 0.4,
-                    system: document.getElementById("settingLlmSystem").value
-                }
+                llm: selectedLlm,
+                llm_servers: currentLlmServersWithSelected(selectedLlm),
+                default_llm_server_name: selectedName
             };
         }
 
@@ -2318,12 +2389,12 @@
             } else if (model?.configured_context_length) {
                 hint.textContent = `Modelfile config reports num_ctx ${formatTokens(model.configured_context_length)}. You can override it for this request.`;
             } else {
-                hint.textContent = "Load local models to read context length from llama.cpp /props or Ollama model metadata when available.";
+                hint.textContent = "Fetch model list to read context length from llama.cpp /props or Ollama model metadata when available.";
             }
         }
 
         async function loadLocalModels() {
-            saveSettings(readSettingsFromForm());
+            saveSettings(readSettingsFromForm(), { persist: false });
             llmModelSelect.innerHTML = `<option value="">Loading models...</option>`;
             try {
                 const llm = appSettings.llm || {};
@@ -2337,11 +2408,15 @@
                 });
                 if (!response.ok) {
                     const error = await response.json().catch(() => ({}));
-                    throw new Error(error.detail || "Could not load models");
+                    throw new Error(error.detail || "Could not fetch model list");
                 }
                 const payload = await response.json();
                 const models = payload.models || [];
                 localModels = models;
+                appSettings.llm = {
+                    ...(appSettings.llm || {}),
+                    models: models.map(model => model.name).filter(Boolean)
+                };
                 llmModelSelect.innerHTML = models.length
                     ? models.map(model => `<option value="${escapeHtml(model.name)}">${escapeHtml(describeModel(model))}</option>`).join("")
                     : `<option value="">No local models found</option>`;
@@ -2350,13 +2425,13 @@
                     const storedModel = models.find(model => model.name === llm.model);
                     llmModelSelect.value = storedModel ? storedModel.name : models[0].name;
                     applySelectedModelMetadata();
-                    saveSettings(readSettingsFromForm());
                 }
+                await saveSettings(readSettingsFromForm());
                 updateContextLengthHint();
                 showToast(`Loaded ${models.length} model${models.length === 1 ? "" : "s"}`);
             } catch (error) {
                 localModels = [];
-                llmModelSelect.innerHTML = `<option value="">Load failed</option>`;
+                llmModelSelect.innerHTML = `<option value="">${escapeHtml(error.message || "Fetch model list failed")}</option>`;
                 updateContextLengthHint();
                 showToast(error.message);
             }
@@ -2425,6 +2500,9 @@
             });
             if (isIme) {
                 loadImeRecords();
+            }
+            if (isSettings) {
+                loadServerSettings({ force: true });
             }
         }
 
@@ -3045,15 +3123,16 @@
                 saveSettings(readSettingsFromForm());
             }
         });
-        document.getElementById("settingLlmProvider").addEventListener("change", event => {
-            const endpoint = document.getElementById("settingLlmEndpoint");
-            const knownEndpoints = Object.values(llmProviderEndpoints);
-            if (!endpoint.value.trim() || knownEndpoints.includes(endpoint.value.trim())) {
-                endpoint.value = llmProviderEndpoints[event.target.value] || "";
-            }
+        document.getElementById("settingLlmName").addEventListener("change", event => {
+            const selectedName = event.target.value;
+            const selectedServer = (appSettings.llm_servers || []).find(server => server.name === selectedName);
+            if (!selectedServer) return;
             localModels = [];
-            llmModelSelect.innerHTML = `<option value="">Load models to choose</option>`;
-            saveSettings({ ...readSettingsFromForm(), llmModel: "" });
+            saveSettings({
+                ...appSettings,
+                llm: selectedServer,
+                default_llm_server_name: selectedName
+            });
             updateContextLengthHint();
         });
         recordContextMenu.addEventListener("click", async event => {
@@ -3111,8 +3190,8 @@
         });
 
         async function initializeApp() {
+            await loadServerSettings({ force: true });
             applySettingsToForm();
-            await loadServerSettings();
             if (new URLSearchParams(window.location.search).get("demo") === "1") {
                 segments = [...seedSegments];
                 selectedIndex = 1;
