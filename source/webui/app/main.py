@@ -107,6 +107,10 @@ class RecordUpdateRequest(BaseModel):
     title: str
 
 
+class ArticleRequest(BaseModel):
+    force: bool = False
+
+
 class LocalModelsRequest(BaseModel):
     provider: str = "llama.cpp"
     endpoint: str = "http://127.0.0.1:8080"
@@ -156,6 +160,8 @@ async def update_app_settings(request: AppSettingsRequest):
 def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     whisper_input = incoming.get("whisper", {}) if isinstance(incoming.get("whisper"), dict) else {}
     llm_input = incoming.get("llm", {}) if isinstance(incoming.get("llm"), dict) else {}
+    current_whisper = _read_backend_config_settings().get("whisper", {})
+    current_whisper = current_whisper if isinstance(current_whisper, dict) else {}
     model_dir, model_filename = _split_whisper_model_settings(whisper_input)
     return {
         "whisper": {
@@ -164,8 +170,8 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
             "model_filename": model_filename,
             "server_bin": whisper_input.get("server_bin", ""),
             "language": whisper_input.get("language", "zh-tw"),
-            "beam": whisper_input.get("beam", 5),
-            "temperature": whisper_input.get("temperature", 0),
+            "beam": current_whisper.get("beam", 5),
+            "temperature": current_whisper.get("temperature", 0),
         },
         "llm": {
             "name": llm_input.get("name", "default"),
@@ -741,35 +747,7 @@ async def chat_with_local_model(request: LocalChatRequest):
             raise ValueError("Model is required.")
         if not request.prompt.strip():
             raise ValueError("Prompt is required.")
-
-        if request.provider == "ollama":
-            payload = _http_json(
-                "POST",
-                _join_url(_llm_base_endpoint(request.endpoint), "/api/chat"),
-                {
-                    "model": request.model,
-                    "stream": False,
-                    "messages": _llm_messages(request.system, request.prompt),
-                    "options": {
-                        "temperature": request.temperature,
-                        "num_ctx": _request_context_length(request),
-                    },
-                },
-            )
-            return {"response": payload.get("message", {}).get("content", "")}
-
-        payload = _http_json(
-            "POST",
-            _join_url(_llm_base_endpoint(request.endpoint), "/v1/chat/completions"),
-            {
-                "model": request.model,
-                "messages": _llm_messages(request.system, request.prompt),
-                "temperature": request.temperature,
-                **({"n_ctx": _request_context_length(request)} if request.provider == "llama.cpp" else {}),
-            },
-        )
-        choices = payload.get("choices", [])
-        return {"response": choices[0].get("message", {}).get("content", "") if choices else ""}
+        return {"response": _local_chat_response(request)}
 
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Local LLM request failed: {str(e)}")
@@ -830,6 +808,34 @@ async def get_transcription_record(job_id: str, record_type: Optional[str] = Non
     if not record:
         raise HTTPException(status_code=404, detail="Transcript record not found")
     return {"record": record}
+
+
+@app.post("/api/transcribe/records/{job_id}/article")
+async def create_transcription_article(job_id: str, request: ArticleRequest, record_type: Optional[str] = None):
+    record = _read_transcription_record(job_id, record_type)
+    if not record:
+        raise HTTPException(status_code=404, detail="Transcript record not found")
+
+    existing = record.get("article") if isinstance(record.get("article"), dict) else {}
+    existing_text = str(existing.get("text") or "").strip()
+    if existing_text and not request.force:
+        return {"article": existing}
+
+    transcript_text = _record_transcript_text(record)
+    if not transcript_text:
+        raise HTTPException(status_code=400, detail="Transcript text is empty")
+
+    try:
+        article = _generate_transcription_article(record, existing, transcript_text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Local LLM article generation failed: {str(e)}")
+
+    record["article"] = article
+    record["updated_at"] = article["updated_at"]
+    _save_transcription_record(job_id, record, record_type)
+    return {"article": article}
 
 
 @app.get("/api/transcribe/records/{job_id}/media")
@@ -1472,6 +1478,37 @@ def _llm_messages(system: Optional[str], prompt: str) -> list[Dict[str, str]]:
     return messages
 
 
+def _local_chat_response(request: LocalChatRequest) -> str:
+    if request.provider == "ollama":
+        payload = _http_json(
+            "POST",
+            _join_url(_llm_base_endpoint(request.endpoint), "/api/chat"),
+            {
+                "model": request.model,
+                "stream": False,
+                "messages": _llm_messages(request.system, request.prompt),
+                "options": {
+                    "temperature": request.temperature,
+                    "num_ctx": _request_context_length(request),
+                },
+            },
+        )
+        return payload.get("message", {}).get("content", "")
+
+    payload = _http_json(
+        "POST",
+        _join_url(_llm_base_endpoint(request.endpoint), "/v1/chat/completions"),
+        {
+            "model": request.model,
+            "messages": _llm_messages(request.system, request.prompt),
+            "temperature": request.temperature,
+            **({"n_ctx": _request_context_length(request)} if request.provider == "llama.cpp" else {}),
+        },
+    )
+    choices = payload.get("choices", [])
+    return choices[0].get("message", {}).get("content", "") if choices else ""
+
+
 def _request_context_length(request: LocalChatRequest) -> int:
     return request.context_length or request.context or 8192
 
@@ -1648,6 +1685,7 @@ def _public_job(job: Dict[str, Any]) -> Dict[str, Any]:
         "partial_segments": job["partial_segments"],
         "result": job["result"],
         "error": job["error"],
+        "article_error": job.get("article_error"),
         "created_at": job["created_at"],
         "updated_at": job["updated_at"],
     }
@@ -1797,7 +1835,7 @@ def _record_data(job_id: str, job: Dict[str, Any]) -> Dict[str, Any]:
     source_path = job.get("source_path")
     record_type = _normalize_record_type(job.get("record_type"))
     job_dir = _job_dir(job_id, record_type)
-    return {
+    record = {
         "job_id": job_id,
         "record_type": record_type,
         "title": _record_title(job),
@@ -1830,9 +1868,13 @@ def _record_data(job_id: str, job: Dict[str, Any]) -> Dict[str, Any]:
         } if result else None,
         "whisper_server_debug": result.get("debug") if result else None,
         "error": job.get("error"),
+        "article_error": job.get("article_error"),
         "created_at": job.get("created_at"),
         "updated_at": job.get("updated_at"),
     }
+    if isinstance(job.get("article"), dict):
+        record["article"] = job["article"]
+    return record
 
 
 def _record_title(job: Dict[str, Any]) -> str:
@@ -1893,6 +1935,81 @@ def _read_transcription_record(job_id: str, record_type: Optional[str] = None) -
         return None
 
 
+def _save_transcription_record(job_id: str, record: Dict[str, Any], record_type: Optional[str] = None) -> None:
+    os.makedirs(_job_dir(job_id, record_type), exist_ok=True)
+    with open(_record_path(job_id, record_type), "w", encoding="utf-8") as record_file:
+        json.dump(record, record_file, ensure_ascii=False, indent=2)
+
+
+def _record_transcript_text(record: Dict[str, Any]) -> str:
+    transcript = record.get("transcript") if isinstance(record.get("transcript"), dict) else {}
+    text = str(transcript.get("text") or "").strip()
+    if text:
+        return text
+    segments = transcript.get("segments") if isinstance(transcript, dict) else []
+    if isinstance(segments, list):
+        return "\n".join(
+            str(segment.get("text") or "").strip()
+            for segment in segments
+            if isinstance(segment, dict) and str(segment.get("text") or "").strip()
+        )
+    return ""
+
+
+def _article_system_prompt() -> str:
+    return "不需要說明、列出細節，只需要整理逐字稿，包括釘正錯字、潤飾語句，串接逐字稿成一篇文章。"
+
+
+def _article_user_prompt(record: Dict[str, Any], transcript_text: str) -> str:
+    source = record.get("source") if isinstance(record.get("source"), dict) else {}
+    title = record.get("title") or source.get("name") or "Untitled transcript"
+    return (
+        f"Title: {title}\n\n"
+        "請整理以下逐字稿，修正明顯錯字並潤飾成一篇連貫文章。只輸出文章內容。\n\n"
+        "逐字稿：\n"
+        f"{transcript_text}"
+    )
+
+
+def _generate_transcription_article(
+    record: Dict[str, Any],
+    existing: Optional[Dict[str, Any]] = None,
+    transcript_text: Optional[str] = None,
+) -> Dict[str, Any]:
+    transcript_text = (transcript_text or _record_transcript_text(record)).strip()
+    if not transcript_text:
+        raise ValueError("Transcript text is empty")
+
+    settings = _read_app_settings()
+    llm = settings.get("llm", {}) if isinstance(settings.get("llm"), dict) else {}
+    if not llm.get("model"):
+        raise ValueError("Local LLM model is not configured")
+
+    article_text = _local_chat_response(
+        LocalChatRequest(
+            provider=llm.get("provider", "llama.cpp"),
+            endpoint=llm.get("endpoint", "http://127.0.0.1:8080"),
+            model=llm.get("model", ""),
+            system=_article_system_prompt(),
+            prompt=_article_user_prompt(record, transcript_text),
+            temperature=float(llm.get("temperature", 0.4) or 0.4),
+            context_length=int(llm.get("contextLength", 8192) or 8192),
+        )
+    ).strip()
+    if not article_text:
+        raise RuntimeError("Local LLM returned an empty article")
+
+    existing = existing if isinstance(existing, dict) else {}
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        "text": article_text,
+        "model": llm.get("model"),
+        "provider": llm.get("provider", "llama.cpp"),
+        "created_at": existing.get("created_at") or now,
+        "updated_at": now,
+    }
+
+
 def _update_transcription_record(job_id: str, title: str, record_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
     clean_title = title.strip()
     if not clean_title:
@@ -1904,9 +2021,7 @@ def _update_transcription_record(job_id: str, title: str, record_type: Optional[
 
     record["title"] = clean_title
     record["updated_at"] = datetime.now(timezone.utc).isoformat()
-    os.makedirs(_job_dir(job_id, record_type), exist_ok=True)
-    with open(_record_path(job_id, record_type), "w", encoding="utf-8") as record_file:
-        json.dump(record, record_file, ensure_ascii=False, indent=2)
+    _save_transcription_record(job_id, record, record_type)
 
     if job_id in transcription_jobs:
         transcription_jobs[job_id]["title"] = clean_title
@@ -1983,7 +2098,31 @@ def _run_url_transcription_job(
         if media_type:
             _update_job(job_id, source_type=media_type)
         _update_job_source(job_id, downloaded_path)
-        _run_transcription_job(job_id, downloaded_path, options)
+        _run_transcription_job(job_id, downloaded_path, options, complete_on_success=False)
+        job = transcription_jobs.get(job_id)
+        if not job or not job.get("result"):
+            return
+
+        _update_job(job_id, status="running", progress=96, message="Writing article with Local LLM")
+        record = _record_data(job_id, transcription_jobs[job_id])
+        try:
+            article = _generate_transcription_article(record)
+            transcription_jobs[job_id]["article"] = article
+            _update_job(
+                job_id,
+                status="completed",
+                progress=100,
+                message="Transcript and article ready",
+            )
+        except Exception as article_error:
+            _update_job(
+                job_id,
+                status="completed",
+                progress=100,
+                message="Transcript ready; article generation failed",
+                error=None,
+                article_error=str(article_error),
+            )
     except Exception as e:
         if _is_job_cancelled(job_id):
             _update_job(job_id, status="cancelled", progress=100, message="Stopped by user")
@@ -1991,7 +2130,12 @@ def _run_url_transcription_job(
             _update_job(job_id, status="failed", progress=100, message="Failed", error=str(e))
 
 
-def _run_transcription_job(job_id: str, source_path: str, options: Dict[str, Any]) -> None:
+def _run_transcription_job(
+    job_id: str,
+    source_path: str,
+    options: Dict[str, Any],
+    complete_on_success: bool = True,
+) -> None:
     try:
         if _is_job_cancelled(job_id):
             return
@@ -2027,9 +2171,9 @@ def _run_transcription_job(job_id: str, source_path: str, options: Dict[str, Any
             return
         _update_job(
             job_id,
-            status="completed",
-            progress=100,
-            message="Transcript ready",
+            status="completed" if complete_on_success else "running",
+            progress=100 if complete_on_success else 95,
+            message="Transcript ready" if complete_on_success else "Transcript ready; preparing article",
             result={"success": True, **result},
         )
 

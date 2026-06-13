@@ -17,7 +17,7 @@ final class AudioRecorder {
     private var recordingStartedAt: Date?
     private var firstBufferLogged = false
     private var firstVoiceLogged = false
-    private var activeMicrophoneOrder = ""
+    private var activeMicrophoneDeviceName = ""
 
     static func inputDevices() -> [AVCaptureDevice] {
         let deviceTypes: [AVCaptureDevice.DeviceType]
@@ -34,13 +34,13 @@ final class AudioRecorder {
         ).devices
     }
 
-    func prepare(microphoneOrder: String, preRollSeconds: Double) {
-        let normalizedOrder = normalizeMicrophoneOrder(microphoneOrder)
+    func prepare(microphoneDeviceName: String, preRollSeconds: Double) {
+        let normalizedDeviceName = normalizeMicrophoneDeviceName(microphoneDeviceName)
 
         audioLock.lock()
         self.preRollSeconds = min(5.0, max(0.0, preRollSeconds))
         let alreadyPrepared = prepared
-        let sameMicrophone = activeMicrophoneOrder == normalizedOrder
+        let sameMicrophone = activeMicrophoneDeviceName == normalizedDeviceName
         audioLock.unlock()
 
         if alreadyPrepared, sameMicrophone {
@@ -55,7 +55,7 @@ final class AudioRecorder {
         pcm = Data()
         audioLock.unlock()
 
-        Logger.shared.log("Audio recorder preparing: selected_microphone_order=\(normalizedOrder.isEmpty ? "default" : normalizedOrder)")
+        Logger.shared.log("Audio recorder preparing: selected_device_name=\(normalizedDeviceName.isEmpty ? "default" : normalizedDeviceName)")
 
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             if !granted {
@@ -64,7 +64,7 @@ final class AudioRecorder {
         }
 
         let input = engine.inputNode
-        applyPreferredInputDevice(microphoneOrder: normalizedOrder)
+        applyPreferredInputDevice(microphoneDeviceName: normalizedDeviceName)
         let inputFormat = input.inputFormat(forBus: 0)
         sampleRate = outputSampleRate
         let outputFormat = AVAudioFormat(
@@ -94,7 +94,7 @@ final class AudioRecorder {
             try engine.start()
             audioLock.lock()
             prepared = true
-            activeMicrophoneOrder = normalizedOrder
+            activeMicrophoneDeviceName = normalizedDeviceName
             audioLock.unlock()
             Logger.shared.log(
                 "Microphone input warmed: input_sample_rate=\(Int(inputFormat.sampleRate)), "
@@ -105,8 +105,8 @@ final class AudioRecorder {
         }
     }
 
-    func start(microphoneOrder: String, preRollSeconds: Double, onLevel: @escaping (Double) -> Void) {
-        prepare(microphoneOrder: microphoneOrder, preRollSeconds: preRollSeconds)
+    func start(microphoneDeviceName: String, preRollSeconds: Double, onLevel: @escaping (Double) -> Void) {
+        prepare(microphoneDeviceName: microphoneDeviceName, preRollSeconds: preRollSeconds)
         audioLock.lock()
         self.onLevel = onLevel
         pcm = preRollPCM
@@ -117,7 +117,7 @@ final class AudioRecorder {
         let preRollBytes = preRollPCM.count
         audioLock.unlock()
         Logger.shared.log(
-            "Audio recorder started: selected_microphone_order=\(microphoneOrder.isEmpty ? "default" : microphoneOrder), pre_roll_bytes=\(preRollBytes)"
+            "Audio recorder started: selected_device_name=\(microphoneDeviceName.isEmpty ? "default" : microphoneDeviceName), pre_roll_bytes=\(preRollBytes)"
         )
     }
 
@@ -129,7 +129,7 @@ final class AudioRecorder {
         audioLock.lock()
         isRecording = false
         prepared = false
-        activeMicrophoneOrder = ""
+        activeMicrophoneDeviceName = ""
         onLevel = nil
         recordingStartedAt = nil
         pcm = Data()
@@ -138,25 +138,32 @@ final class AudioRecorder {
         Logger.shared.log("Audio recorder stopped and pre-roll cleared")
     }
 
-    private func normalizeMicrophoneOrder(_ microphoneOrder: String) -> String {
-        let trimmed = microphoneOrder.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let order = Int(trimmed), order > 0 else { return "" }
-        return String(order)
+    private func normalizeMicrophoneDeviceName(_ microphoneDeviceName: String) -> String {
+        microphoneDeviceName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func selectedInputDevice(microphoneOrder: String) -> AVCaptureDevice? {
-        guard let order = Int(microphoneOrder), order > 0 else { return nil }
+    private func selectedInputDevice(microphoneDeviceName: String) -> AVCaptureDevice? {
+        guard !microphoneDeviceName.isEmpty else { return nil }
         let devices = Self.inputDevices()
-        let index = order - 1
-        guard devices.indices.contains(index) else {
-            Logger.shared.log("Selected microphone order not found, using system default: \(microphoneOrder)")
-            return nil
+        if let device = devices.first(where: { $0.localizedName == microphoneDeviceName }) {
+            return device
         }
-        return devices[index]
+
+        if let order = Int(microphoneDeviceName), order > 0 {
+            let index = order - 1
+            if devices.indices.contains(index) {
+                let device = devices[index]
+                Logger.shared.log("Using legacy microphone order \(microphoneDeviceName) as device name fallback: \(device.localizedName)")
+                return device
+            }
+        }
+
+        Logger.shared.log("Selected microphone device name not found, using system default: \(microphoneDeviceName)")
+        return nil
     }
 
-    private func applyPreferredInputDevice(microphoneOrder: String) {
-        guard let device = selectedInputDevice(microphoneOrder: microphoneOrder) else {
+    private func applyPreferredInputDevice(microphoneDeviceName: String) {
+        guard let device = selectedInputDevice(microphoneDeviceName: microphoneDeviceName) else {
             Logger.shared.log("Using system default microphone input")
             return
         }
@@ -178,9 +185,9 @@ final class AudioRecorder {
             UInt32(MemoryLayout<AudioDeviceID>.size)
         )
         if status == noErr {
-            Logger.shared.log("Microphone input selected: order=\(microphoneOrder), name=\(device.localizedName), device_id=\(deviceID)")
+            Logger.shared.log("Microphone input selected: selected_device_name=\(microphoneDeviceName), device_id=\(deviceID)")
         } else {
-            Logger.shared.log("Could not select microphone input: order=\(microphoneOrder), name=\(device.localizedName), status=\(status)")
+            Logger.shared.log("Could not select microphone input: selected_device_name=\(microphoneDeviceName), status=\(status)")
         }
     }
 

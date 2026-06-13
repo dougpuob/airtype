@@ -17,6 +17,10 @@
             --purple: #6842e8;
             --purple-2: #6f4cf6;
             --purple-soft: rgba(111, 76, 246, 0.12);
+            --purple-chrome: #f5f1ff;
+            --purple-chrome-2: #eee7ff;
+            --purple-line: #d9cdfb;
+            --purple-muted: #6f6686;
             --button: #f7f8fb;
             --green: #22c55e;
             --blue: #0a84ff;
@@ -63,12 +67,12 @@
 
         .titlebar {
             grid-column: 1 / -1;
-            background: #1a1a1b;
+            background: var(--purple-chrome-2);
             display: flex;
             align-items: center;
             gap: 12px;
             padding: 0 12px;
-            border-bottom: 1px solid #1c1c1e;
+            border-bottom: 1px solid var(--purple-line);
             user-select: none;
         }
 
@@ -89,15 +93,15 @@
         .traffic span:nth-child(3) { background: #30d158; }
 
         .project-name {
-            color: #9a9aa0;
+            color: var(--purple-muted);
             font-size: 13px;
             font-weight: 700;
         }
 
         .sidebar {
             grid-row: 2;
-            background: #121213;
-            border-right: 1px solid var(--line);
+            background: var(--purple-chrome);
+            border-right: 1px solid var(--purple-line);
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -117,7 +121,7 @@
             display: grid;
             justify-items: center;
             gap: 6px;
-            color: #85858d;
+            color: var(--purple-muted);
             font-size: 11px;
             cursor: pointer;
         }
@@ -193,8 +197,8 @@
             width: 16px;
             height: 16px;
             border-radius: 5px;
-            background: #29292c;
-            border: 1px solid #343438;
+            background: var(--purple-chrome);
+            border: 1px solid var(--purple-line);
             display: grid;
             place-items: center;
         }
@@ -277,7 +281,7 @@
         }
 
         .segment-count {
-            color: #85858d;
+            color: var(--purple-muted);
             font-weight: 700;
             font-size: 13px;
         }
@@ -297,8 +301,8 @@
 
         .toolbar-btn {
             background: var(--button);
-            color: #b6b6bd;
-            border: 1px solid #2c2c30;
+            color: var(--text);
+            border: 1px solid var(--line);
             border-radius: 8px;
             height: 30px;
             padding: 0 10px;
@@ -381,7 +385,7 @@
             min-width: 3px;
             height: 12px;
             border-radius: 3px;
-            background: #36363b;
+            background: #d8dff0;
         }
 
         .bar.live {
@@ -420,7 +424,7 @@
         }
 
         .settings-header p {
-            color: #8f8f97;
+            color: var(--muted);
             font-size: 13px;
             margin: 0;
         }
@@ -432,8 +436,8 @@
         }
 
         .settings-panel {
-            background: #17171a;
-            border: 1px solid #2f2f35;
+            background: #f8fbff;
+            border: 1px solid var(--purple-line);
             border-radius: 10px;
             padding: 18px;
             display: grid;
@@ -447,7 +451,7 @@
         }
 
         .settings-panel p {
-            color: #8f8f97;
+            color: var(--muted);
             font-size: 12px;
             line-height: 1.55;
             margin: 0;
@@ -459,7 +463,7 @@
         }
 
         .setting-field label {
-            color: #a4a4ad;
+            color: var(--purple-muted);
             font-size: 11px;
             font-weight: 800;
             text-transform: uppercase;
@@ -492,8 +496,8 @@
             width: 100%;
             min-width: 0;
             color: var(--text);
-            background: #101012;
-            border: 1px solid #303037;
+            background: #f5f1ff;
+            border: 1px solid var(--purple-line);
             border-radius: 8px;
             font-size: 13px;
             line-height: 1.35;
@@ -502,8 +506,8 @@
         }
 
         .setting-field input[readonly] {
-            color: #b9b9c2;
-            background: #0c0c0e;
+            color: var(--purple-muted);
+            background: #eee7ff;
             border-style: dashed;
             cursor: default;
         }
@@ -579,8 +583,8 @@
         .wavebar,
         .content,
         .settings-page {
-            background: var(--panel);
-            border-color: var(--line);
+            background: var(--purple-chrome);
+            border-color: var(--purple-line);
         }
 
         .project-name,
@@ -596,16 +600,16 @@
         .drop-zone,
         .settings-panel,
         .file-chip {
-            background: var(--panel-2);
-            border-color: var(--line);
+            background: #f8fbff;
+            border-color: var(--purple-line);
         }
 
         .url-input,
         .setting-field input,
         .setting-field select,
         .setting-field textarea {
-            background: var(--panel-2);
-            border-color: var(--line);
+            background: #f5f1ff;
+            border-color: var(--purple-line);
             color: var(--text);
         }
 
@@ -1346,9 +1350,9 @@
             position: fixed;
             right: 28px;
             bottom: 28px;
-            background: #232327;
+            background: #3f2c8f;
             color: white;
-            border: 1px solid #34343a;
+            border: 1px solid rgba(255, 255, 255, 0.18);
             border-radius: 10px;
             padding: 10px 14px;
             font-size: 13px;
@@ -1589,6 +1593,7 @@
                                 </div>
                                 <div class="player-actions">
                                     <button class="toolbar-btn" id="copyTranscriptTextButton" type="button">Copy Text</button>
+                                    <button class="toolbar-btn" id="copyArticleButton" type="button" disabled>Copy Article</button>
                                     <span class="player-status" id="playerStatus">No media loaded</span>
                                 </div>
                             </div>
@@ -1622,8 +1627,7 @@
                 </div>
                 <div class="settings-grid">
                     <section class="settings-panel" id="whisperSettingsPanel">
-                        <h2>whisper.cpp</h2>
-                        <p>Controls used when creating transcript jobs from uploaded media or URLs.</p>
+                        <h2>whipser-server</h2>
                         <div class="setting-row">
                             <div class="setting-field">
                                 <label for="settingWhisperModelDir">Model directory</label>
@@ -1637,7 +1641,6 @@
                         <div class="setting-field">
                             <label for="settingWhisperServerBin">Server binary</label>
                             <input id="settingWhisperServerBin" type="text" placeholder="/opt/homebrew/bin/whisper-server">
-                            <div class="setting-hint">Used when AirType starts the local whisper-server.</div>
                         </div>
                         <div class="setting-row">
                             <div class="setting-field">
@@ -1662,16 +1665,6 @@
                                     <option value="ja">Japanese</option>
                                     <option value="ko">Korean</option>
                                 </select>
-                            </div>
-                            <div class="setting-field">
-                                <label for="settingWhisperBeam">Beam size</label>
-                                <input id="settingWhisperBeam" type="number" min="1" max="16" step="1">
-                            </div>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-field">
-                                <label for="settingWhisperTemperature">Temperature</label>
-                                <input id="settingWhisperTemperature" type="number" min="0" max="2" step="0.1">
                             </div>
                         </div>
                         <div class="whisper-action-row">
@@ -1733,7 +1726,6 @@
                 </div>
                 <div class="settings-actions">
                     <button class="toolbar-btn" id="resetSettingsButton">Reset</button>
-                    <button class="toolbar-btn primary" id="saveSettingsButton">Save Settings</button>
                 </div>
             </div>
         </main>
@@ -1820,6 +1812,7 @@
         const mediaViewer = document.getElementById("mediaViewer");
         const audioViewer = document.getElementById("audioViewer");
         const playerStatus = document.getElementById("playerStatus");
+        const copyArticleButton = document.getElementById("copyArticleButton");
         const transcriptPage = document.getElementById("transcriptPage");
         const imePage = document.getElementById("imePage");
         const settingsPage = document.getElementById("settingsPage");
@@ -1861,6 +1854,7 @@
         let seconds = 24;
         let activeJobId = null;
         let selectedRecordId = null;
+        let currentArticleText = "";
         let selectedImeRecordId = null;
         let contextRecord = null;
         let renameRecordTarget = null;
@@ -1875,6 +1869,19 @@
             toast.classList.add("show");
             clearTimeout(showToast.timer);
             showToast.timer = setTimeout(() => toast.classList.remove("show"), 1800);
+        }
+
+        function setCurrentArticleText(text = "") {
+            currentArticleText = text || "";
+            updateCopyArticleButtonState();
+        }
+
+        function updateCopyArticleButtonState() {
+            const hasArticle = Boolean(currentArticleText.trim());
+            copyArticleButton.disabled = !hasArticle;
+            copyArticleButton.title = hasArticle
+                ? "Copy generated article"
+                : "Article is not ready yet";
         }
 
         function renderSegments() {
@@ -2121,6 +2128,7 @@
             }
             if (selectedRecordId === record.job_id) {
                 selectedRecordId = null;
+                setCurrentArticleText("");
                 segments = [];
                 selectedIndex = 0;
                 renderTranscriptDebug(null);
@@ -2144,6 +2152,7 @@
                 const payload = await response.json();
                 const record = payload.record;
                 selectedRecordId = record.job_id;
+                setCurrentArticleText(record.article?.text || "");
                 const title = record.title || record.source?.name || "Transcript";
                 setTranscriptTitle(title);
                 setSourceInfo(title, record.source?.size ?? null, record.source?.type || "record");
@@ -2196,13 +2205,18 @@
 
         async function persistSettingsToServer(settings) {
             try {
-                await fetch("/api/settings", {
+                const response = await fetch("/api/settings", {
                     method: "PUT",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ settings })
                 });
+                if (!response.ok) {
+                    throw new Error("Could not save settings");
+                }
+                return true;
             } catch {
                 showToast("Settings saved locally only");
+                return false;
             }
         }
 
@@ -2289,8 +2303,6 @@
             document.getElementById("settingWhisperModelFilename").value = whisper.model_filename || "";
             document.getElementById("settingWhisperServerBin").value = whisper.server_bin || "";
             document.getElementById("settingWhisperLanguage").value = whisper.language || "zh-tw";
-            document.getElementById("settingWhisperBeam").value = whisper.beam || 5;
-            document.getElementById("settingWhisperTemperature").value = whisper.temperature || 0;
             const llmNameSelect = document.getElementById("settingLlmName");
             const llmServers = Array.isArray(appSettings.llm_servers) && appSettings.llm_servers.length
                 ? appSettings.llm_servers
@@ -2338,9 +2350,7 @@
                     model_filename: document.getElementById("settingWhisperModelFilename").value.trim(),
                     server_bin: document.getElementById("settingWhisperServerBin").value.trim(),
                     endpoint: "",
-                    language: document.getElementById("settingWhisperLanguage").value,
-                    beam: Number(document.getElementById("settingWhisperBeam").value) || 5,
-                    temperature: Number(document.getElementById("settingWhisperTemperature").value) || 0
+                    language: document.getElementById("settingWhisperLanguage").value
                 },
                 llm: selectedLlm,
                 llm_servers: currentLlmServersWithSelected(selectedLlm),
@@ -2390,9 +2400,11 @@
                 if (!response.ok || payload.ok === false) {
                     throw new Error(payload.detail || "whisper-server test failed");
                 }
+                const saved = await persistSettingsToServer(settings);
+                saveSettings(payload.settings || settings, { persist: false, markWhisperClean: true });
                 setActiveWhisperServer(payload);
                 setWhisperServerStatus(payload.message || "whisper-server is ready.", "ok");
-                showToast("whisper-server is ready");
+                showToast(saved ? "whisper-server is ready; settings saved" : "whisper-server is ready");
             } catch (error) {
                 setWhisperServerStatus(error.message || "whisper-server test failed", "error");
                 showToast(error.message || "whisper-server test failed");
@@ -2414,7 +2426,6 @@
                 });
                 let payload = await response.json().catch(() => ({}));
                 if (response.status === 405) {
-                    await persistSettingsToServer(settings);
                     response = await fetch("/api/whisper-server/test", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -2425,10 +2436,11 @@
                 if (!response.ok || payload.ok === false) {
                     throw new Error(payload.detail || "Could not restart whisper-server");
                 }
+                const saved = await persistSettingsToServer(payload.settings || settings);
                 saveSettings(payload.settings || settings, { persist: false, markWhisperClean: true });
                 setActiveWhisperServer(payload);
                 setWhisperServerStatus(payload.message || "whisper-server restarted.", "ok");
-                showToast("whisper-server restarted");
+                showToast(saved ? "whisper-server restarted; settings saved" : "whisper-server restarted");
             } catch (error) {
                 setWhisperServerStatus(error.message || "Could not restart whisper-server", "error");
                 showToast(error.message || "Could not restart whisper-server");
@@ -2544,7 +2556,7 @@
                     llmModelSelect.value = storedModel ? storedModel.name : models[0].name;
                     applySelectedModelMetadata();
                 }
-                await saveSettings(readSettingsFromForm());
+                await saveSettings(readSettingsFromForm(), { persist: false });
                 updateContextLengthHint();
                 showToast(`Loaded ${models.length} model${models.length === 1 ? "" : "s"}`);
             } catch (error) {
@@ -2556,7 +2568,8 @@
         }
 
         async function sendLocalPrompt() {
-            saveSettings(readSettingsFromForm());
+            const settings = readSettingsFromForm();
+            saveSettings(settings, { persist: false });
             const prompt = llmPrompt.value.trim();
             if (!prompt) {
                 showToast("Enter a prompt first");
@@ -2584,6 +2597,8 @@
                 }
                 const payload = await response.json();
                 llmResponse.textContent = payload.response || "(Empty response)";
+                const saved = await persistSettingsToServer(settings);
+                showToast(saved ? "Local LLM responded; settings saved" : "Local LLM responded");
             } catch (error) {
                 llmResponse.textContent = error.message;
                 showToast(error.message);
@@ -2596,10 +2611,8 @@
 
         function appendWhisperSettings(form) {
             const endpoint = activeWhisperEndpoint();
-            const whisper = appSettings.whisper || {};
             form.append("whisper_endpoint", endpoint);
-            form.append("temperature", whisper.temperature);
-            form.append("beam_size", whisper.beam);
+            const whisper = appSettings.whisper || {};
             if (whisper.language) {
                 form.append("language", whisper.language);
             }
@@ -2810,10 +2823,19 @@
             copyText(text);
         }
 
-        async function copyText(text) {
+        async function copyArticleText() {
+            if (!currentArticleText.trim()) {
+                updateCopyArticleButtonState();
+                showToast("Article is not ready yet");
+                return;
+            }
+            await copyText(currentArticleText, "Article copied to clipboard");
+        }
+
+        async function copyText(text, message = "Copied to clipboard") {
             try {
                 await navigator.clipboard.writeText(text);
-                showToast("Copied to clipboard");
+                showToast(message);
             } catch {
                 showToast("Copy unavailable in this browser");
             }
@@ -2852,6 +2874,8 @@
         }
 
         async function transcribeBlob(blob, filename = "recording.webm") {
+            selectedRecordId = null;
+            setCurrentArticleText("");
             setTranscriptTitle(filename);
             setSourceInfo(filename, blob.size, blob.type || "media");
             setLocalMediaSource(blob, filename);
@@ -2874,6 +2898,8 @@
                 return;
             }
 
+            selectedRecordId = null;
+            setCurrentArticleText("");
             const urlTitle = url.split("/").pop() || url;
             setTranscriptTitle(urlTitle);
             setSourceInfo(urlTitle, null, "remote url");
@@ -2887,9 +2913,7 @@
                 body: JSON.stringify({
                     url,
                     whisper_endpoint: endpoint,
-                    language: whisper.language || null,
-                    temperature: whisper.temperature,
-                    beam_size: whisper.beam
+                    language: whisper.language || null
                 })
             });
 
@@ -3166,6 +3190,7 @@
 
         document.getElementById("copyButton").addEventListener("click", () => copyText(selectedText()));
         document.getElementById("copyTranscriptTextButton").addEventListener("click", copyTranscriptPlainText);
+        copyArticleButton.addEventListener("click", copyArticleText);
         document.getElementById("cutButton").addEventListener("click", () => {
             if (segments.length === 0) return;
             const removed = segments.splice(selectedIndex, 1);
@@ -3210,6 +3235,8 @@
         });
         document.getElementById("clearTranscriptButton").addEventListener("click", () => {
             activeJobId = null;
+            selectedRecordId = null;
+            setCurrentArticleText("");
             segments = [];
             selectedIndex = 0;
             setProgress(0, "", false);
@@ -3219,18 +3246,14 @@
             renderSegments();
             showToast("Transcript cleared");
         });
-        document.getElementById("saveSettingsButton").addEventListener("click", () => {
-            saveSettings(readSettingsFromForm(), { markWhisperClean: true });
-            showToast("Settings saved");
-        });
         document.querySelectorAll("#settingsPage input:not([readonly]), #settingsPage select, #settingsPage textarea").forEach(control => {
             control.addEventListener("input", updateSaveSettingsButtonState);
             control.addEventListener("change", updateSaveSettingsButtonState);
         });
         document.getElementById("resetSettingsButton").addEventListener("click", () => {
-            saveSettings(defaultSettings, { markWhisperClean: true });
+            saveSettings(defaultSettings, { persist: false, markWhisperClean: true });
             updateSaveSettingsButtonState();
-            showToast("Settings reset");
+            showToast("Settings reset locally");
         });
         document.getElementById("loadLlmModelsButton").addEventListener("click", loadLocalModels);
         document.getElementById("sendLlmPromptButton").addEventListener("click", sendLocalPrompt);
@@ -3239,7 +3262,7 @@
         llmModelSelect.addEventListener("change", () => {
             if (llmModelSelect.value) {
                 applySelectedModelMetadata();
-                saveSettings(readSettingsFromForm());
+                saveSettings(readSettingsFromForm(), { persist: false });
             }
         });
         document.getElementById("settingLlmName").addEventListener("change", event => {
@@ -3251,7 +3274,7 @@
                 ...appSettings,
                 llm: selectedServer,
                 default_llm_server_name: selectedName
-            });
+            }, { persist: false });
             updateContextLengthHint();
         });
         recordContextMenu.addEventListener("click", async event => {

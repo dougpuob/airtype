@@ -13,7 +13,7 @@ swift run AirTypeMac
 
 - menu bar app
 - Chinese mode menu: `zh-tw`, `zh-cn`
-- microphone device menu with system device order
+- microphone device menu with persisted device name
 - microphone mode menu: `on_demand`, `always`
 - hotkey menu: `right_ctrl`, `right_option`
 - move lock

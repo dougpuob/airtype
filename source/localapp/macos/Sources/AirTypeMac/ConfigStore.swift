@@ -27,7 +27,7 @@ struct BackendConfig {
 }
 
 struct MicrophoneConfig {
-    var selectedOrder = ""
+    var selectedDeviceName = ""
     var mode = "on_demand"
     var preRollSeconds = 2.0
 }
@@ -137,8 +137,8 @@ final class ConfigStore: ObservableObject {
         save()
     }
 
-    func updateMicrophone(_ order: String) {
-        config.microphone.selectedOrder = order
+    func updateMicrophoneDeviceName(_ deviceName: String) {
+        config.microphone.selectedDeviceName = deviceName
         save()
     }
 
@@ -325,6 +325,10 @@ final class ConfigStore: ObservableObject {
                     field.apply(&parsed, value)
                 }
             }
+        }
+        if parsed.microphone.selectedDeviceName.isEmpty,
+           let value = tables["localapp.microphone"]?["selected_order"] {
+            parsed.microphone.selectedDeviceName = value
         }
 
         let entries = parseAllLLMServers(from: text)
@@ -625,9 +629,9 @@ final class ConfigStore: ObservableObject {
             group: "Local App Settings",
             name: "localapp.microphone",
             fields: [
-                stringField("localapp.microphone", "selected_order", comment: "Microphone Device. Leave empty to use the system default microphone.",
-                            apply: { $0.microphone.selectedOrder = $1 },
-                            render: { $0.microphone.selectedOrder }),
+                stringField("localapp.microphone", "selected_device_name", comment: "Microphone Device Name. Leave empty to use the system default microphone.",
+                            apply: { $0.microphone.selectedDeviceName = $1 },
+                            render: { $0.microphone.selectedDeviceName }),
                 stringField("localapp.microphone", "mode", comment: #"Microphone Mode. Options: "on_demand", "always""#,
                             apply: { $0.microphone.mode = normalizeMicrophoneMode($1) },
                             render: { $0.microphone.mode }),
