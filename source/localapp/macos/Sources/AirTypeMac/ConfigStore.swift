@@ -45,6 +45,19 @@ struct HotkeyConfig {
 struct WebUIConfig {
     var whisper = WhisperServerConfig()
     var llm = LLMServerConfig()
+    var selectedServerName = ""
+    var selectedModelName = ""
+}
+
+struct LLMServerEntry {
+    let name: String
+    let provider: String
+    let endpoint: String
+    let models: [String]
+    let selectedModel: String
+    let contextLength: Int
+    let temperature: Double
+    let system: String
 }
 
 struct WhisperServerConfig {
@@ -58,12 +71,34 @@ struct WhisperServerConfig {
 }
 
 struct LLMServerConfig {
-    var provider = "llama.cpp"
-    var endpoint = "http://127.0.0.1:8080"
-    var model = ""
-    var contextLength = 8192
-    var temperature = 0.4
-    var system = "Summarize and answer questions using the transcript as the source of truth."
+    var name: String
+    var provider: String
+    var endpoint: String
+    var models: [String]
+    var selectedModel: String
+    var contextLength: Int
+    var temperature: Double
+    var system: String
+
+    init(
+        name: String = "default",
+        provider: String = "llama.cpp",
+        endpoint: String = "http://127.0.0.1:8080",
+        models: [String] = [],
+        selectedModel: String = "",
+        contextLength: Int = 8192,
+        temperature: Double = 0.4,
+        system: String = "Summarize and answer questions using the transcript as the source of truth."
+    ) {
+        self.name = name
+        self.provider = provider
+        self.endpoint = endpoint
+        self.models = models
+        self.selectedModel = selectedModel
+        self.contextLength = contextLength
+        self.temperature = temperature
+        self.system = system
+    }
 }
 
 final class ConfigStore: ObservableObject {
@@ -132,6 +167,131 @@ final class ConfigStore: ObservableObject {
         save()
     }
 
+    func updateLLMServer(_ serverName: String) {
+        config.webui.selectedServerName = serverName
+        // Also update the active llm config to match the selected server
+        guard let text = try? String(contentsOf: path, encoding: .utf8) else { return }
+        let entries = Self.parseAllLLMServers(from: text)
+        if let entry = Self.llmServerEntry(for: serverName, in: entries) {
+            config.webui.llm = LLMServerConfig(
+                name: entry.name,
+                provider: entry.provider,
+                endpoint: entry.endpoint,
+                models: entry.models,
+                selectedModel: entry.selectedModel,
+                contextLength: entry.contextLength,
+                temperature: entry.temperature,
+                system: entry.system
+            )
+        }
+        save()
+    }
+
+    func updateLLMModel(_ modelName: String) {
+        config.webui.selectedModelName = modelName
+        config.webui.llm.selectedModel = modelName
+        save()
+    }
+
+    func updateLLMSelection(serverName: String, modelName: String) {
+        config.webui.selectedServerName = serverName
+        config.webui.selectedModelName = modelName
+        if let text = try? String(contentsOf: path, encoding: .utf8) {
+            let entries = Self.parseAllLLMServers(from: text)
+            if let entry = Self.llmServerEntry(for: serverName, in: entries) {
+                config.webui.llm = LLMServerConfig(
+                    name: entry.name,
+                    provider: entry.provider,
+                    endpoint: entry.endpoint,
+                    models: entry.models,
+                    selectedModel: modelName,
+                    contextLength: entry.contextLength,
+                    temperature: entry.temperature,
+                    system: entry.system
+                )
+            }
+            let patched = Self.patchLLMSelection(in: text, serverName: serverName, modelName: modelName)
+            do {
+                try patched.write(to: path, atomically: true, encoding: .utf8)
+            } catch {
+                Logger.shared.log("Could not write LLM selection: \(error)")
+            }
+        } else {
+            config.webui.llm.selectedModel = modelName
+            save()
+        }
+    }
+
+    func updateLLMServerModels(_ modelsByServer: [String: [String]]) {
+        guard let text = try? String(contentsOf: path, encoding: .utf8) else { return }
+        let patched = Self.patchLLMServerModels(in: text, modelsByServer: modelsByServer)
+        do {
+            try patched.write(to: path, atomically: true, encoding: .utf8)
+            load()
+        } catch {
+            Logger.shared.log("Could not write LLM server models: \(error)")
+        }
+    }
+
+    func availableLLMServers() -> [LLMServerEntry] {
+        guard let text = try? String(contentsOf: path, encoding: .utf8) else {
+            return []
+        }
+        return Self.parseAllLLMServers(from: text)
+    }
+
+    private static func parseAllLLMServers(from text: String) -> [LLMServerEntry] {
+        var entries: [LLMServerEntry] = []
+        var currentTable: [String: String] = [:]
+        var inLLMSection = false
+
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = stripComment(String(rawLine)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("[["), trimmed.hasSuffix("]]") {
+                if inLLMSection && !currentTable.isEmpty {
+                    entries.append(Self.makeEntry(from: currentTable))
+                }
+                let sectionName = String(trimmed.dropFirst(2).dropLast(2))
+                inLLMSection = sectionName.hasPrefix("webui.llm-server")
+                currentTable = [:]
+            } else if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
+                if inLLMSection && !currentTable.isEmpty {
+                    entries.append(Self.makeEntry(from: currentTable))
+                }
+                inLLMSection = false
+                currentTable = [:]
+            } else if inLLMSection, let eqIndex = trimmed.firstIndex(of: "=") {
+                let key = String(trimmed[..<eqIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let value = parseTomlValue(String(trimmed[trimmed.index(after: eqIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines))
+                currentTable[key] = value
+            }
+        }
+        if inLLMSection && !currentTable.isEmpty {
+            entries.append(Self.makeEntry(from: currentTable))
+        }
+        return entries
+    }
+
+    private static func makeEntry(from table: [String: String]) -> LLMServerEntry {
+        let name = table["name"] ?? "default"
+        let provider = table["provider"] ?? "llama.cpp"
+        let endpoint = table["endpoint"] ?? "http://127.0.0.1:8080"
+        let models = parseTomlStringArray(table["models"] ?? "")
+        let selectedModel = table["selected-model"] ?? table["default_model"] ?? table["model"] ?? ""
+        let contextLength = parseInt(table["contextLength"] ?? "8192", defaultValue: 8192)
+        let temperature = parseDouble(table["temperature"] ?? "0.4", defaultValue: 0.4)
+        let system = table["system"] ?? ""
+        return LLMServerEntry(
+            name: name, provider: provider, endpoint: endpoint,
+            models: models, selectedModel: selectedModel, contextLength: contextLength,
+            temperature: temperature, system: system
+        )
+    }
+
+    private static func llmServerEntry(for name: String, in entries: [LLMServerEntry]) -> LLMServerEntry? {
+        entries.first { $0.name == name }
+    }
+
     private func ensureConfigExists() {
         if FileManager.default.fileExists(atPath: path.path) {
             return
@@ -144,12 +304,13 @@ final class ConfigStore: ObservableObject {
     }
 
     private static func parse(_ text: String) -> AirTypeConfig {
-        let table = parseTomlTable(text)
+        let tables = parseTomlTables(text)
         var parsed = AirTypeConfig()
 
         for section in schema {
             for field in section.fields {
-                if let value = table[normalizedSection(field.section)]?[field.key] {
+                let normalized = normalizedSection(field.section)
+                if let table = tables[normalized], let value = table[field.key] {
                     field.apply(&parsed, value)
                 }
             }
@@ -194,7 +355,8 @@ final class ConfigStore: ObservableObject {
                 lines.append("")
             }
 
-            lines.append("[\(section.name)]")
+            let header = section.name.hasPrefix("webui.llm-server") ? "[[\(section.name)]]" : "[\(section.name)]"
+            lines.append(header)
             for field in section.fields {
                 if let comment = field.comment {
                     lines.append("# \(comment)")
@@ -203,7 +365,182 @@ final class ConfigStore: ObservableObject {
             }
         }
 
+        // Append [webui] section with the default LLM server name.
+        lines.append("")
+        lines.append("[webui]")
+        let serverName = config.webui.selectedServerName.isEmpty ? config.webui.llm.name : config.webui.selectedServerName
+        lines.append("default-llm-server-name = \"\(serverName)\"")
+
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func patchLLMSelection(in text: String, serverName: String, modelName: String) -> String {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let modelPatchedLines = patchLLMServerDefaultModel(in: lines, serverName: serverName, modelName: modelName)
+        let webuiPatchedLines = patchWebUISelection(in: modelPatchedLines, serverName: serverName)
+        return webuiPatchedLines.joined(separator: "\n")
+    }
+
+    private static func patchLLMServerDefaultModel(in lines: [String], serverName: String, modelName: String) -> [String] {
+        var output: [String] = []
+        var block: [String] = []
+        var inLLMServer = false
+
+        func flushBlock() {
+            guard inLLMServer else { return }
+            let table = tableValues(from: block)
+            if table["name"] == serverName {
+                let patched = replacingOrAppending(key: "selected-model", value: tomlString(modelName), in: block)
+                output.append(contentsOf: removing(keys: ["model", "default_model"], from: patched))
+            } else {
+                output.append(contentsOf: block)
+            }
+            block.removeAll()
+            inLLMServer = false
+        }
+
+        for line in lines {
+            let trimmed = stripComment(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("[[") || trimmed.hasPrefix("[") {
+                flushBlock()
+                if trimmed == "[[webui.llm-server]]" {
+                    inLLMServer = true
+                    block = [line]
+                } else {
+                    output.append(line)
+                }
+            } else if inLLMServer {
+                block.append(line)
+            } else {
+                output.append(line)
+            }
+        }
+        flushBlock()
+        return output
+    }
+
+    private static func patchLLMServerModels(in text: String, modelsByServer: [String: [String]]) -> String {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var output: [String] = []
+        var block: [String] = []
+        var inLLMServer = false
+
+        func flushBlock() {
+            guard inLLMServer else { return }
+            let table = tableValues(from: block)
+            guard let serverName = table["name"], let modelNames = modelsByServer[serverName] else {
+                output.append(contentsOf: block)
+                block.removeAll()
+                inLLMServer = false
+                return
+            }
+            var patched = replacingOrAppending(key: "models", value: tomlStringArray(modelNames), in: block)
+            let selectedModel = table["selected-model"] ?? table["default_model"] ?? table["model"] ?? ""
+            if selectedModel.isEmpty || !modelNames.contains(selectedModel) {
+                patched = replacingOrAppending(key: "selected-model", value: tomlString(modelNames.first ?? ""), in: patched)
+            }
+            output.append(contentsOf: removing(keys: ["model", "default_model"], from: patched))
+            block.removeAll()
+            inLLMServer = false
+        }
+
+        for line in lines {
+            let trimmed = stripComment(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("[[") || trimmed.hasPrefix("[") {
+                flushBlock()
+                if trimmed == "[[webui.llm-server]]" {
+                    inLLMServer = true
+                    block = [line]
+                } else {
+                    output.append(line)
+                }
+            } else if inLLMServer {
+                block.append(line)
+            } else {
+                output.append(line)
+            }
+        }
+        flushBlock()
+        return output.joined(separator: "\n")
+    }
+
+    private static func patchWebUISelection(in lines: [String], serverName: String) -> [String] {
+        var output: [String] = []
+        var block: [String] = []
+        var inWebUI = false
+        var foundWebUI = false
+
+        func flushBlock() {
+            guard inWebUI else { return }
+            let patched = replacingOrAppending(key: "default-llm-server-name", value: tomlString(serverName), in: block)
+            output.append(contentsOf: patched)
+            block.removeAll()
+            inWebUI = false
+        }
+
+        for line in lines {
+            let trimmed = stripComment(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("[[") || trimmed.hasPrefix("[") {
+                flushBlock()
+                if trimmed == "[webui]" {
+                    foundWebUI = true
+                    inWebUI = true
+                    block = [line]
+                } else {
+                    output.append(line)
+                }
+            } else if inWebUI {
+                block.append(line)
+            } else {
+                output.append(line)
+            }
+        }
+        flushBlock()
+
+        if !foundWebUI {
+            if output.last?.isEmpty == false {
+            output.append("")
+            }
+            output.append("[webui]")
+            output.append("default-llm-server-name = \(tomlString(serverName))")
+        }
+        return output
+    }
+
+    private static func replacingOrAppending(key: String, value: String, in lines: [String]) -> [String] {
+        var patched = lines
+        let replacement = "\(key) = \(value)"
+        if let index = patched.firstIndex(where: { line in
+            let trimmed = stripComment(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let eqIndex = trimmed.firstIndex(of: "=") else { return false }
+            return trimmed[..<eqIndex].trimmingCharacters(in: .whitespacesAndNewlines) == key
+        }) {
+            patched[index] = replacement
+        } else {
+            patched.append(replacement)
+        }
+        return patched
+    }
+
+    private static func removing(keys: Set<String>, from lines: [String]) -> [String] {
+        lines.filter { line in
+            let trimmed = stripComment(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let eqIndex = trimmed.firstIndex(of: "=") else { return true }
+            let key = trimmed[..<eqIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+            return !keys.contains(String(key))
+        }
+    }
+
+    private static func tableValues(from lines: [String]) -> [String: String] {
+        var values: [String: String] = [:]
+        for line in lines {
+            let trimmed = stripComment(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let eqIndex = trimmed.firstIndex(of: "=") else { continue }
+            let key = String(trimmed[..<eqIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = parseTomlValue(String(trimmed[trimmed.index(after: eqIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines))
+            values[key] = value
+        }
+        return values
     }
 
     private struct ConfigSectionSchema {
@@ -315,15 +652,23 @@ final class ConfigStore: ObservableObject {
             group: "Web UI Settings",
             name: "webui.llm-server",
             fields: [
+                stringField("webui.llm-server", "name", comment: "Unique name for this LLM server.",
+                            apply: { $0.webui.llm.name = $1.isEmpty ? "default" : $1 },
+                            render: { $0.webui.llm.name }),
                 stringField("webui.llm-server", "provider",
                             apply: { $0.webui.llm.provider = $1.isEmpty ? "llama.cpp" : $1 },
                             render: { $0.webui.llm.provider }),
                 stringField("webui.llm-server", "endpoint",
                             apply: { $0.webui.llm.endpoint = $1.isEmpty ? "http://127.0.0.1:8080" : $1 },
                             render: { $0.webui.llm.endpoint }),
-                stringField("webui.llm-server", "model",
-                            apply: { $0.webui.llm.model = $1 },
-                            render: { $0.webui.llm.model }),
+                arrayField("webui.llm-server", "models",
+                           apply: { $0.webui.llm.models = $1 },
+                           render: { $0.webui.llm.models }),
+                stringField("webui.llm-server", "selected-model",
+                            apply: {
+                                $0.webui.llm.selectedModel = $1
+                            },
+                            render: { $0.webui.llm.selectedModel }),
                 intField("webui.llm-server", "contextLength",
                          apply: { $0.webui.llm.contextLength = max(1, parseInt($1, defaultValue: 8192)) },
                          render: { String($0.webui.llm.contextLength) }),
@@ -333,6 +678,15 @@ final class ConfigStore: ObservableObject {
                 stringField("webui.llm-server", "system",
                             apply: { $0.webui.llm.system = $1 },
                             render: { $0.webui.llm.system })
+            ]
+        ),
+        ConfigSectionSchema(
+            group: "Web UI Settings",
+            name: "webui",
+            fields: [
+                stringField("webui", "default-llm-server-name",
+                            apply: { $0.webui.selectedServerName = $1.isEmpty ? "default" : $1 },
+                            render: { $0.webui.selectedServerName })
             ]
         )
     ]
@@ -350,6 +704,22 @@ final class ConfigStore: ObservableObject {
             comment: comment,
             apply: apply,
             render: { tomlString(render($0)) }
+        )
+    }
+
+    private static func arrayField(
+        _ section: String,
+        _ key: String,
+        comment: String? = nil,
+        apply: @escaping (inout AirTypeConfig, [String]) -> Void,
+        render: @escaping (AirTypeConfig) -> [String]
+    ) -> ConfigFieldSchema {
+        ConfigFieldSchema(
+            section: section,
+            key: key,
+            comment: comment,
+            apply: { config, value in apply(&config, parseTomlStringArray(value)) },
+            render: { tomlStringArray(render($0)) }
         )
     }
 
@@ -383,28 +753,65 @@ final class ConfigStore: ObservableObject {
         ConfigFieldSchema(section: section, key: key, comment: comment, apply: apply, render: render)
     }
 
-    private static func parseTomlTable(_ text: String) -> [String: [String: String]] {
-        var table: [String: [String: String]] = [:]
-        var section = ""
+    private static func parseTomlTables(_ text: String) -> [String: [String: String]] {
+        // Collect all sections: [section] -> [key: value], [[section]] -> [[key: value]]
+        var sections: [String: [[String: String]]] = [:]
+        var currentSection = ""
+        var currentTable: [String: String] = [:]
+
+        func flushTable() {
+            if !currentSection.isEmpty {
+                sections[currentSection, default: []].append(currentTable)
+                currentTable = [:]
+            }
+        }
 
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
             let trimmed = stripComment(String(rawLine)).trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty {
                 continue
             }
-            if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
-                section = normalizedSection(String(trimmed.dropFirst().dropLast()))
-                continue
+            if trimmed.hasPrefix("[["), trimmed.hasSuffix("]]") {
+                flushTable()
+                currentSection = normalizedSection(String(trimmed.dropFirst(2).dropLast(2)))
+                currentTable = [:]
+            } else if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
+                flushTable()
+                currentSection = normalizedSection(String(trimmed.dropFirst().dropLast()))
+                currentTable = [:]
+            } else if let eqIndex = trimmed.firstIndex(of: "=") {
+                let key = String(trimmed[..<eqIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let value = parseTomlValue(String(trimmed[trimmed.index(after: eqIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines))
+                currentTable[key] = value
             }
+        }
+        flushTable()
 
-            let parts = trimmed.split(separator: "=", maxSplits: 1).map(String.init)
-            guard parts.count == 2 else { continue }
-            let key = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
-            let value = unquote(parts[1].trimmingCharacters(in: .whitespacesAndNewlines))
-            table[section, default: [:]][key] = value
+        // Find the default LLM server name from [webui] section
+        var defaultLLMName: String?
+        if let webuiTables = sections["webui"] {
+            if let webuiTable = webuiTables.last,
+               let name = webuiTable["default-llm-server-name"] {
+                defaultLLMName = name.isEmpty ? nil : name
+            }
         }
 
-        return table
+        // Select default for each section
+        var result: [String: [String: String]] = [:]
+        for (section, tables) in sections {
+            if section.hasPrefix("webui.llm-server"), let defaultName = defaultLLMName {
+                // Select the LLM server matching default-llm-server-name
+                if let matched = tables.first(where: { $0["name"] == defaultName }) {
+                    result[section] = matched
+                } else if let first = tables.first {
+                    result[section] = first
+                }
+            } else {
+                result[section] = tables.last ?? [:]
+            }
+        }
+
+        return result
     }
 
     private static func stripComment(_ line: String) -> String {
@@ -441,11 +848,51 @@ final class ConfigStore: ObservableObject {
             .replacingOccurrences(of: "\\\\", with: "\\")
     }
 
+    private static func parseTomlValue(_ value: String) -> String {
+        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.hasPrefix("[") ? text : unquote(text)
+    }
+
     private static func tomlString(_ value: String) -> String {
         let escaped = value
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
         return "\"\(escaped)\""
+    }
+
+    private static func tomlStringArray(_ values: [String]) -> String {
+        "[\(values.map(tomlString).joined(separator: ", "))]"
+    }
+
+    private static func parseTomlStringArray(_ value: String) -> [String] {
+        var text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.hasPrefix("["), text.hasSuffix("]") else {
+            return []
+        }
+        text.removeFirst()
+        text.removeLast()
+
+        var values: [String] = []
+        var current = ""
+        var inString = false
+        var escaped = false
+        for char in text {
+            if escaped {
+                current.append(char)
+                escaped = false
+            } else if char == "\\" && inString {
+                escaped = true
+            } else if char == "\"" {
+                if inString {
+                    values.append(current)
+                    current = ""
+                }
+                inString.toggle()
+            } else if inString {
+                current.append(char)
+            }
+        }
+        return values
     }
 
     private static func normalizedSection(_ section: String) -> String {

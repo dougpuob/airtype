@@ -17,9 +17,12 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "temperature": 0,
     },
     "llm": {
+        "name": "default",
         "provider": "llama.cpp",
         "endpoint": "http://127.0.0.1:8080",
         "model": "",
+        "models": [],
+        "selected_model": "",
         "contextLength": 8192,
         "temperature": 0.4,
         "system": "Summarize and answer questions using the transcript as the source of truth.",
@@ -47,6 +50,17 @@ def read_config(path: str | Path) -> Dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
+def _select_default_llm(servers: list | None, default_name: str | None = None) -> dict | None:
+    """Select the default LLM server from an array of server configs."""
+    if not servers or not isinstance(servers, list):
+        return None
+    if default_name:
+        for server in servers:
+            if isinstance(server, dict) and server.get("name") == default_name:
+                return server
+    return servers[0] if servers else None
+
+
 def read_webui_settings(path: str | Path) -> Dict[str, Any]:
     config = read_config(path)
     webui = config.get("webui", {})
@@ -55,6 +69,7 @@ def read_webui_settings(path: str | Path) -> Dict[str, Any]:
 
     settings: Dict[str, Any] = {}
     for key, section_names in WEBUI_SECTION_ALIASES.items():
+        # Try dict first
         value = next(
             (
                 webui.get(section_name)
@@ -63,8 +78,20 @@ def read_webui_settings(path: str | Path) -> Dict[str, Any]:
             ),
             None,
         )
+        # Fall back to list for llm-server array
+        if value is None and key == "llm":
+            for section_name in section_names:
+                if isinstance(webui.get(section_name), list):
+                    value = webui.get(section_name)
+                    break
         if isinstance(value, dict):
             settings[key] = value
+        elif key == "llm" and isinstance(value, list):
+            # Handle array format: select the default server
+            default_name = webui.get("default-llm-server-name")
+            selected = _select_default_llm(value, default_name)
+            if selected and isinstance(selected, dict):
+                settings[key] = selected
     return normalize_app_settings(settings) if settings else {}
 
 
@@ -102,10 +129,12 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
             "server_bin": normalized.pop("whisperServerBin", ""),
         }
     if "llmProvider" in normalized:
+        legacy_llm_model = normalized.pop("llmModel", "")
         normalized["llm"] = {
             "provider": normalized.pop("llmProvider", "llama.cpp"),
             "endpoint": normalized.pop("llmEndpoint", "http://127.0.0.1:8080"),
-            "model": normalized.pop("llmModel", ""),
+            "model": legacy_llm_model,
+            "selected_model": legacy_llm_model,
             "contextLength": normalized.pop("llmContextLength", 8192),
             "temperature": normalized.pop("llmTemperature", 0.4),
             "system": normalized.pop(
@@ -124,6 +153,10 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     whisper["temperature"] = _float_in_range(whisper.get("temperature"), 0, minimum=0, maximum=2)
 
     llm = {**DEFAULT_APP_SETTINGS["llm"], **_dict_value(normalized.get("llm"))}
+    llm["models"] = _string_list(llm.get("models"))
+    llm["selected_model"] = llm.get("selected_model") or llm.get("selected-model") or llm.get("default_model") or llm.get("model", "")
+    if llm.get("selected_model"):
+        llm["model"] = llm["selected_model"]
     llm["contextLength"] = _int_in_range(llm.get("contextLength"), 8192, minimum=1)
     llm["temperature"] = _float_in_range(llm.get("temperature"), 0.4, minimum=0, maximum=2)
 
@@ -136,7 +169,9 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
 def remove_webui_sections(text: str) -> str:
     import re
 
-    pattern = re.compile(r"(?ms)^\[webui\.(?:whisper-server|llm-server|whisper|llm)\]\n.*?(?=^\[|\Z)")
+    pattern = re.compile(
+        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:whisper-server|llm-server|whisper|llm)\]{1,2})\n.*?(?=^\[|\Z)"
+    )
     text = pattern.sub("", text)
     header_pattern = re.compile(
         r"(?m)^#=+\n# Web UI Settings\n#=+\n(?:\n|$)"
@@ -162,13 +197,18 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
         f"beam = {_toml_number(whisper.get('beam', 5), 5)}",
         f"temperature = {_toml_number(whisper.get('temperature', 0), 0)}",
         "",
-        "[webui.llm-server]",
+        "[[webui.llm-server]]",
+        f'name = {_toml_string(llm.get("name", "default"))}',
         f"provider = {_toml_string(llm.get('provider', 'llama.cpp'))}",
         f"endpoint = {_toml_string(llm.get('endpoint', 'http://127.0.0.1:8080'))}",
-        f"model = {_toml_string(llm.get('model', ''))}",
+        f"models = {_toml_string_array(llm.get('models', []))}",
+        f"selected-model = {_toml_string(llm.get('selected_model', llm.get('model', '')))}",
         f"contextLength = {_toml_number(llm.get('contextLength', 8192), 8192)}",
         f"temperature = {_toml_number(llm.get('temperature', 0.4), 0.4)}",
         f"system = {_toml_string(llm.get('system', ''))}",
+        "",
+        "[webui]",
+        f'default-llm-server-name = {_toml_string(llm.get("name", "default"))}',
     ]
     return "\n".join(lines)
 
@@ -209,6 +249,12 @@ def _dict_value(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item or "")]
+
+
 def _int_in_range(value: Any, default_value: int, minimum: int, maximum: Optional[int] = None) -> int:
     try:
         number = int(value)
@@ -239,6 +285,10 @@ def _float_in_range(
 def _toml_string(value: Any) -> str:
     text = str(value or "")
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _toml_string_array(value: Any) -> str:
+    return "[" + ", ".join(_toml_string(item) for item in _string_list(value)) + "]"
 
 
 def _toml_number(value: Any, default_value: int | float) -> str:

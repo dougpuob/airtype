@@ -81,19 +81,33 @@
           }
         },
         "llm-server": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "provider": { "type": "string", "default": "llama.cpp" },
-            "endpoint": { "type": "string", "default": "http://127.0.0.1:8080" },
-            "model": { "type": "string", "default": "" },
-            "contextLength": { "type": "integer", "minimum": 1, "default": 8192 },
-            "temperature": { "type": "number", "minimum": 0, "maximum": 2, "default": 0.4 },
-            "system": {
-              "type": "string",
-              "default": "Summarize and answer questions using the transcript as the source of truth."
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "default": "" },
+              "provider": { "type": "string", "default": "llama.cpp" },
+              "endpoint": { "type": "string", "default": "http://127.0.0.1:8080" },
+              "models": {
+                "type": "array",
+                "items": { "type": "string" },
+                "default": []
+              },
+              "selected-model": { "type": "string", "default": "" },
+              "contextLength": { "type": "integer", "minimum": 1, "default": 8192 },
+              "temperature": { "type": "number", "minimum": 0, "maximum": 2, "default": 0.4 },
+              "system": {
+                "type": "string",
+                "default": "Summarize and answer questions using the transcript as the source of truth."
+              }
             }
           }
+        },
+        "default-llm-server": {
+          "type": "string",
+          "default": "",
+          "description": "Name of the default LLM server (matches the `name` field in [[webui.llm-server]]."
         }
       }
     }

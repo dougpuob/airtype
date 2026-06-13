@@ -46,6 +46,32 @@ final class BackendClient {
         return text
     }
 
+    struct LLMModel: Decodable {
+        let name: String
+        let server: String?
+    }
+
+    struct AllModelsResponse: Decodable {
+        let models: [LLMModel]
+    }
+
+    func fetchAllLLMModels(endpoint: String) async throws -> [LLMModel] {
+        let url = URL(string: endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/api/local-llm/all-models")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(statusCode) else {
+            let detail = String(data: data, encoding: .utf8) ?? "unknown error"
+            Logger.shared.log("fetchAllLLMModels failed: status=\(statusCode), detail=\(detail)")
+            return []
+        }
+        let payload = try JSONDecoder().decode(AllModelsResponse.self, from: data)
+        let models = payload.models.filter { !$0.name.isEmpty }
+        Logger.shared.log("fetchAllLLMModels: found \(models.count) models")
+        return models
+    }
+
     private func multipartBody(boundary: String, fields: [String: String], wavData: Data) -> Data {
         var body = Data()
         for (name, value) in fields {

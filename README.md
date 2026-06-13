@@ -168,13 +168,18 @@ language = "zh-tw"
 beam = 5
 temperature = 0
 
-[webui.llm-server]
+[[webui.llm-server]]
+name = "default"
 provider = "llama.cpp"
 endpoint = "http://127.0.0.1:8088/"
-model = "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL"
+models = ["unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL"]
+selected-model = "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL"
 contextLength = 8192
 temperature = 0.4
 system = ""
+
+[webui]
+default-llm-server-name = "default"
 ```
 
 ## API Endpoints

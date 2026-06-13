@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Any, Dict, Optional
@@ -23,6 +23,7 @@ import time
 from .config_schema import (
     DEFAULT_APP_SETTINGS,
     normalize_app_settings,
+    read_config,
     read_webui_data_dir,
     read_webui_settings,
     remove_webui_sections,
@@ -141,23 +142,10 @@ def _print_timing(label: str, timing: Dict[str, Any]) -> None:
 
 @app.get("/api/settings")
 async def get_app_settings():
-    settings = _read_app_settings()
-    whisper_settings = settings.get("whisper", {})
-    # Flatten for backward compatibility
-    flattened = {
-        "whisperEndpoint": settings.get("whisper", {}).get("endpoint", ""),
-        "whisperModel": _whisper_model_path_from_settings(whisper_settings) or "",
-        "whisperLanguage": settings.get("whisper", {}).get("language", "zh-tw"),
-        "whisperBeam": settings.get("whisper", {}).get("beam", 5),
-        "whisperTemperature": settings.get("whisper", {}).get("temperature", 0),
-        "llmProvider": settings.get("llm", {}).get("provider", "llama.cpp"),
-        "llmEndpoint": settings.get("llm", {}).get("endpoint", "http://127.0.0.1:8080"),
-        "llmModel": settings.get("llm", {}).get("model", ""),
-        "llmContextLength": settings.get("llm", {}).get("contextLength", 8192),
-        "llmTemperature": settings.get("llm", {}).get("temperature", 0.4),
-        "llmSystem": settings.get("llm", {}).get("system", "")
-    }
-    return {"settings": flattened}
+    return JSONResponse(
+        {"settings": _read_app_settings()},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.put("/api/settings")
@@ -168,6 +156,7 @@ async def update_app_settings(request: AppSettingsRequest):
     if "whisper" in flat and isinstance(flat["whisper"], dict):
         # Already nested format (current frontend)
         whisper_input = flat["whisper"]
+        llm_input = flat.get("llm", {}) if isinstance(flat.get("llm"), dict) else {}
         model_dir, model_filename = _split_whisper_model_settings(
             whisper_input,
             existing_whisper,
@@ -183,13 +172,18 @@ async def update_app_settings(request: AppSettingsRequest):
                 "temperature": whisper_input.get("temperature", 0),
             },
             "llm": {
-                "provider": flat.get("llm", {}).get("provider", "llama.cpp"),
-                "endpoint": flat.get("llm", {}).get("endpoint", "http://127.0.0.1:8080"),
-                "model": flat.get("llm", {}).get("model", ""),
-                "contextLength": flat.get("llm", {}).get("contextLength", 8192),
-                "temperature": flat.get("llm", {}).get("temperature", 0.4),
-                "system": flat.get("llm", {}).get("system", ""),
+                "name": llm_input.get("name", "default"),
+                "provider": llm_input.get("provider", "llama.cpp"),
+                "endpoint": llm_input.get("endpoint", "http://127.0.0.1:8080"),
+                "model": llm_input.get("model", ""),
+                "models": llm_input.get("models", []),
+                "selected_model": llm_input.get("selected_model") or llm_input.get("selected-model") or llm_input.get("model", ""),
+                "contextLength": llm_input.get("contextLength", 8192),
+                "temperature": llm_input.get("temperature", 0.4),
+                "system": llm_input.get("system", ""),
             },
+            "llm_servers": flat.get("llm_servers", []),
+            "default_llm_server_name": flat.get("default_llm_server_name") or llm_input.get("name", "default"),
         }
     else:
         # Legacy flat format
@@ -211,13 +205,15 @@ async def update_app_settings(request: AppSettingsRequest):
                 "provider": flat.get("llmProvider", "llama.cpp"),
                 "endpoint": flat.get("llmEndpoint", "http://127.0.0.1:8080"),
                 "model": flat.get("llmModel", ""),
+                "models": [],
+                "selected_model": flat.get("llmModel", ""),
                 "contextLength": flat.get("llmContextLength", 8192),
                 "temperature": flat.get("llmTemperature", 0.4),
                 "system": flat.get("llmSystem", "")
             }
         }
     settings = _write_app_settings(nested)
-    return {"settings": nested}
+    return {"settings": settings}
 
 
 @app.get("/api/configurations")
@@ -441,18 +437,204 @@ async def list_local_models(request: LocalModelsRequest):
                         "configured_context_length": _configured_context_length(model_details.get("parameters")),
                     }
                 )
+            _patch_config_llm_models_for_endpoint(request.provider, request.endpoint, [model["name"] for model in models])
             return {
                 "models": models
             }
 
         if request.provider == "llama.cpp":
-            return {"models": _llamacpp_models(request.endpoint)}
+            models = _llamacpp_models(request.endpoint)
+            _patch_config_llm_models_for_endpoint(request.provider, request.endpoint, [model["name"] for model in models])
+            return {"models": models}
 
-        payload = _http_json("GET", _join_url(request.endpoint, "/v1/models"))
-        return {"models": [{"name": model.get("id", "")} for model in payload.get("data", []) if model.get("id")]}
+        models_url = request.endpoint.rstrip("/") if request.endpoint.rstrip("/").endswith("/v1/models") else _join_url(request.endpoint, "/v1/models")
+        payload = _http_json("GET", models_url)
+        models = [{"name": model.get("id", "")} for model in payload.get("data", []) if model.get("id")]
+        _patch_config_llm_models_for_endpoint(request.provider, request.endpoint, [model["name"] for model in models])
+        return {"models": models}
 
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not load local models: {str(e)}")
+
+
+@app.post("/api/local-llm/all-models")
+async def list_all_local_models():
+    try:
+        config = read_config(CONFIG_PATH)
+        webui = config.get("webui", {})
+        servers = webui.get("llm-server", [])
+        if not isinstance(servers, list):
+            return {"models": []}
+
+        all_models: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        models_by_server: dict[str, list[str]] = {}
+        for server in servers:
+            if not isinstance(server, dict):
+                continue
+            server_name = str(server.get("name", "") or "")
+            provider = server.get("provider", "")
+            endpoint = server.get("endpoint", "")
+            if not provider or not endpoint:
+                continue
+            try:
+                payload = await list_local_models(LocalModelsRequest(provider=provider, endpoint=endpoint))
+                for m in payload.get("models", []):
+                    name = m.get("name", "")
+                    key = (server_name, name)
+                    if name and key not in seen:
+                        seen.add(key)
+                        models_by_server.setdefault(server_name, []).append(name)
+                        all_models.append({**m, "server": server_name})
+            except Exception:
+                continue
+        _patch_config_llm_models(models_by_server)
+        return {"models": all_models}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not load all models: {str(e)}")
+
+
+def _patch_config_llm_models(models_by_server: dict[str, list[str]]) -> None:
+    if not models_by_server:
+        return
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as config_file:
+            lines = config_file.read().splitlines()
+    except OSError:
+        return
+
+    output: list[str] = []
+    block: list[str] = []
+    in_llm_server = False
+
+    def flush_block() -> None:
+        nonlocal block, in_llm_server
+        if not in_llm_server:
+            return
+        table = _toml_block_values(block)
+        server_name = table.get("name", "")
+        model_names = models_by_server.get(server_name)
+        if model_names is None:
+            output.extend(block)
+        else:
+            patched = _replace_or_append_toml_value(block, "models", _toml_string_array(model_names))
+            selected_model = table.get("selected-model") or table.get("default_model") or table.get("model") or ""
+            if not selected_model or selected_model not in model_names:
+                patched = _replace_or_append_toml_value(patched, "selected-model", _toml_string(model_names[0] if model_names else ""))
+            patched = _remove_toml_keys(patched, {"model", "default_model"})
+            output.extend(patched)
+        block = []
+        in_llm_server = False
+
+    for line in lines:
+        trimmed = _strip_toml_comment(line).strip()
+        if trimmed.startswith("[[") or trimmed.startswith("["):
+            flush_block()
+            if trimmed == "[[webui.llm-server]]":
+                in_llm_server = True
+                block = [line]
+            else:
+                output.append(line)
+        elif in_llm_server:
+            block.append(line)
+        else:
+            output.append(line)
+    flush_block()
+
+    with open(CONFIG_PATH, "w", encoding="utf-8") as config_file:
+        config_file.write("\n".join(output) + "\n")
+
+
+def _patch_config_llm_models_for_endpoint(provider: str, endpoint: str, model_names: list[str]) -> None:
+    config = read_config(CONFIG_PATH)
+    webui = config.get("webui", {})
+    servers = webui.get("llm-server", []) if isinstance(webui, dict) else []
+    if not isinstance(servers, list):
+        return
+
+    requested_endpoint = _llm_base_endpoint(endpoint)
+    models_by_server: dict[str, list[str]] = {}
+    for server in servers:
+        if not isinstance(server, dict):
+            continue
+        if server.get("provider") != provider:
+            continue
+        if _llm_base_endpoint(str(server.get("endpoint", ""))) != requested_endpoint:
+            continue
+        server_name = str(server.get("name", "") or "")
+        if server_name:
+            models_by_server[server_name] = model_names
+    _patch_config_llm_models(models_by_server)
+
+
+def _toml_block_values(lines: list[str]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in lines:
+        trimmed = _strip_toml_comment(line).strip()
+        if "=" not in trimmed:
+            continue
+        key, value = trimmed.split("=", 1)
+        values[key.strip()] = _parse_toml_scalar(value.strip())
+    return values
+
+
+def _replace_or_append_toml_value(lines: list[str], key: str, value: str) -> list[str]:
+    replacement = f"{key} = {value}"
+    for index, line in enumerate(lines):
+        trimmed = _strip_toml_comment(line).strip()
+        if "=" not in trimmed:
+            continue
+        current_key = trimmed.split("=", 1)[0].strip()
+        if current_key == key:
+            return [*lines[:index], replacement, *lines[index + 1:]]
+    return [*lines, replacement]
+
+
+def _remove_toml_keys(lines: list[str], keys: set[str]) -> list[str]:
+    kept: list[str] = []
+    for line in lines:
+        trimmed = _strip_toml_comment(line).strip()
+        if "=" in trimmed and trimmed.split("=", 1)[0].strip() in keys:
+            continue
+        kept.append(line)
+    return kept
+
+
+def _strip_toml_comment(line: str) -> str:
+    result = []
+    in_string = False
+    escaped = False
+    for char in line:
+        if escaped:
+            result.append(char)
+            escaped = False
+        elif char == "\\" and in_string:
+            result.append(char)
+            escaped = True
+        elif char == '"':
+            result.append(char)
+            in_string = not in_string
+        elif char == "#" and not in_string:
+            break
+        else:
+            result.append(char)
+    return "".join(result)
+
+
+def _parse_toml_scalar(value: str) -> str:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return value
+    return parsed if isinstance(parsed, str) else value
+
+
+def _toml_string(value: str) -> str:
+    return json.dumps(str(value))
+
+
+def _toml_string_array(values: list[str]) -> str:
+    return "[" + ", ".join(_toml_string(value) for value in values) + "]"
 
 
 @app.post("/api/local-llm/chat")
@@ -466,7 +648,7 @@ async def chat_with_local_model(request: LocalChatRequest):
         if request.provider == "ollama":
             payload = _http_json(
                 "POST",
-                _join_url(request.endpoint, "/api/chat"),
+                _join_url(_llm_base_endpoint(request.endpoint), "/api/chat"),
                 {
                     "model": request.model,
                     "stream": False,
@@ -481,7 +663,7 @@ async def chat_with_local_model(request: LocalChatRequest):
 
         payload = _http_json(
             "POST",
-            _join_url(request.endpoint, "/v1/chat/completions"),
+            _join_url(_llm_base_endpoint(request.endpoint), "/v1/chat/completions"),
             {
                 "model": request.model,
                 "messages": _llm_messages(request.system, request.prompt),
@@ -658,12 +840,20 @@ def _is_supported_media(content_type: Optional[str], filename: Optional[str]) ->
 
 
 def _read_app_settings() -> Dict[str, Any]:
+    config_exists = os.path.exists(CONFIG_PATH)
     settings = _read_backend_config_settings()
     if not settings:
         settings = _read_legacy_json_settings()
 
     merged = normalize_app_settings({**DEFAULT_APP_SETTINGS, **settings})
-    if not _has_backend_config_sections():
+    llm_servers, default_llm_server_name = _read_backend_llm_servers()
+    if llm_servers:
+        selected = _select_llm_server(llm_servers, default_llm_server_name)
+        if selected:
+            merged["llm"] = normalize_app_settings({"llm": selected})["llm"]
+        merged["llm_servers"] = llm_servers
+        merged["default_llm_server_name"] = default_llm_server_name or merged["llm"].get("name", "default")
+    if not config_exists:
         _write_app_settings(merged)
     return merged
 
@@ -676,12 +866,86 @@ def _write_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
             **{key: value for key, value in settings.items() if key in allowed},
         }
     )
+    llm_servers = _normalized_llm_servers_from_settings(settings, merged["llm"])
+    default_llm_server_name = str(settings.get("default_llm_server_name") or merged["llm"].get("name") or "default")
+    selected = _select_llm_server(llm_servers, default_llm_server_name)
+    if selected:
+        merged["llm"] = normalize_app_settings({"llm": selected})["llm"]
+    merged["llm_servers"] = llm_servers
+    merged["default_llm_server_name"] = default_llm_server_name
     _write_backend_config_settings(merged)
     return merged
 
 
 def _read_backend_config_settings() -> Dict[str, Any]:
     return read_webui_settings(CONFIG_PATH)
+
+
+def _read_backend_llm_servers() -> tuple[list[Dict[str, Any]], str]:
+    config = read_config(CONFIG_PATH)
+    webui = config.get("webui", {})
+    if not isinstance(webui, dict):
+        return [], ""
+    servers = webui.get("llm-server", [])
+    if isinstance(servers, dict):
+        servers = [servers]
+    if not isinstance(servers, list):
+        return [], ""
+    normalized_servers = [
+        _normalize_llm_server(server)
+        for server in servers
+        if isinstance(server, dict)
+    ]
+    normalized_servers = [server for server in normalized_servers if server.get("name")]
+    return normalized_servers, str(webui.get("default-llm-server-name") or "")
+
+
+def _normalize_llm_server(server: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = normalize_app_settings({"llm": server})["llm"]
+    normalized["name"] = str(server.get("name") or normalized.get("name") or "default")
+    normalized["provider"] = str(normalized.get("provider") or "llama.cpp")
+    normalized["endpoint"] = str(normalized.get("endpoint") or "http://127.0.0.1:8080")
+    normalized["selected_model"] = (
+        normalized.get("selected_model")
+        or server.get("selected-model")
+        or server.get("default_model")
+        or server.get("model")
+        or ""
+    )
+    normalized["model"] = normalized["selected_model"]
+    return normalized
+
+
+def _select_llm_server(servers: list[Dict[str, Any]], default_name: str) -> Optional[Dict[str, Any]]:
+    if default_name:
+        for server in servers:
+            if server.get("name") == default_name:
+                return server
+    return servers[0] if servers else None
+
+
+def _normalized_llm_servers_from_settings(settings: Dict[str, Any], selected_llm: Dict[str, Any]) -> list[Dict[str, Any]]:
+    raw_servers = settings.get("llm_servers") or settings.get("llmServers") or []
+    servers = [
+        _normalize_llm_server(server)
+        for server in raw_servers
+        if isinstance(server, dict)
+    ] if isinstance(raw_servers, list) else []
+
+    selected = _normalize_llm_server(selected_llm)
+    selected_name = selected.get("name") or "default"
+    if not servers:
+        return [selected]
+
+    replaced = False
+    for index, server in enumerate(servers):
+        if server.get("name") == selected_name:
+            servers[index] = selected
+            replaced = True
+            break
+    if not replaced:
+        servers.append(selected)
+    return servers
 
 
 def _read_legacy_json_settings() -> Dict[str, Any]:
@@ -697,11 +961,6 @@ def _read_legacy_json_settings() -> Dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def _has_backend_config_sections() -> bool:
-    settings = _read_backend_config_settings()
-    return bool(settings.get("whisper") or settings.get("llm"))
-
-
 def _write_backend_config_settings(settings: Dict[str, Any]) -> None:
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
     try:
@@ -711,7 +970,7 @@ def _write_backend_config_settings(settings: Dict[str, Any]) -> None:
         text = "# AirType user config\n"
 
     text = remove_webui_sections(text).rstrip()
-    backend_text = render_webui_settings_toml(settings)
+    backend_text = _render_backend_config_settings(settings)
     if text:
         text = f"{text}\n\n{backend_text}\n"
     else:
@@ -719,6 +978,59 @@ def _write_backend_config_settings(settings: Dict[str, Any]) -> None:
 
     with open(CONFIG_PATH, "w", encoding="utf-8") as config_file:
         config_file.write(text)
+
+
+def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
+    llm_servers = settings.get("llm_servers")
+    if not isinstance(llm_servers, list) or not llm_servers:
+        return render_webui_settings_toml(settings)
+
+    normalized = normalize_app_settings(settings)
+    whisper = normalized["whisper"]
+    selected_llm = normalized["llm"]
+    default_name = str(settings.get("default_llm_server_name") or selected_llm.get("name") or "default")
+    lines = [
+        "#===============================================================================",
+        "# Web UI Settings",
+        "#===============================================================================",
+        "",
+        "[webui.whisper-server]",
+        f"model_dir = {_toml_string(whisper.get('model_dir', ''))}",
+        f"model_filename = {_toml_string(whisper.get('model_filename', ''))}",
+        f"server_bin = {_toml_string(whisper.get('server_bin', ''))}",
+        f"endpoint = {_toml_string(whisper.get('endpoint', ''))}",
+        f"language = {_toml_string(whisper.get('language', 'zh-tw'))}",
+        f"beam = {whisper.get('beam', 5)}",
+        f"temperature = {whisper.get('temperature', 0)}",
+        "",
+    ]
+
+    for raw_server in llm_servers:
+        if not isinstance(raw_server, dict):
+            continue
+        server = _normalize_llm_server(raw_server)
+        lines.extend(
+            [
+                "[[webui.llm-server]]",
+                f"name = {_toml_string(server.get('name', 'default'))}",
+                f"provider = {_toml_string(server.get('provider', 'llama.cpp'))}",
+                f"endpoint = {_toml_string(server.get('endpoint', 'http://127.0.0.1:8080'))}",
+                f"models = {_toml_string_array(server.get('models', []))}",
+                f"selected-model = {_toml_string(server.get('selected_model', server.get('model', '')))}",
+                f"contextLength = {server.get('contextLength', 8192)}",
+                f"temperature = {server.get('temperature', 0.4)}",
+                f"system = {_toml_string(server.get('system', ''))}",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "[webui]",
+            f"default-llm-server-name = {_toml_string(default_name)}",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _strip_json_line_comments(text: str) -> str:
@@ -1080,6 +1392,14 @@ def _join_url(endpoint: str, path: str) -> str:
     return endpoint.rstrip("/") + path
 
 
+def _llm_base_endpoint(endpoint: str) -> str:
+    endpoint = endpoint.rstrip("/")
+    for suffix in ("/v1/models", "/models"):
+        if endpoint.endswith(suffix):
+            return endpoint[: -len(suffix)] or endpoint
+    return endpoint
+
+
 def _http_json(method: str, url: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     data = None
     headers = {"Content-Type": "application/json"}
@@ -1125,7 +1445,9 @@ def _llamacpp_models(endpoint: str) -> list[Dict[str, Any]]:
         if not name:
             continue
 
-        props = _llamacpp_props(endpoint, name)
+        props = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+        if not props:
+            props = _llamacpp_props(endpoint, name)
         models.append(
             {
                 "name": name,
@@ -1156,15 +1478,24 @@ def _llamacpp_models(endpoint: str) -> list[Dict[str, Any]]:
 
 
 def _llamacpp_models_payload(endpoint: str) -> Optional[Dict[str, Any]]:
-    for path in ("/models?reload=1", "/models", "/v1/models"):
+    endpoint = endpoint.rstrip("/")
+    if endpoint.endswith("/v1/models") or endpoint.endswith("/models"):
         try:
-            return _http_json("GET", _join_url(endpoint, path))
+            return _http_json("GET", endpoint)
+        except Exception:
+            return None
+
+    base_endpoint = _llm_base_endpoint(endpoint)
+    for path in ("/v1/models", "/models", "/models?reload=1"):
+        try:
+            return _http_json("GET", _join_url(base_endpoint, path))
         except Exception:
             continue
     return None
 
 
 def _llamacpp_props(endpoint: str, model: Optional[str] = None) -> Dict[str, Any]:
+    endpoint = _llm_base_endpoint(endpoint)
     paths = ["/props"]
     if model:
         quoted_model = urllib.parse.quote(model, safe="")

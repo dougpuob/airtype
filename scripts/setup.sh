@@ -176,7 +176,8 @@ def toml_string(value):
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 def remove_backend_sections(text):
-    text = re.sub(r"(?ms)^\[webui\.(?:whisper-server|llm-server|whisper|llm)\]\n.*?(?=^\[|\Z)", "", text)
+    text = re.sub(r"(?ms)^\[{1,2}webui\.(?:whisper-server|llm-server|whisper|llm)\]{1,2}\n.*?(?=^\[|\Z)", "", text)
+    text = re.sub(r"(?m)^\[webui\]\n.*?(?=^\[|\Z)", "", text)
     text = re.sub(r"(?m)^#=+\n# Web UI Settings\n#=+\n(?:\n|$)", "", text)
     return text.rstrip()
 
@@ -197,13 +198,17 @@ backend_text = "\n".join([
     "beam = 5",
     "temperature = 0",
     "",
-    "[webui.llm-server]",
+    "[[webui.llm-server]]",
+    'name = "default"',
     'provider = "llama.cpp"',
     'endpoint = "http://127.0.0.1:8080"',
     'model = ""',
     "contextLength = 8192",
     "temperature = 0.4",
     'system = ""',
+    "",
+    "[webui]",
+    'default-llm-server-name = "default"',
 ])
 
 try:
