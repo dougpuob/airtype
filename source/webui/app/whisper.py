@@ -12,7 +12,6 @@ import subprocess
 import tempfile
 import threading
 import time
-import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -42,9 +41,6 @@ OPENCC_CONFIGS = {
     "zh-cn": "t2s",
 }
 
-SETTINGS_PATH = Path(__file__).resolve().parents[1] / "settings.json"
-
-
 def _find_config_path() -> Path:
     configured = os.getenv("AIRTYPE_CONFIG_PATH")
     if configured:
@@ -64,51 +60,7 @@ class WhisperCppNotConfigured(RuntimeError):
     """Raised when whisper.cpp is not available on this machine."""
 
 
-def _strip_json_line_comments(text: str) -> str:
-    result: list[str] = []
-    in_string = False
-    escaped = False
-    index = 0
-    while index < len(text):
-        char = text[index]
-        next_char = text[index + 1] if index + 1 < len(text) else ""
-        if escaped:
-            result.append(char)
-            escaped = False
-        elif char == "\\" and in_string:
-            result.append(char)
-            escaped = True
-        elif char == '"':
-            result.append(char)
-            in_string = not in_string
-        elif char == "/" and next_char == "/" and not in_string:
-            while index < len(text) and text[index] not in "\r\n":
-                index += 1
-            continue
-        else:
-            result.append(char)
-        index += 1
-    return "".join(result)
-
-
 def _read_backend_settings() -> Dict[str, Any]:
-    config_settings = _read_backend_config_settings()
-    if config_settings:
-        return config_settings
-
-    if not SETTINGS_PATH.exists():
-        return {}
-
-    try:
-        text = SETTINGS_PATH.read_text(encoding="utf-8")
-        settings = json.loads(_strip_json_line_comments(text))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-    return settings if isinstance(settings, dict) else {}
-
-
-def _read_backend_config_settings() -> Dict[str, Any]:
     return read_webui_settings(CONFIG_PATH)
 
 
@@ -123,27 +75,6 @@ class WhisperCppTranscriber:
         self._server_model: Optional[str] = None
         self._server_args: list[str] = []
         self._opencc: Dict[str, OpenCC] = {}
-
-    @property
-    def binary(self) -> Optional[str]:
-        configured = os.getenv("WHISPER_CPP_BIN")
-        if configured:
-            return configured
-
-        for candidate in ("whisper-cli", "whisper-cpp", "main"):
-            path = shutil.which(candidate)
-            if path:
-                return path
-
-        for candidate in (
-            DEFAULT_WHISPER_CPP_ROOT / "build/bin/whisper-cli",
-            DEFAULT_WHISPER_CPP_ROOT / "build--coreml=1/bin/whisper-cli",
-            DEFAULT_WHISPER_CPP_ROOT / "build--coreml=0/bin/whisper-cli",
-            DEFAULT_WHISPER_CPP_ROOT / "build~/bin/whisper-cli",
-        ):
-            if candidate.exists():
-                return str(candidate)
-        return None
 
     @property
     def server_binary(self) -> Optional[str]:
@@ -194,19 +125,12 @@ class WhisperCppTranscriber:
         ):
             return str(Path(model_dir.strip()).expanduser() / model_filename.strip())
 
-        legacy_value = settings.get("model") or settings.get("model_path")
-        if isinstance(legacy_value, str) and legacy_value.strip():
-            return str(Path(legacy_value.strip()).expanduser())
         return None
 
     def _configured_server_bin(self) -> Optional[str]:
         value = self._whisper_local_config().get("server_bin")
         if isinstance(value, str) and value.strip():
             return str(Path(value.strip()).expanduser())
-
-        legacy_dir = self._whisper_local_config().get("whisper_bin_dir")
-        if isinstance(legacy_dir, str) and legacy_dir.strip():
-            return str(Path(legacy_dir.strip()).expanduser() / "whisper-server")
         return None
 
     def _whisper_local_config(self) -> Dict[str, Any]:
@@ -243,7 +167,6 @@ class WhisperCppTranscriber:
 
         with tempfile.TemporaryDirectory(prefix="airtype-transcribe-") as work_dir:
             wav_path = os.path.join(work_dir, "input.wav")
-            output_prefix = os.path.join(work_dir, "transcript")
             self._progress(progress_callback, 15, "Extracting audio with ffmpeg")
             convert_started_at = time.monotonic()
             conversion_mode = self._convert_to_wav(source_path, wav_path, cancel_event, process_callback)
@@ -257,7 +180,6 @@ class WhisperCppTranscriber:
             self._progress(progress_callback, 35, "Sending audio to whisper.cpp server")
             result = self._transcribe_with_server(
                 endpoint=endpoint,
-                model_path=selected_model,
                 wav_path=wav_path,
                 language=whisper_language,
                 output_language=output_language,
@@ -418,6 +340,19 @@ class WhisperCppTranscriber:
             process.kill()
             process.wait(timeout=5)
 
+    def status(self) -> Dict[str, Any]:
+        """Return the managed local whisper.cpp server state."""
+        with self._server_lock:
+            process = self._server_process
+            running = bool(process and process.poll() is None)
+            return {
+                "running": running,
+                "endpoint": self._server_endpoint if running else "",
+                "model": self._server_model if running else "",
+                "server_args": " ".join(self._server_args) if running else "",
+                "pid": process.pid if running and process else None,
+            }
+
     def _server_args_from_settings(self, server_args: Optional[str]) -> list[str]:
         raw_args = (server_args if server_args is not None else os.getenv("WHISPER_CPP_SERVER_ARGS", "")).strip()
         if not raw_args:
@@ -456,7 +391,6 @@ class WhisperCppTranscriber:
     def _transcribe_with_server(
         self,
         endpoint: str,
-        model_path: str,
         wav_path: str,
         language: Optional[str],
         output_language: Optional[str],
@@ -594,112 +528,6 @@ class WhisperCppTranscriber:
         body.extend(f"--{boundary}--\r\n".encode("utf-8"))
         return bytes(body), f"multipart/form-data; boundary={boundary}"
 
-    def _run_whisper_cpp(
-        self,
-        whisper_bin: str,
-        model_path: str,
-        wav_path: str,
-        output_prefix: str,
-        language: Optional[str],
-        temperature: float,
-        beam_size: int,
-        progress_callback: Optional[Callable[[int, str], None]],
-        cancel_event: Optional[threading.Event],
-        process_callback: Optional[Callable[[subprocess.Popen], None]],
-        segment_callback: Optional[Callable[[Dict[str, Any]], None]],
-    ) -> None:
-        command = [
-            whisper_bin,
-            "-m",
-            model_path,
-            "-f",
-            wav_path,
-            "-oj",
-            "-of",
-            output_prefix,
-            "-t",
-            str(max(1, os.cpu_count() or 1)),
-            "--temperature",
-            str(temperature),
-            "--beam-size",
-            str(beam_size),
-        ]
-        if language:
-            command.extend(["-l", language])
-
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        if process_callback:
-            process_callback(process)
-        output = []
-        assert process.stdout is not None
-
-        segment_state = {"count": 0}
-
-        def read_output() -> None:
-            for line in process.stdout:
-                output.append(line)
-                parsed = self._parse_stdout_segment(line, segment_state["count"])
-                if parsed:
-                    segment_state["count"] += 1
-                    if segment_callback:
-                        segment_callback(parsed)
-                    percent = min(90, 45 + segment_state["count"] * 4)
-                    self._progress(
-                        progress_callback,
-                        percent,
-                        f"Transcribing segment {segment_state['count']}",
-                    )
-
-        reader = threading.Thread(target=read_output, daemon=True)
-        reader.start()
-
-        started_at = time.monotonic()
-        last_percent = 35
-        while process.poll() is None:
-            self._raise_if_cancelled(cancel_event, process)
-            elapsed = time.monotonic() - started_at
-            heartbeat_percent = min(88, 35 + int(elapsed * 2))
-            if heartbeat_percent > last_percent:
-                last_percent = heartbeat_percent
-                if segment_state["count"]:
-                    message = f"Transcribing segment {segment_state['count']}"
-                else:
-                    message = "Loading model and transcribing"
-                self._progress(progress_callback, heartbeat_percent, message)
-            time.sleep(1)
-
-        reader.join(timeout=1)
-        self._raise_if_cancelled(cancel_event)
-
-        return_code = process.wait()
-        if return_code != 0:
-            raise RuntimeError(f"whisper.cpp failed: {''.join(output).strip()}")
-
-    def _read_result(self, output_prefix: str) -> Dict[str, Any]:
-        json_path = f"{output_prefix}.json"
-        if not os.path.exists(json_path):
-            raise RuntimeError("whisper.cpp did not produce a JSON transcript.")
-
-        with open(json_path, "r", encoding="utf-8") as file:
-            payload = json.load(file)
-
-        segments = self._normalize_segments(payload)
-        text = " ".join(segment["text"].strip() for segment in segments).strip()
-        duration = segments[-1]["end"] if segments else 0
-
-        return {
-            "text": text,
-            "language": payload.get("params", {}).get("language", "unknown"),
-            "duration": duration,
-            "segments": segments,
-        }
-
     def _normalize_segments(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         raw_segments = payload.get("transcription") or payload.get("segments") or []
         normalized = []
@@ -789,26 +617,6 @@ class WhisperCppTranscriber:
         minutes = (total % 3600) // 60
         secs = total % 60
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-
-    def _parse_stdout_segment(self, line: str, index: int) -> Optional[Dict[str, Any]]:
-        match = re.match(
-            r"^\[(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s+-->\s+(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\]\s*(.*)$",
-            line.strip(),
-        )
-        if not match:
-            return None
-
-        start = self._time_match_to_seconds(match, 1)
-        end = self._time_match_to_seconds(match, 5)
-        text = match.group(9).strip()
-        return self._segment_payload(index, start, end, text)
-
-    def _time_match_to_seconds(self, match: re.Match, offset: int) -> float:
-        hours = int(match.group(offset))
-        minutes = int(match.group(offset + 1))
-        seconds = int(match.group(offset + 2))
-        millis = int(match.group(offset + 3))
-        return hours * 3600 + minutes * 60 + seconds + millis / 1000
 
     def _progress(
         self,

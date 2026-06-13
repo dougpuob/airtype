@@ -41,7 +41,7 @@ final class BackendProcessManager {
             "uvicorn",
             "app.main:app",
             "--host",
-            "localhost",
+            "127.0.0.1",
             "--port",
             String(port)
         ]

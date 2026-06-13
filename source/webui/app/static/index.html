@@ -471,6 +471,21 @@
             line-height: 1.45;
         }
 
+        .setting-status {
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.45;
+            min-height: 18px;
+        }
+
+        .setting-status.ok {
+            color: #47d18c;
+        }
+
+        .setting-status.error {
+            color: #ff7a7a;
+        }
+
         .setting-field input,
         .setting-field select,
         .setting-field textarea {
@@ -484,6 +499,13 @@
             line-height: 1.35;
             padding: 9px 11px;
             outline: 0;
+        }
+
+        .setting-field input[readonly] {
+            color: #b9b9c2;
+            background: #0c0c0e;
+            border-style: dashed;
+            cursor: default;
         }
 
         .settings-panel .toolbar-btn {
@@ -519,6 +541,17 @@
             gap: 10px;
         }
 
+        .whisper-action-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .whisper-action-row .setting-status {
+            flex: 1 1 220px;
+        }
+
         .llm-response {
             min-height: 140px;
             max-height: 280px;
@@ -533,7 +566,7 @@
             line-height: 1.6;
         }
 
-        /* Light theme normalization for legacy dark prototype styles. */
+        /* Light theme normalization. */
         .app-shell {
             border-color: var(--line);
             box-shadow: none;
@@ -1591,10 +1624,32 @@
                     <section class="settings-panel" id="whisperSettingsPanel">
                         <h2>whisper.cpp</h2>
                         <p>Controls used when creating transcript jobs from uploaded media or URLs.</p>
+                        <div class="setting-row">
+                            <div class="setting-field">
+                                <label for="settingWhisperModelDir">Model directory</label>
+                                <input id="settingWhisperModelDir" type="text" placeholder="~/.airtype/models">
+                            </div>
+                            <div class="setting-field">
+                                <label for="settingWhisperModelFilename">Model filename</label>
+                                <input id="settingWhisperModelFilename" type="text" placeholder="ggml-large-v3-turbo-q5_0.bin">
+                            </div>
+                        </div>
                         <div class="setting-field">
-                            <label for="settingWhisperEndpoint">Server endpoint</label>
-                            <input id="settingWhisperEndpoint" type="url" placeholder="http://127.0.0.1:8178">
-                            <div class="setting-hint">Remote whisper-server endpoint used for transcription requests.</div>
+                            <label for="settingWhisperServerBin">Server binary</label>
+                            <input id="settingWhisperServerBin" type="text" placeholder="/opt/homebrew/bin/whisper-server">
+                            <div class="setting-hint">Used when AirType starts the local whisper-server.</div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-field">
+                                <label for="activeWhisperEndpoint">Active endpoint</label>
+                                <input id="activeWhisperEndpoint" type="text" value="Not running" readonly>
+                                <div class="setting-hint">Read-only. This is the whisper-server currently used by AirType.</div>
+                            </div>
+                            <div class="setting-field">
+                                <label for="activeWhisperModel">Active model</label>
+                                <input id="activeWhisperModel" type="text" value="Not loaded" readonly>
+                                <div class="setting-hint">Read-only. Restart after changing model settings.</div>
+                            </div>
                         </div>
                         <div class="setting-row">
                             <div class="setting-field">
@@ -1616,8 +1671,13 @@
                         <div class="setting-row">
                             <div class="setting-field">
                                 <label for="settingWhisperTemperature">Temperature</label>
-                                <input id="settingWhisperTemperature" type="number" min="0" max="1" step="0.1">
+                                <input id="settingWhisperTemperature" type="number" min="0" max="2" step="0.1">
                             </div>
+                        </div>
+                        <div class="whisper-action-row">
+                            <button class="toolbar-btn" id="testWhisperServerButton" type="button">Test whisper-server</button>
+                            <button class="toolbar-btn" id="restartWhisperServerButton" type="button">Restart</button>
+                            <div class="setting-status" id="whisperServerStatus">Not tested</div>
                         </div>
                     </section>
 
@@ -2112,10 +2172,6 @@
         function loadSettings() {
             try {
                 const stored = JSON.parse(localStorage.getItem("airtype.settings") || "{}");
-                // Handle legacy flat structure from localStorage
-                if (stored.whisperEndpoint || stored.llmProvider) {
-                    return normalizeSettings(stored);
-                }
                 return normalizeSettings({ ...defaultSettings, ...stored });
             } catch {
                 return { ...defaultSettings };
@@ -2132,6 +2188,7 @@
                 if (!response.ok) return;
                 const payload = await response.json();
                 saveSettings(payload.settings || {}, { persist: false, markWhisperClean: true });
+                loadWhisperServerStatus();
             } catch {
                 // Keep browser-local defaults when config.toml is unavailable.
             }
@@ -2150,35 +2207,6 @@
         }
 
         function normalizeSettings(settings) {
-            // Handle legacy flat structure
-            if (settings.whisperEndpoint || settings.llmProvider) {
-                const legacyWhisperModel = settings.whisperModel || "";
-                const legacyModelParts = splitModelPath(legacyWhisperModel);
-                settings = {
-                    whisper: {
-                        model_dir: legacyModelParts.modelDir,
-                        model_filename: legacyModelParts.modelFilename,
-                        server_bin: settings.whisperServerBin || "",
-                        endpoint: settings.whisperEndpoint || "",
-                        language: settings.whisperLanguage || "zh-tw",
-                        beam: Number(settings.whisperBeam) || 5,
-                        temperature: Number(settings.whisperTemperature) || 0
-                    },
-                    llm: {
-                        name: "default",
-                        provider: settings.llmProvider || "llama.cpp",
-                        endpoint: settings.llmEndpoint || "http://127.0.0.1:8080",
-                        model: settings.llmModel || "",
-                        models: [],
-                        selected_model: settings.llmModel || "",
-                        contextLength: Number(settings.llmContextLength) || 8192,
-                        temperature: Number(settings.llmTemperature) || 0.4,
-                        system: settings.llmSystem || ""
-                    }
-                };
-            }
-            
-            // Merge with defaults
             const whisper = { ...defaultSettings.whisper, ...(settings.whisper || {}) };
             let llm = normalizeLlmServer({ ...defaultSettings.llm, ...(settings.llm || {}) });
             let llmServers = Array.isArray(settings.llm_servers)
@@ -2257,7 +2285,9 @@
             const whisper = appSettings.whisper || {};
             const llm = appSettings.llm || {};
             
-            document.getElementById("settingWhisperEndpoint").value = whisper.endpoint || "";
+            document.getElementById("settingWhisperModelDir").value = whisper.model_dir || "";
+            document.getElementById("settingWhisperModelFilename").value = whisper.model_filename || "";
+            document.getElementById("settingWhisperServerBin").value = whisper.server_bin || "";
             document.getElementById("settingWhisperLanguage").value = whisper.language || "zh-tw";
             document.getElementById("settingWhisperBeam").value = whisper.beam || 5;
             document.getElementById("settingWhisperTemperature").value = whisper.temperature || 0;
@@ -2289,7 +2319,6 @@
         }
 
         function readSettingsFromForm() {
-            const existingWhisper = appSettings.whisper || {};
             const existingLlm = appSettings.llm || {};
             const selectedModel = llmModelSelect.value || "";
             const selectedName = document.getElementById("settingLlmName").value || existingLlm.name || "default";
@@ -2305,10 +2334,10 @@
             };
             return {
                 whisper: {
-                    model_dir: existingWhisper.model_dir || "",
-                    model_filename: existingWhisper.model_filename || "",
-                    server_bin: existingWhisper.server_bin || "",
-                    endpoint: document.getElementById("settingWhisperEndpoint").value.trim(),
+                    model_dir: document.getElementById("settingWhisperModelDir").value.trim(),
+                    model_filename: document.getElementById("settingWhisperModelFilename").value.trim(),
+                    server_bin: document.getElementById("settingWhisperServerBin").value.trim(),
+                    endpoint: "",
                     language: document.getElementById("settingWhisperLanguage").value,
                     beam: Number(document.getElementById("settingWhisperBeam").value) || 5,
                     temperature: Number(document.getElementById("settingWhisperTemperature").value) || 0
@@ -2317,6 +2346,95 @@
                 llm_servers: currentLlmServersWithSelected(selectedLlm),
                 default_llm_server_name: selectedName
             };
+        }
+
+        function setWhisperServerStatus(message, state = "") {
+            const status = document.getElementById("whisperServerStatus");
+            status.textContent = message;
+            status.classList.toggle("ok", state === "ok");
+            status.classList.toggle("error", state === "error");
+        }
+
+        function setActiveWhisperServer(payload = {}) {
+            const endpointInput = document.getElementById("activeWhisperEndpoint");
+            const modelInput = document.getElementById("activeWhisperModel");
+            const running = Boolean(payload.running || payload.endpoint);
+            endpointInput.value = running ? (payload.endpoint || "External endpoint configured") : "Not running";
+            modelInput.value = payload.model || payload.model_path || (payload.mode === "remote" ? "External server" : "Not loaded");
+        }
+
+        async function loadWhisperServerStatus() {
+            try {
+                const response = await fetch("/api/whisper-server/status", { cache: "no-store" });
+                if (!response.ok) return;
+                const payload = await response.json();
+                setActiveWhisperServer(payload);
+            } catch {
+                setActiveWhisperServer();
+            }
+        }
+
+        async function testWhisperServer() {
+            const button = document.getElementById("testWhisperServerButton");
+            const settings = readSettingsFromForm();
+            button.disabled = true;
+            setWhisperServerStatus("Testing...", "");
+            saveSettings(settings, { persist: false });
+            try {
+                const response = await fetch("/api/whisper-server/test", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ settings })
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok || payload.ok === false) {
+                    throw new Error(payload.detail || "whisper-server test failed");
+                }
+                setActiveWhisperServer(payload);
+                setWhisperServerStatus(payload.message || "whisper-server is ready.", "ok");
+                showToast("whisper-server is ready");
+            } catch (error) {
+                setWhisperServerStatus(error.message || "whisper-server test failed", "error");
+                showToast(error.message || "whisper-server test failed");
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        async function restartWhisperServer() {
+            const button = document.getElementById("restartWhisperServerButton");
+            const settings = readSettingsFromForm();
+            button.disabled = true;
+            setWhisperServerStatus("Restarting whisper-server...", "");
+            try {
+                let response = await fetch("/api/whisper-server/restart", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ settings })
+                });
+                let payload = await response.json().catch(() => ({}));
+                if (response.status === 405) {
+                    await persistSettingsToServer(settings);
+                    response = await fetch("/api/whisper-server/test", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ settings })
+                    });
+                    payload = await response.json().catch(() => ({}));
+                }
+                if (!response.ok || payload.ok === false) {
+                    throw new Error(payload.detail || "Could not restart whisper-server");
+                }
+                saveSettings(payload.settings || settings, { persist: false, markWhisperClean: true });
+                setActiveWhisperServer(payload);
+                setWhisperServerStatus(payload.message || "whisper-server restarted.", "ok");
+                showToast("whisper-server restarted");
+            } catch (error) {
+                setWhisperServerStatus(error.message || "Could not restart whisper-server", "error");
+                showToast(error.message || "Could not restart whisper-server");
+            } finally {
+                button.disabled = false;
+            }
         }
 
         function splitModelPath(modelPath) {
@@ -2473,8 +2591,7 @@
         }
 
         function activeWhisperEndpoint() {
-            const whisper = appSettings.whisper || {};
-            return whisper.endpoint || "";
+            return "";
         }
 
         function appendWhisperSettings(form) {
@@ -3106,7 +3223,7 @@
             saveSettings(readSettingsFromForm(), { markWhisperClean: true });
             showToast("Settings saved");
         });
-        document.querySelectorAll("#settingsPage input, #settingsPage select, #settingsPage textarea").forEach(control => {
+        document.querySelectorAll("#settingsPage input:not([readonly]), #settingsPage select, #settingsPage textarea").forEach(control => {
             control.addEventListener("input", updateSaveSettingsButtonState);
             control.addEventListener("change", updateSaveSettingsButtonState);
         });
@@ -3117,6 +3234,8 @@
         });
         document.getElementById("loadLlmModelsButton").addEventListener("click", loadLocalModels);
         document.getElementById("sendLlmPromptButton").addEventListener("click", sendLocalPrompt);
+        document.getElementById("testWhisperServerButton").addEventListener("click", testWhisperServer);
+        document.getElementById("restartWhisperServerButton").addEventListener("click", restartWhisperServer);
         llmModelSelect.addEventListener("change", () => {
             if (llmModelSelect.value) {
                 applySelectedModelMetadata();

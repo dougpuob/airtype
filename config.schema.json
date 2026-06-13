@@ -21,7 +21,7 @@
           "additionalProperties": false,
           "properties": {
             "mode": { "type": "string", "enum": ["local", "remote"], "default": "local" },
-            "local_endpoint": { "type": "string", "default": "http://localhost:8003" },
+            "local_endpoint": { "type": "string", "default": "http://127.0.0.1:8003" },
             "remote_endpoint": { "type": "string", "default": "" }
           }
         },
@@ -104,7 +104,7 @@
             }
           }
         },
-        "default-llm-server": {
+        "default-llm-server-name": {
           "type": "string",
           "default": "",
           "description": "Name of the default LLM server (matches the `name` field in [[webui.llm-server]]."
