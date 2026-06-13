@@ -30,7 +30,7 @@ swift run AirTypeMac
 When `[localapp.backend-endpoint].mode = "local"`, the SwiftUI frontend checks `/api/health`. If the backend is not already running, it starts:
 
 ```bash
-.venv/bin/python -m uvicorn app.main:app --host localhost --port 8003
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8003
 ```
 
 The command runs from the project `source/webui/` directory. The Web UI reads `[webui.whisper-server]` from `config.toml` for the local `whisper-server` and model paths.

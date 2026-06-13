@@ -15,7 +15,7 @@ struct ChineseMode {
 
 struct BackendConfig {
     var mode = "local"
-    var localEndpoint = "http://localhost:8003"
+    var localEndpoint = "http://127.0.0.1:8003"
     var remoteEndpoint = ""
 
     var selectedEndpoint: String {
@@ -45,6 +45,7 @@ struct HotkeyConfig {
 struct WebUIConfig {
     var whisper = WhisperServerConfig()
     var llm = LLMServerConfig()
+    var llmServers: [LLMServerConfig] = []
     var selectedServerName = ""
     var selectedModelName = ""
 }
@@ -173,16 +174,8 @@ final class ConfigStore: ObservableObject {
         guard let text = try? String(contentsOf: path, encoding: .utf8) else { return }
         let entries = Self.parseAllLLMServers(from: text)
         if let entry = Self.llmServerEntry(for: serverName, in: entries) {
-            config.webui.llm = LLMServerConfig(
-                name: entry.name,
-                provider: entry.provider,
-                endpoint: entry.endpoint,
-                models: entry.models,
-                selectedModel: entry.selectedModel,
-                contextLength: entry.contextLength,
-                temperature: entry.temperature,
-                system: entry.system
-            )
+            config.webui.llm = Self.config(from: entry)
+            config.webui.llmServers = entries.map(Self.config(from:))
         }
         save()
     }
@@ -190,6 +183,7 @@ final class ConfigStore: ObservableObject {
     func updateLLMModel(_ modelName: String) {
         config.webui.selectedModelName = modelName
         config.webui.llm.selectedModel = modelName
+        syncActiveLLMServer()
         save()
     }
 
@@ -199,16 +193,10 @@ final class ConfigStore: ObservableObject {
         if let text = try? String(contentsOf: path, encoding: .utf8) {
             let entries = Self.parseAllLLMServers(from: text)
             if let entry = Self.llmServerEntry(for: serverName, in: entries) {
-                config.webui.llm = LLMServerConfig(
-                    name: entry.name,
-                    provider: entry.provider,
-                    endpoint: entry.endpoint,
-                    models: entry.models,
-                    selectedModel: modelName,
-                    contextLength: entry.contextLength,
-                    temperature: entry.temperature,
-                    system: entry.system
-                )
+                config.webui.llm = Self.config(from: entry)
+                config.webui.llm.selectedModel = modelName
+                config.webui.llmServers = entries.map(Self.config(from:))
+                syncActiveLLMServer()
             }
             let patched = Self.patchLLMSelection(in: text, serverName: serverName, modelName: modelName)
             do {
@@ -292,6 +280,29 @@ final class ConfigStore: ObservableObject {
         entries.first { $0.name == name }
     }
 
+    private static func config(from entry: LLMServerEntry) -> LLMServerConfig {
+        LLMServerConfig(
+            name: entry.name,
+            provider: entry.provider,
+            endpoint: entry.endpoint,
+            models: entry.models,
+            selectedModel: entry.selectedModel,
+            contextLength: entry.contextLength,
+            temperature: entry.temperature,
+            system: entry.system
+        )
+    }
+
+    private func syncActiveLLMServer() {
+        let serverName = config.webui.selectedServerName.isEmpty ? config.webui.llm.name : config.webui.selectedServerName
+        config.webui.llm.name = serverName
+        if let index = config.webui.llmServers.firstIndex(where: { $0.name == serverName }) {
+            config.webui.llmServers[index] = config.webui.llm
+        } else {
+            config.webui.llmServers.append(config.webui.llm)
+        }
+    }
+
     private func ensureConfigExists() {
         if FileManager.default.fileExists(atPath: path.path) {
             return
@@ -313,6 +324,17 @@ final class ConfigStore: ObservableObject {
                 if let table = tables[normalized], let value = table[field.key] {
                     field.apply(&parsed, value)
                 }
+            }
+        }
+
+        let entries = parseAllLLMServers(from: text)
+        if !entries.isEmpty {
+            parsed.webui.llmServers = entries.map(config(from:))
+            let selectedName = parsed.webui.selectedServerName.isEmpty ? entries[0].name : parsed.webui.selectedServerName
+            parsed.webui.selectedServerName = selectedName
+            if let selected = entries.first(where: { $0.name == selectedName }) ?? entries.first {
+                parsed.webui.llm = config(from: selected)
+                parsed.webui.selectedModelName = selected.selectedModel
             }
         }
 
@@ -355,21 +377,33 @@ final class ConfigStore: ObservableObject {
                 lines.append("")
             }
 
-            let header = section.name.hasPrefix("webui.llm-server") ? "[[\(section.name)]]" : "[\(section.name)]"
-            lines.append(header)
-            for field in section.fields {
-                if let comment = field.comment {
-                    lines.append("# \(comment)")
+            if section.name == "webui.llm-server" {
+                let servers = config.webui.llmServers.isEmpty ? [config.webui.llm] : config.webui.llmServers
+                for (index, server) in servers.enumerated() {
+                    if index > 0 {
+                        lines.append("")
+                    }
+                    var serverConfig = config
+                    serverConfig.webui.llm = server
+                    lines.append("[[\(section.name)]]")
+                    for field in section.fields {
+                        if let comment = field.comment {
+                            lines.append("# \(comment)")
+                        }
+                        lines.append("\(field.key) = \(field.render(serverConfig))")
+                    }
                 }
-                lines.append("\(field.key) = \(field.render(config))")
+            } else {
+                let header = "[\(section.name)]"
+                lines.append(header)
+                for field in section.fields {
+                    if let comment = field.comment {
+                        lines.append("# \(comment)")
+                    }
+                    lines.append("\(field.key) = \(field.render(config))")
+                }
             }
         }
-
-        // Append [webui] section with the default LLM server name.
-        lines.append("")
-        lines.append("[webui]")
-        let serverName = config.webui.selectedServerName.isEmpty ? config.webui.llm.name : config.webui.selectedServerName
-        lines.append("default-llm-server-name = \"\(serverName)\"")
 
         return lines.joined(separator: "\n") + "\n"
     }
@@ -469,13 +503,17 @@ final class ConfigStore: ObservableObject {
         var block: [String] = []
         var inWebUI = false
         var foundWebUI = false
+        var shouldKeepCurrentWebUI = false
 
         func flushBlock() {
             guard inWebUI else { return }
-            let patched = replacingOrAppending(key: "default-llm-server-name", value: tomlString(serverName), in: block)
-            output.append(contentsOf: patched)
+            if shouldKeepCurrentWebUI {
+                let patched = replacingOrAppending(key: "default-llm-server-name", value: tomlString(serverName), in: block)
+                output.append(contentsOf: patched)
+            }
             block.removeAll()
             inWebUI = false
+            shouldKeepCurrentWebUI = false
         }
 
         for line in lines {
@@ -483,6 +521,7 @@ final class ConfigStore: ObservableObject {
             if trimmed.hasPrefix("[[") || trimmed.hasPrefix("[") {
                 flushBlock()
                 if trimmed == "[webui]" {
+                    shouldKeepCurrentWebUI = !foundWebUI
                     foundWebUI = true
                     inWebUI = true
                     block = [line]

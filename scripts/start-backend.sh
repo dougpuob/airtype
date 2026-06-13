@@ -24,6 +24,6 @@ cd "$BACKEND_DIR"
 
 # Start the server using the virtual environment's Python
 "$ROOT_DIR/.venv/bin/python" -m uvicorn app.main:app \
-    --host localhost \
+    --host 127.0.0.1 \
     --port "$PORT" \
     --reload

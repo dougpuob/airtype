@@ -68,7 +68,6 @@ def _find_config_path() -> str:
 
 TRANSCRIPT_RECORD_TYPE = "transcript"
 IME_RECORD_TYPE = "ime"
-SETTINGS_PATH = os.path.abspath(os.path.join(APP_DIR, "..", "settings.json"))
 CONFIG_PATH = _find_config_path()
 WEBUI_DATA_DIR = read_webui_data_dir(CONFIG_PATH)
 RECORDS_DIR = os.path.join(WEBUI_DATA_DIR, "records")
@@ -150,70 +149,168 @@ async def get_app_settings():
 
 @app.put("/api/settings")
 async def update_app_settings(request: AppSettingsRequest):
-    # Accept both flat and nested formats from frontend
-    flat = request.settings
-    existing_whisper = _read_app_settings().get("whisper", {})
-    if "whisper" in flat and isinstance(flat["whisper"], dict):
-        # Already nested format (current frontend)
-        whisper_input = flat["whisper"]
-        llm_input = flat.get("llm", {}) if isinstance(flat.get("llm"), dict) else {}
-        model_dir, model_filename = _split_whisper_model_settings(
-            whisper_input,
-            existing_whisper,
-        )
-        nested = {
-            "whisper": {
-                "endpoint": whisper_input.get("endpoint", ""),
-                "model_dir": model_dir,
-                "model_filename": model_filename,
-                "server_bin": whisper_input.get("server_bin", existing_whisper.get("server_bin", "")),
-                "language": whisper_input.get("language", "zh-tw"),
-                "beam": whisper_input.get("beam", 5),
-                "temperature": whisper_input.get("temperature", 0),
-            },
-            "llm": {
-                "name": llm_input.get("name", "default"),
-                "provider": llm_input.get("provider", "llama.cpp"),
-                "endpoint": llm_input.get("endpoint", "http://127.0.0.1:8080"),
-                "model": llm_input.get("model", ""),
-                "models": llm_input.get("models", []),
-                "selected_model": llm_input.get("selected_model") or llm_input.get("selected-model") or llm_input.get("model", ""),
-                "contextLength": llm_input.get("contextLength", 8192),
-                "temperature": llm_input.get("temperature", 0.4),
-                "system": llm_input.get("system", ""),
-            },
-            "llm_servers": flat.get("llm_servers", []),
-            "default_llm_server_name": flat.get("default_llm_server_name") or llm_input.get("name", "default"),
-        }
-    else:
-        # Legacy flat format
-        model_dir, model_filename = _split_whisper_model_settings(
-            {"model": flat.get("whisperModel", "")},
-            existing_whisper,
-        )
-        nested = {
-            "whisper": {
-                "endpoint": flat.get("whisperEndpoint", ""),
-                "model_dir": model_dir,
-                "model_filename": model_filename,
-                "server_bin": existing_whisper.get("server_bin", ""),
-                "language": flat.get("whisperLanguage", "zh-tw"),
-                "beam": flat.get("whisperBeam", 5),
-                "temperature": flat.get("whisperTemperature", 0),
-            },
-            "llm": {
-                "provider": flat.get("llmProvider", "llama.cpp"),
-                "endpoint": flat.get("llmEndpoint", "http://127.0.0.1:8080"),
-                "model": flat.get("llmModel", ""),
-                "models": [],
-                "selected_model": flat.get("llmModel", ""),
-                "contextLength": flat.get("llmContextLength", 8192),
-                "temperature": flat.get("llmTemperature", 0.4),
-                "system": flat.get("llmSystem", "")
-            }
-        }
-    settings = _write_app_settings(nested)
+    settings = _write_app_settings(_settings_request_to_nested(request.settings))
     return {"settings": settings}
+
+
+def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
+    whisper_input = incoming.get("whisper", {}) if isinstance(incoming.get("whisper"), dict) else {}
+    llm_input = incoming.get("llm", {}) if isinstance(incoming.get("llm"), dict) else {}
+    model_dir, model_filename = _split_whisper_model_settings(whisper_input)
+    return {
+        "whisper": {
+            "endpoint": whisper_input.get("endpoint", ""),
+            "model_dir": model_dir,
+            "model_filename": model_filename,
+            "server_bin": whisper_input.get("server_bin", ""),
+            "language": whisper_input.get("language", "zh-tw"),
+            "beam": whisper_input.get("beam", 5),
+            "temperature": whisper_input.get("temperature", 0),
+        },
+        "llm": {
+            "name": llm_input.get("name", "default"),
+            "provider": llm_input.get("provider", "llama.cpp"),
+            "endpoint": llm_input.get("endpoint", "http://127.0.0.1:8080"),
+            "model": llm_input.get("model", ""),
+            "models": llm_input.get("models", []),
+            "selected_model": llm_input.get("selected_model") or llm_input.get("selected-model") or llm_input.get("model", ""),
+            "contextLength": llm_input.get("contextLength", 8192),
+            "temperature": llm_input.get("temperature", 0.4),
+            "system": llm_input.get("system", ""),
+        },
+        "llm_servers": incoming.get("llm_servers", []),
+        "default_llm_server_name": incoming.get("default_llm_server_name") or llm_input.get("name", "default"),
+    }
+
+
+@app.get("/api/whisper-server/status")
+async def whisper_server_status():
+    return {"ok": True, **transcriber.status()}
+
+
+@app.post("/api/whisper-server/restart")
+async def restart_whisper_server(request: AppSettingsRequest):
+    nested = _settings_request_to_nested(request.settings or {})
+    proposed_settings = normalize_app_settings(nested)
+    whisper_settings = proposed_settings.get("whisper", {})
+    endpoint = str(whisper_settings.get("endpoint") or "").strip()
+
+    if endpoint:
+        settings = _write_app_settings(nested)
+        transcriber.shutdown()
+        return {
+            "ok": True,
+            "mode": "remote",
+            "running": False,
+            "endpoint": endpoint,
+            "settings": settings,
+            "message": "Saved settings. External whisper-server endpoint will be used on the next transcription.",
+        }
+
+    model_path = _whisper_model_path_from_settings(whisper_settings)
+    if not model_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Set model_dir and model_filename before restarting a local whisper-server.",
+        )
+    if not os.path.exists(model_path):
+        raise HTTPException(status_code=400, detail=f"Whisper model not found: {model_path}")
+
+    configured_server_bin = str(whisper_settings.get("server_bin") or "").strip()
+    server_bin = os.path.expanduser(configured_server_bin) if configured_server_bin else transcriber.server_binary
+    if not server_bin:
+        raise HTTPException(
+            status_code=400,
+            detail="whisper-server executable not found. Set server_bin in [webui.whisper-server].",
+        )
+    if not os.path.exists(server_bin):
+        raise HTTPException(status_code=400, detail=f"whisper-server executable not found: {server_bin}")
+
+    settings = _write_app_settings(nested)
+    transcriber.shutdown()
+
+    try:
+        ready_endpoint = transcriber._ensure_local_server(model_path, "", None)
+    except WhisperCppNotConfigured as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not restart whisper-server: {exc}") from exc
+
+    return {
+        "ok": True,
+        "mode": "local",
+        "running": True,
+        "endpoint": ready_endpoint,
+        "model": model_path,
+        "server_bin": server_bin,
+        "settings": settings,
+        "message": f"Restarted local whisper-server at {ready_endpoint}.",
+    }
+
+
+@app.post("/api/whisper-server/test")
+async def test_whisper_server(request: AppSettingsRequest):
+    settings = normalize_app_settings(request.settings or {})
+    whisper_settings = settings.get("whisper", {})
+    model_path = _whisper_model_path_from_settings(whisper_settings)
+    endpoint = str(whisper_settings.get("endpoint") or "").strip()
+
+    if endpoint:
+        test_url = endpoint.rstrip("/")
+        try:
+            with urllib.request.urlopen(test_url, timeout=3) as response:
+                return {
+                    "ok": True,
+                    "mode": "remote",
+                    "endpoint": endpoint,
+                    "status": response.status,
+                    "message": f"Connected to whisper-server at {endpoint}.",
+                }
+        except urllib.error.HTTPError as exc:
+            if exc.code < 500:
+                return {
+                    "ok": True,
+                    "mode": "remote",
+                    "endpoint": endpoint,
+                    "status": exc.code,
+                    "message": f"Connected to whisper-server at {endpoint}.",
+                }
+            raise HTTPException(status_code=502, detail=f"whisper-server returned HTTP {exc.code}") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Could not connect to whisper-server: {exc}") from exc
+
+    if not model_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Set model_dir and model_filename before testing a local whisper-server.",
+        )
+    if not os.path.exists(model_path):
+        raise HTTPException(status_code=400, detail=f"Whisper model not found: {model_path}")
+
+    server_bin = transcriber.server_binary
+    if not server_bin:
+        raise HTTPException(
+            status_code=400,
+            detail="whisper-server executable not found. Set server_bin in [webui.whisper-server].",
+        )
+    if not os.path.exists(server_bin):
+        raise HTTPException(status_code=400, detail=f"whisper-server executable not found: {server_bin}")
+
+    try:
+        ready_endpoint = transcriber._ensure_local_server(model_path, "", None)
+    except WhisperCppNotConfigured as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not start whisper-server: {exc}") from exc
+
+    return {
+        "ok": True,
+        "mode": "local",
+        "endpoint": ready_endpoint,
+        "model_path": model_path,
+        "server_bin": server_bin,
+        "message": f"Local whisper-server is running at {ready_endpoint}.",
+    }
 
 
 @app.get("/api/configurations")
@@ -842,9 +939,6 @@ def _is_supported_media(content_type: Optional[str], filename: Optional[str]) ->
 def _read_app_settings() -> Dict[str, Any]:
     config_exists = os.path.exists(CONFIG_PATH)
     settings = _read_backend_config_settings()
-    if not settings:
-        settings = _read_legacy_json_settings()
-
     merged = normalize_app_settings({**DEFAULT_APP_SETTINGS, **settings})
     llm_servers, default_llm_server_name = _read_backend_llm_servers()
     if llm_servers:
@@ -948,19 +1042,6 @@ def _normalized_llm_servers_from_settings(settings: Dict[str, Any], selected_llm
     return servers
 
 
-def _read_legacy_json_settings() -> Dict[str, Any]:
-    if not os.path.exists(SETTINGS_PATH):
-        return {}
-
-    try:
-        with open(SETTINGS_PATH, "r", encoding="utf-8") as settings_file:
-            loaded = json.loads(_strip_json_line_comments(settings_file.read()))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-    return loaded if isinstance(loaded, dict) else {}
-
-
 def _write_backend_config_settings(settings: Dict[str, Any]) -> None:
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
     try:
@@ -1033,42 +1114,14 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _strip_json_line_comments(text: str) -> str:
-    result: list[str] = []
-    in_string = False
-    escaped = False
-    index = 0
-    while index < len(text):
-        char = text[index]
-        next_char = text[index + 1] if index + 1 < len(text) else ""
-        if escaped:
-            result.append(char)
-            escaped = False
-        elif char == "\\" and in_string:
-            result.append(char)
-            escaped = True
-        elif char == '"':
-            result.append(char)
-            in_string = not in_string
-        elif char == "/" and next_char == "/" and not in_string:
-            while index < len(text) and text[index] not in "\r\n":
-                index += 1
-            continue
-        else:
-            result.append(char)
-        index += 1
-    return "".join(result)
-
-
 def _whisper_model_path_from_settings(whisper_settings: Dict[str, Any]) -> Optional[str]:
     return whisper_model_path_from_settings(whisper_settings)
 
 
 def _split_whisper_model_settings(
     whisper_settings: Dict[str, Any],
-    fallback_settings: Optional[Dict[str, Any]] = None,
 ) -> tuple[str, str]:
-    return split_whisper_model_settings(whisper_settings, fallback_settings)
+    return split_whisper_model_settings(whisper_settings)
 
 
 def _settings_transcribe_options(

@@ -31,8 +31,8 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
 DEFAULT_WEBUI_DATA_DIR = "~/.airtype/data"
 
 WEBUI_SECTION_ALIASES = {
-    "whisper": ("whisper-server", "whisper"),
-    "llm": ("llm-server", "llm"),
+    "whisper": ("whisper-server",),
+    "llm": ("llm-server",),
 }
 
 
@@ -111,44 +111,10 @@ def read_webui_data_dir(path: str | Path) -> str:
 def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(settings)
 
-    if "whisperEndpoint" in normalized:
-        legacy_model = normalized.pop("whisperModel", "")
-        model_dir = ""
-        model_filename = ""
-        if legacy_model:
-            model_path = os.path.expanduser(legacy_model)
-            model_dir = os.path.dirname(model_path)
-            model_filename = os.path.basename(model_path)
-        normalized["whisper"] = {
-            "endpoint": normalized.pop("whisperEndpoint", ""),
-            "language": normalized.pop("whisperLanguage", "zh-tw"),
-            "beam": normalized.pop("whisperBeam", 5),
-            "temperature": normalized.pop("whisperTemperature", 0),
-            "model_dir": model_dir,
-            "model_filename": model_filename,
-            "server_bin": normalized.pop("whisperServerBin", ""),
-        }
-    if "llmProvider" in normalized:
-        legacy_llm_model = normalized.pop("llmModel", "")
-        normalized["llm"] = {
-            "provider": normalized.pop("llmProvider", "llama.cpp"),
-            "endpoint": normalized.pop("llmEndpoint", "http://127.0.0.1:8080"),
-            "model": legacy_llm_model,
-            "selected_model": legacy_llm_model,
-            "contextLength": normalized.pop("llmContextLength", 8192),
-            "temperature": normalized.pop("llmTemperature", 0.4),
-            "system": normalized.pop(
-                "llmSystem",
-                "Summarize and answer questions using the transcript as the source of truth.",
-            ),
-        }
-
     whisper = {**DEFAULT_APP_SETTINGS["whisper"], **_dict_value(normalized.get("whisper"))}
     model_dir, model_filename = split_whisper_model_settings(whisper)
     whisper["model_dir"] = model_dir
     whisper["model_filename"] = model_filename
-    whisper.pop("model", None)
-    whisper.pop("model_path", None)
     whisper["beam"] = _int_in_range(whisper.get("beam"), 5, minimum=1, maximum=16)
     whisper["temperature"] = _float_in_range(whisper.get("temperature"), 0, minimum=0, maximum=2)
 
@@ -170,7 +136,7 @@ def remove_webui_sections(text: str) -> str:
     import re
 
     pattern = re.compile(
-        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:whisper-server|llm-server|whisper|llm)\]{1,2})\n.*?(?=^\[|\Z)"
+        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:whisper-server|llm-server)\]{1,2})\n.*?(?=^\[|\Z)"
     )
     text = pattern.sub("", text)
     header_pattern = re.compile(
@@ -218,30 +184,14 @@ def whisper_model_path_from_settings(whisper_settings: Dict[str, Any]) -> Option
     model_filename = whisper_settings.get("model_filename")
     if model_dir and model_filename:
         return os.path.join(os.path.expanduser(str(model_dir)), str(model_filename))
-
-    legacy_model = whisper_settings.get("model") or whisper_settings.get("model_path")
-    if legacy_model:
-        return os.path.expanduser(str(legacy_model))
     return None
 
 
-def split_whisper_model_settings(
-    whisper_settings: Dict[str, Any],
-    fallback_settings: Optional[Dict[str, Any]] = None,
-) -> Tuple[str, str]:
+def split_whisper_model_settings(whisper_settings: Dict[str, Any]) -> Tuple[str, str]:
     model_dir = whisper_settings.get("model_dir")
     model_filename = whisper_settings.get("model_filename")
     if model_dir or model_filename:
         return str(model_dir or ""), str(model_filename or "")
-
-    legacy_model = whisper_settings.get("model") or whisper_settings.get("model_path")
-    if legacy_model:
-        model_path = os.path.expanduser(str(legacy_model))
-        return os.path.dirname(model_path), os.path.basename(model_path)
-
-    if fallback_settings:
-        return split_whisper_model_settings(fallback_settings)
-
     return "", ""
 
 
