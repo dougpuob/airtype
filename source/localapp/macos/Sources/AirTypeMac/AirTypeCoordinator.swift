@@ -31,10 +31,11 @@ final class AirTypeCoordinator: ObservableObject {
 
     func start() {
         configStore.load()
+        migrateLegacyMicrophoneSelection()
         backendProcessManager.startIfNeeded(config: configStore.config, projectRoot: configStore.projectRoot)
         if configStore.config.microphone.mode == "always" {
             audioRecorder.prepare(
-                microphoneOrder: configStore.config.microphone.selectedOrder,
+                microphoneDeviceName: configStore.config.microphone.selectedDeviceName,
                 preRollSeconds: configStore.config.microphone.preRollSeconds
             )
         }
@@ -76,11 +77,27 @@ final class AirTypeCoordinator: ObservableObject {
         hotkeyMonitor?.start()
     }
 
+    private func migrateLegacyMicrophoneSelection() {
+        let selected = configStore.config.microphone.selectedDeviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let order = Int(selected), order > 0 else { return }
+
+        let devices = AudioRecorder.inputDevices()
+        let index = order - 1
+        guard devices.indices.contains(index) else {
+            Logger.shared.log("Legacy microphone order could not be migrated: selected_order=\(selected)")
+            return
+        }
+
+        let deviceName = devices[index].localizedName
+        configStore.updateMicrophoneDeviceName(deviceName)
+        Logger.shared.log("Migrated microphone selection from order \(selected) to device name: \(deviceName)")
+    }
+
     private func applyMicrophoneRuntimeSettings(reason: String) {
         let config = configStore.config
         Logger.shared.log(
             "Applying microphone settings: reason=\(reason), mode=\(config.microphone.mode), "
-            + "selected_order=\(config.microphone.selectedOrder.isEmpty ? "default" : config.microphone.selectedOrder), "
+            + "selected_device_name=\(config.microphone.selectedDeviceName.isEmpty ? "default" : config.microphone.selectedDeviceName), "
             + "pre_roll_seconds=\(config.microphone.preRollSeconds)"
         )
 
@@ -92,7 +109,7 @@ final class AirTypeCoordinator: ObservableObject {
         audioRecorder.stop()
         if config.microphone.mode == "always" {
             audioRecorder.prepare(
-                microphoneOrder: config.microphone.selectedOrder,
+                microphoneDeviceName: config.microphone.selectedDeviceName,
                 preRollSeconds: config.microphone.preRollSeconds
             )
         }
@@ -117,7 +134,7 @@ final class AirTypeCoordinator: ObservableObject {
         let warmupDelay: TimeInterval = config.microphone.mode == "always" ? 0 : 0.7
         if config.microphone.mode == "on_demand" {
             audioRecorder.prepare(
-                microphoneOrder: config.microphone.selectedOrder,
+                microphoneDeviceName: config.microphone.selectedDeviceName,
                 preRollSeconds: config.microphone.preRollSeconds
             )
             Logger.shared.log("On-demand microphone warmup started: delay_ms=\(Int(warmupDelay * 1000))")
@@ -134,7 +151,7 @@ final class AirTypeCoordinator: ObservableObject {
         recordingState = .recording
         floatingPanel?.showRecording()
         audioRecorder.start(
-            microphoneOrder: config.microphone.selectedOrder,
+            microphoneDeviceName: config.microphone.selectedDeviceName,
             preRollSeconds: config.microphone.preRollSeconds,
             onLevel: { [weak self] level in
                 Task { @MainActor in self?.floatingPanel?.setLevel(level) }
@@ -260,15 +277,15 @@ final class AirTypeCoordinator: ObservableObject {
         }
 
         for (index, device) in devices.enumerated() {
-            let order = String(index + 1)
+            let deviceName = device.localizedName
             let item = NSMenuItem(
                 title: "\(index + 1). \(device.localizedName)",
                 action: #selector(selectMicrophone(_:)),
                 keyEquivalent: ""
             )
             item.target = self
-            item.representedObject = order
-            item.state = configStore.config.microphone.selectedOrder == order ? .on : .off
+            item.representedObject = deviceName
+            item.state = configStore.config.microphone.selectedDeviceName == deviceName ? .on : .off
             menu.addItem(item)
         }
     }
@@ -393,8 +410,8 @@ final class AirTypeCoordinator: ObservableObject {
     }
 
     @objc private func selectMicrophone(_ sender: NSMenuItem) {
-        guard let order = sender.representedObject as? String else { return }
-        configStore.updateMicrophone(order)
+        guard let deviceName = sender.representedObject as? String else { return }
+        configStore.updateMicrophoneDeviceName(deviceName)
         applyMicrophoneRuntimeSettings(reason: "menu_microphone")
         rebuildMenu()
     }
