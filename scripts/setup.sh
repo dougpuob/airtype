@@ -305,5 +305,6 @@ write_backend_settings
 
 echo
 echo "Setup complete."
-echo "Run AirType with:"
-echo "  ./run.sh"
+echo "Build & Run AirType with:"
+echo "  ./scripts/build-localapp-macos.sh"
+echo "  open dist/AirType.app"

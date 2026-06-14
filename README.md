@@ -70,8 +70,7 @@ AirType.git/
 │       │   ├── whisper.py       # whisper.cpp integration, ffmpeg, OpenCC
 │       │   └── static/          # Web UI (index.html)
 │       └── requirements.txt     # Python dependencies
-├── scripts/                  # Setup, WebUI, and macOS build scripts
-└── run.sh                    # Run the native macOS frontend
+└── scripts/                  # Setup, WebUI, and macOS build scripts
 ```
 
 ## Quick Start
@@ -112,23 +111,16 @@ Use `cookies` for a `cookies.txt` path, or `cookies_from_browser` for a browser 
 ### Run
 
 ```bash
-./run.sh
+./scripts/build-localapp-macos.sh
+open dist/AirType.app
 ```
 
-`run.sh` starts the native SwiftUI menu bar app. The frontend starts the local WebUI automatically when `~/.airtype/config.toml` uses `mode = "local"`.
+This builds and starts the native SwiftUI menu bar app. The frontend starts the local WebUI automatically when `~/.airtype/config.toml` uses `mode = "local"`.
 
 ### Manual WebUI
 
 ```bash
 ./scripts/start-webui.sh
-```
-
-### SwiftUI Frontend
-
-```bash
-cd source/localapp/macos
-swift build
-swift run AirTypeMac
 ```
 
 ### Build macOS App
