@@ -89,7 +89,7 @@ AirType.git/
 ./scripts/setup.sh
 ```
 
-The setup script prints the tools and Python packages it is about to install, asks for confirmation, installs `uv` if you approve and it is missing, creates `.venv`, installs backend dependencies, and creates `config.toml` from `config.example.toml` if needed.
+The setup script prints the tools and Python packages it is about to install, asks for confirmation, installs `uv` if you approve and it is missing, creates `.venv`, installs WebUI dependencies, and creates `config.toml` from `config.example.toml` if needed.
 
 It also offers to prepare local transcription:
 
@@ -105,12 +105,12 @@ It also offers to prepare local transcription:
 ./run.sh
 ```
 
-`run.sh` starts the native SwiftUI menu bar app. The frontend starts the local backend automatically when `config.toml` uses `mode = "local"`.
+`run.sh` starts the native SwiftUI menu bar app. The frontend starts the local WebUI automatically when `config.toml` uses `mode = "local"`.
 
-### Manual Backend
+### Manual WebUI
 
 ```bash
-./scripts/start-backend.sh
+./scripts/start-webui.sh
 ```
 
 ### SwiftUI Frontend
@@ -141,7 +141,7 @@ macOS will ask for Microphone permission when recording. If the global hotkey or
 
 | Variable | Default | Description |
 |---|---|---|
-| `AIRTYPE_BACKEND_ENDPOINT` | `http://localhost:8003` | Backend API URL |
+| `AIRTYPE_BACKEND_ENDPOINT` | `http://localhost:8003` | WebUI API URL |
 | `AIRTYPE_WHISPER_LANGUAGE` | — | Whisper language code (e.g. `zh-tw`) |
 | `AIRTYPE_FLOATING_WHISPER_BEAM_SIZE` | `1` | Beam size for floating dialog transcription |
 | `WHISPER_CPP_ROOT` | `~/whisper.cpp/whisper.cpp.git` | whisper.cpp source directory |

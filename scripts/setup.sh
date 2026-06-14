@@ -91,7 +91,7 @@ ensure_whisper_cpp() {
 
   if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "Automatic whisper-cpp installation is currently only configured for macOS/Homebrew."
-    echo "Install whisper.cpp manually, or configure a remote backend in config.toml."
+    echo "Install whisper.cpp manually, or configure a remote WebUI in config.toml."
     return
   fi
 
@@ -249,7 +249,7 @@ echo "Planned actions:"
 echo "  1. Check for uv, and offer to install it if missing"
 echo "  2. Ensure Python 3.11 is available through uv"
 echo "  3. Create or reuse .venv"
-echo "  4. Install backend dependencies from source/webui/requirements.txt"
+echo "  4. Install WebUI dependencies from source/webui/requirements.txt"
 echo "     - fastapi, uvicorn, python-multipart, pydantic"
 echo "     - openai-whisper, torch, torchaudio"
 echo "     - yt-dlp, opencc-python-reimplemented"
@@ -280,7 +280,7 @@ echo "Creating virtual environment: .venv"
 "$UV_BIN" venv --python 3.11 "$VENV_DIR"
 
 echo
-echo "Installing backend dependencies..."
+echo "Installing WebUI dependencies..."
 "$UV_BIN" pip install --python "$VENV_DIR/bin/python" -r "$ROOT_DIR/source/webui/requirements.txt"
 
 echo
