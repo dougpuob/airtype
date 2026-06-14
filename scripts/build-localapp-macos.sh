@@ -67,6 +67,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>AirType records microphone audio for speech-to-text transcription.</string>
   <key>NSAccessibilityUsageDescription</key>
   <string>AirType listens for the global hotkey and sends the paste shortcut to insert transcribed text.</string>
+  <key>NSInputMonitoringUsageDescription</key>
+  <string>AirType listens for Escape while recording so it can discard the current recording before transcription.</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>AirType activates the previous app so it can paste transcribed text.</string>
   <key>NSHighResolutionCapable</key>
