@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import logging
 import sys
 import threading
 from pathlib import Path
@@ -47,19 +46,6 @@ class _ServiceLogStream(io.TextIOBase):
             self._buffer = ""
 
 
-class _ServiceLogHandler(logging.Handler):
-    def __init__(self, service: str) -> None:
-        super().__init__()
-        self._service = service
-        self.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            append_service_log(self._service, self.format(record))
-        except Exception:
-            self.handleError(record)
-
-
 def install_webui_logging() -> None:
     if getattr(install_webui_logging, "_installed", False):
         return
@@ -67,7 +53,3 @@ def install_webui_logging() -> None:
 
     sys.stdout = _ServiceLogStream("webui")
     sys.stderr = _ServiceLogStream("webui")
-
-    for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"):
-        logger = logging.getLogger(logger_name)
-        logger.addHandler(_ServiceLogHandler("webui"))
