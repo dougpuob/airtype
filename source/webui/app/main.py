@@ -867,6 +867,14 @@ async def chat_with_local_model(request: LocalChatRequest):
         return {"response": _local_chat_response(request)}
 
     except Exception as e:
+        append_service_log(
+            "webui",
+            "local LLM request failed: "
+            f"provider={request.provider} "
+            f"endpoint={_llm_base_endpoint(request.endpoint)} "
+            f"model={request.model or ''} "
+            f"error={e}",
+        )
         raise HTTPException(status_code=502, detail=f"Local LLM request failed: {str(e)}")
 
 
@@ -1593,8 +1601,15 @@ def _http_json(method: str, url: str, payload: Optional[Dict[str, Any]] = None) 
         data = json.dumps(payload).encode("utf-8")
 
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(request, timeout=120) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace").strip()
+        detail = f"HTTP {error.code} from {url}"
+        if body:
+            detail += f": {body[:1000]}"
+        raise ValueError(detail) from error
 
 
 def _llm_messages(system: Optional[str], prompt: str) -> list[Dict[str, str]]:
