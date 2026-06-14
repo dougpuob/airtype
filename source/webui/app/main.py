@@ -1116,7 +1116,7 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
         f"model_dir = {_toml_string(whisper.get('model_dir', ''))}",
         f"model_filename = {_toml_string(whisper.get('model_filename', ''))}",
         f"server_bin = {_toml_string(whisper.get('server_bin', ''))}",
-        f"endpoint = {_toml_string(whisper.get('endpoint', ''))}",
+        f"remote_endpoint = {_toml_string(whisper.get('remote_endpoint', ''))}",
         f"server_args = {_toml_string(whisper.get('server_args', ''))}",
         f"language = {_toml_string(whisper.get('language', 'zh-tw'))}",
         f"beam = {whisper.get('beam', 5)}",
