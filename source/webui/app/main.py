@@ -1584,7 +1584,11 @@ def _llm_base_endpoint(endpoint: str) -> str:
 
 def _http_json(method: str, url: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     data = None
-    headers = {"Content-Type": "application/json"}
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "AirType/1.0",
+    }
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
 
