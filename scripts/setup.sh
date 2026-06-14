@@ -132,6 +132,7 @@ download_whisper_model() {
 write_backend_settings() {
   echo
   echo "Updating $CONFIG_PATH Web UI settings..."
+  mkdir -p "$(dirname "$CONFIG_PATH")"
   "$VENV_DIR/bin/python" - "$CONFIG_PATH" "$DEFAULT_WHISPER_MODEL_PATH" "$WHISPER_BIN_DIR" <<'PY'
 import re
 import sys
@@ -213,6 +214,7 @@ ensure_config() {
     return
   fi
 
+  mkdir -p "$(dirname "$config")"
   cp "$ROOT_DIR/config.example.toml" "$config"
   echo "Created $config from config.example.toml"
 }
