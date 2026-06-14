@@ -118,7 +118,7 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(settings)
 
     whisper = {**DEFAULT_APP_SETTINGS["whisper"], **_dict_value(normalized.get("whisper"))}
-    whisper["remote_endpoint"] = str(whisper.get("remote_endpoint") or whisper.get("endpoint") or "")
+    whisper["remote_endpoint"] = str(whisper.get("remote_endpoint") or "")
     model_dir, model_filename = split_whisper_model_settings(whisper)
     whisper["model_dir"] = model_dir
     whisper["model_filename"] = model_filename
