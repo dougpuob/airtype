@@ -65,7 +65,7 @@ struct WhisperServerConfig {
     var modelDir = ""
     var modelFilename = ""
     var serverBin = ""
-    var endpoint = ""
+    var remoteEndpoint = ""
     var serverArgs = ""
     var language = "zh-tw"
     var beam = 5
@@ -125,6 +125,44 @@ final class ConfigStore: ObservableObject {
             throw ConfigStoreError.unreadableConfig(path.path)
         }
         config = Self.parse(text)
+        logLoadedConfig()
+    }
+
+    private func logLoadedConfig() {
+        Logger.shared.log("Loaded config: path=\(path.path), project_root=\(projectRoot?.path ?? "not found")")
+        Logger.shared.log(
+            "Config localapp.backend-endpoint: mode=\(config.backend.mode), "
+            + "local_endpoint=\(config.backend.localEndpoint), "
+            + "remote_endpoint=\(config.backend.remoteEndpoint), "
+            + "selected_endpoint=\(config.backend.selectedEndpoint)"
+        )
+        Logger.shared.log(
+            "Config localapp.microphone: mode=\(config.microphone.mode), "
+            + "selected_device_name=\(config.microphone.selectedDeviceName.isEmpty ? "default" : config.microphone.selectedDeviceName), "
+            + "pre_roll_seconds=\(config.microphone.preRollSeconds)"
+        )
+        Logger.shared.log(
+            "Config localapp.hotkey: trigger=\(config.hotkey.trigger.rawValue); "
+            + "chinese_mode=\(config.chineseMode.mode); "
+            + "floating_dialog=(x=\(config.floatingDialog.positionXRatio), y=\(config.floatingDialog.positionYRatio), move_lock=\(config.floatingDialog.moveLock))"
+        )
+        Logger.shared.log(
+            "Config webui.whisper-server: model_dir=\(config.webui.whisper.modelDir), "
+            + "model_filename=\(config.webui.whisper.modelFilename), "
+            + "server_bin=\(config.webui.whisper.serverBin), "
+            + "remote_endpoint=\(config.webui.whisper.remoteEndpoint), "
+            + "language=\(config.webui.whisper.language), "
+            + "beam=\(config.webui.whisper.beam), "
+            + "temperature=\(config.webui.whisper.temperature)"
+        )
+        Logger.shared.log(
+            "Config webui.llm-server: selected_server=\(config.webui.selectedServerName), "
+            + "active_name=\(config.webui.llm.name), "
+            + "provider=\(config.webui.llm.provider), "
+            + "endpoint=\(config.webui.llm.endpoint), "
+            + "selected_model=\(config.webui.llm.selectedModel), "
+            + "server_count=\(config.webui.llmServers.count)"
+        )
     }
 
     func updateChineseMode(_ mode: String) {
@@ -661,9 +699,9 @@ final class ConfigStore: ObservableObject {
                 stringField("webui.whisper-server", "server_bin",
                             apply: { $0.webui.whisper.serverBin = $1 },
                             render: { $0.webui.whisper.serverBin }),
-                stringField("webui.whisper-server", "endpoint",
-                            apply: { $0.webui.whisper.endpoint = $1 },
-                            render: { $0.webui.whisper.endpoint }),
+                stringField("webui.whisper-server", "remote_endpoint",
+                            apply: { $0.webui.whisper.remoteEndpoint = $1 },
+                            render: { $0.webui.whisper.remoteEndpoint }),
                 stringField("webui.whisper-server", "server_args",
                             apply: { $0.webui.whisper.serverArgs = $1 },
                             render: { $0.webui.whisper.serverArgs }),

@@ -21,7 +21,7 @@ import uuid
 import json
 import time
 
-from .service_log import install_webui_logging
+from .service_log import append_service_log, install_webui_logging
 
 install_webui_logging()
 
@@ -87,28 +87,82 @@ def startup_managed_processes() -> None:
     """Start the managed whisper.cpp server on WebUI startup if local mode is configured."""
     settings = _read_app_settings()
     whisper_settings = settings.get("whisper", {})
+    llm = settings.get("llm", {})
+    llm_servers = settings.get("llm_servers", [])
+    append_service_log(
+        "webui",
+        f"loaded config path={CONFIG_PATH} data_dir={WEBUI_DATA_DIR} records_dir={RECORDS_DIR}",
+    )
+    append_service_log(
+        "webui",
+        "config webui.whisper-server: "
+        f"model_dir={whisper_settings.get('model_dir', '')} "
+        f"model_filename={whisper_settings.get('model_filename', '')} "
+        f"server_bin={whisper_settings.get('server_bin', '')} "
+        f"remote_endpoint={whisper_settings.get('remote_endpoint', '')} "
+        f"server_args={whisper_settings.get('server_args', '')} "
+        f"language={whisper_settings.get('language', '')} "
+        f"beam={whisper_settings.get('beam', '')} "
+        f"temperature={whisper_settings.get('temperature', '')}",
+    )
+    append_service_log(
+        "webui",
+        "config webui.llm-server: "
+        f"default={settings.get('default_llm_server_name', '')} "
+        f"active_name={llm.get('name', '')} "
+        f"provider={llm.get('provider', '')} "
+        f"endpoint={llm.get('endpoint', '')} "
+        f"selected_model={llm.get('selected_model') or llm.get('model', '')} "
+        f"server_count={len(llm_servers) if isinstance(llm_servers, list) else 0}",
+    )
+    append_service_log("webui", "startup checking managed whisper-server")
 
     # Only start local server if no remote endpoint is configured
     remote_endpoint = str(whisper_settings.get("remote_endpoint", "")).strip()
     if remote_endpoint:
+        append_service_log(
+            "webui",
+            f"decision: use remote whisper-server endpoint={remote_endpoint}; skip managed local whisper-server",
+        )
         return
 
     # Check if we have model and server binary configured
     model_path = _whisper_model_path_from_settings(whisper_settings)
+    append_service_log("webui", f"resolved whisper model path={model_path or 'not configured'}")
     if not model_path:
+        append_service_log(
+            "webui",
+            "decision: skip managed local whisper-server because model_dir/model_filename are not configured",
+        )
         return
 
     configured_server_bin = str(whisper_settings.get("server_bin", "")).strip()
     server_bin = os.path.expanduser(configured_server_bin) if configured_server_bin else transcriber.server_binary
+    append_service_log(
+        "webui",
+        f"resolved whisper-server binary={server_bin or 'not configured'} source={'config' if configured_server_bin else 'PATH'}",
+    )
     if not server_bin or not os.path.exists(server_bin):
+        append_service_log(
+            "webui",
+            f"decision: skip managed local whisper-server because server_bin was not found ({server_bin or 'not configured'})",
+        )
         return
 
     if not os.path.exists(model_path):
+        append_service_log(
+            "webui",
+            f"decision: skip managed local whisper-server because model was not found ({model_path})",
+        )
         return
 
     # Start the local whisper server
     try:
         server_args = str(whisper_settings.get("server_args", ""))
+        append_service_log(
+            "webui",
+            f"decision: start managed local whisper-server model={model_path} server_bin={server_bin} args={server_args}",
+        )
         transcriber._ensure_local_server(model_path, server_args, None)
         status = transcriber.status()
         print(f"[AirType] Local whisper-server started at {status['endpoint']}", flush=True)
@@ -202,7 +256,7 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     model_dir, model_filename = _split_whisper_model_settings(whisper_input)
     return {
         "whisper": {
-            "remote_endpoint": whisper_input.get("remote_endpoint") or whisper_input.get("endpoint", ""),
+            "remote_endpoint": whisper_input.get("remote_endpoint", ""),
             "model_dir": model_dir,
             "model_filename": model_filename,
             "server_bin": whisper_input.get("server_bin", ""),
