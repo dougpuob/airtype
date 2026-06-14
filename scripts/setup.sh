@@ -255,8 +255,90 @@ ensure_config() {
   fi
 
   mkdir -p "$(dirname "$config")"
-  cp "$ROOT_DIR/config.example.toml" "$config"
-  echo "Created $config from config.example.toml"
+  echo "Config does not exist: $config"
+  echo "Generating default config from schema: $ROOT_DIR/config.schema.json"
+  "$VENV_DIR/bin/python" - "$config" "$ROOT_DIR/config.schema.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+schema_path = Path(sys.argv[2])
+schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+def toml_string(value):
+    text = str(value or "")
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+def toml_value(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(toml_value(item) for item in value) + "]"
+    return toml_string(value)
+
+def default_for(property_schema):
+    if "default" in property_schema:
+        return property_schema["default"]
+    if property_schema.get("type") == "array":
+        return []
+    return ""
+
+def emit_object_section(lines, section_name, object_schema):
+    lines.append(f"[{section_name}]")
+    for key, property_schema in object_schema.get("properties", {}).items():
+        if property_schema.get("type") in ("object", "array"):
+            continue
+        lines.append(f"{key} = {toml_value(default_for(property_schema))}")
+
+def emit_child_sections(lines, parent_name, object_schema):
+    for key, property_schema in object_schema.get("properties", {}).items():
+        section_name = f"{parent_name}.{key}"
+        property_type = property_schema.get("type")
+        if property_type == "object":
+            lines.append("")
+            emit_object_section(lines, section_name, property_schema)
+        elif property_type == "array":
+            item_schema = property_schema.get("items", {})
+            lines.append("")
+            lines.append(f"[[{section_name}]]")
+            for item_key, item_property_schema in item_schema.get("properties", {}).items():
+                lines.append(f"{item_key} = {toml_value(default_for(item_property_schema))}")
+
+lines = [
+    "# AirType user config",
+    "#:schema ./config.schema.json",
+    "# Generated from config.schema.json defaults by scripts/setup.sh.",
+    "",
+]
+
+top_properties = schema.get("properties", {})
+
+localapp = top_properties.get("localapp", {})
+if localapp:
+    lines.extend([
+        "#===============================================================================",
+        "# Local App Settings",
+        "#===============================================================================",
+    ])
+    emit_child_sections(lines, "localapp", localapp)
+    lines.append("")
+
+webui = top_properties.get("webui", {})
+if webui:
+    lines.extend([
+        "#===============================================================================",
+        "# Web UI Settings",
+        "#===============================================================================",
+    ])
+    emit_object_section(lines, "webui", webui)
+    emit_child_sections(lines, "webui", webui)
+
+config_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+print(f"Created {config_path} from {schema_path}")
+PY
 }
 
 echo "AirType setup"
@@ -273,7 +355,7 @@ echo "  4. Create or reuse .venv"
 echo "  5. Install WebUI Python dependencies into .venv"
 echo "     - fastapi, uvicorn, python-multipart, pydantic"
 echo "     - yt-dlp, opencc-python-reimplemented"
-echo "  6. Create $CONFIG_PATH if it does not exist"
+echo "  6. Create $CONFIG_PATH from config.schema.json defaults if it does not exist"
 echo "  7. Check for whisper.cpp command-line tools"
 echo "  8. Offer to download the default Whisper model"
 echo "     - $DEFAULT_WHISPER_MODEL_FILE"
