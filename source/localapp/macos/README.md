@@ -57,5 +57,6 @@ Allow the app or Terminal in:
 ## Logs
 
 ```bash
-tail -n 80 ~/.airtype/airtype-macos.log
+tail -n 80 ~/.airtype/airtype-localapp.log
+tail -n 80 ~/.airtype/airtype-webui.log
 ```

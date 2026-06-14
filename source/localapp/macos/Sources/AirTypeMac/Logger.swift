@@ -4,7 +4,7 @@ final class Logger {
     static let shared = Logger()
 
     private let path = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".airtype/airtype-macos.log")
+        .appendingPathComponent(".airtype/airtype-localapp.log")
 
     private init() {}
 
