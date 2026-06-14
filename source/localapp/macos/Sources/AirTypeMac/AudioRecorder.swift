@@ -2,7 +2,7 @@ import AVFoundation
 import AudioToolbox
 import Foundation
 
-final class AudioRecorder {
+final class AudioRecorder: @unchecked Sendable {
     private let outputSampleRate: Double = 16_000
     private let minimumSpeechRMSLevel = 0.025
     private var preRollSeconds: Double = 2.0

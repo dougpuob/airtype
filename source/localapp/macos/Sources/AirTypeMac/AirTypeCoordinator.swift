@@ -176,20 +176,34 @@ final class AirTypeCoordinator: ObservableObject {
         let config = configStore.config
         let warmupDelay: TimeInterval = config.microphone.mode == "always" ? 0 : 0.7
         if config.microphone.mode == "on_demand" {
-            audioRecorder.prepare(
-                microphoneDeviceName: config.microphone.selectedDeviceName,
-                preRollSeconds: config.microphone.preRollSeconds
-            )
-            Logger.shared.log("Input #\(inputID): on-demand microphone warmup started: delay_ms=\(Int(warmupDelay * 1000))")
+            Logger.shared.log("Input #\(inputID): on-demand microphone warmup requested: delay_ms=\(Int(warmupDelay * 1000))")
+            DispatchQueue.global(qos: .userInitiated).async { [audioRecorder] in
+                audioRecorder.prepare(
+                    microphoneDeviceName: config.microphone.selectedDeviceName,
+                    preRollSeconds: config.microphone.preRollSeconds
+                )
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.recordingState == .preparing, self.activeInputID == inputID else {
+                        audioRecorder.stop()
+                        return
+                    }
+                    Logger.shared.log("Input #\(inputID): on-demand microphone warmup ready")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + warmupDelay) { [weak self] in
+                        self?.beginRecordingIfStillPreparing(inputID: inputID)
+                    }
+                }
+            }
+            return
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + warmupDelay) { [weak self] in
-            self?.beginRecordingIfStillPreparing()
+            self?.beginRecordingIfStillPreparing(inputID: inputID)
         }
     }
 
-    private func beginRecordingIfStillPreparing() {
+    private func beginRecordingIfStillPreparing(inputID expectedInputID: Int) {
         guard recordingState == .preparing else { return }
+        guard activeInputID == expectedInputID else { return }
         let config = configStore.config
         let inputID = activeInputID
         recordingState = .recording
@@ -218,7 +232,7 @@ final class AirTypeCoordinator: ObservableObject {
                 audioRecorder.stop()
             }
             Logger.shared.log("\(inputLogPrefix(inputID))recording cancelled before capture became active")
-            finishInput(inputID, startedAt: inputStartedAt, result: "CANCELLED", details: "reason=stopped_before_capture")
+            finishInput(inputID, startedAt: inputStartedAt, result: "SKIPPED", details: "reason=stopped_before_capture")
             return
         }
 
@@ -227,7 +241,7 @@ final class AirTypeCoordinator: ObservableObject {
             if configStore.config.microphone.mode == "on_demand" {
                 audioRecorder.stop()
             }
-            finishInput(inputID, startedAt: inputStartedAt, result: "CANCELLED", details: "reason=no_wav_data")
+            finishInput(inputID, startedAt: inputStartedAt, result: "SKIPPED", details: "reason=no_wav_data")
             return
         }
 
