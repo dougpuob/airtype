@@ -155,6 +155,19 @@ final class AudioRecorder {
         microphoneDeviceName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    func isCurrentDeviceAvailable() -> Bool {
+        audioLock.lock()
+        defer { audioLock.unlock() }
+
+        guard !activeMicrophoneDeviceName.isEmpty else {
+            // Using the system's default device is considered usable.
+            return true
+        }
+
+        let devices = Self.inputDevices()
+        return devices.contains { $0.localizedName == activeMicrophoneDeviceName }
+    }
+
     private func selectedInputDevice(microphoneDeviceName: String) -> AVCaptureDevice? {
         guard !microphoneDeviceName.isEmpty else { return nil }
         let devices = Self.inputDevices()
