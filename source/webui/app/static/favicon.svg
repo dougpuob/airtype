@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="AirType">
+    <rect width="1024" height="1024" fill="#ffffff"/>
+    <g transform="translate(0 1024) scale(1 -1)">
+        <path fill="#000000" d="
+            M512 986
+            C480 986 459 963 438 928
+            C355 789 263 671 217 557
+            C185 477 164 402 167 326
+            C174 147 318 38 510 38
+            C707 38 852 150 857 330
+            C860 402 842 475 808 554
+            C762 671 673 789 588 928
+            C566 963 544 986 512 986
+            Z"/>
+
+        <g transform="rotate(-18 186.5 734)">
+            <ellipse cx="186.5" cy="734" rx="102.5" ry="63" fill="#000000"/>
+            <rect x="133" y="710" width="88" height="24" rx="12" fill="#ffffff"/>
+        </g>
+
+        <g transform="rotate(-38 866 138)">
+            <ellipse cx="866" cy="138" rx="60" ry="43" fill="#000000"/>
+            <rect x="844" y="120" width="54" height="17" rx="8.5" fill="#ffffff"/>
+        </g>
+
+        <path d="M353 225 L512 615 L671 225 M400 317 L624 317"
+              fill="none"
+              stroke="#ffffff"
+              stroke-width="54"
+              stroke-linecap="round"
+              stroke-linejoin="round"/>
+
+        <circle cx="746" cy="683" r="130"
+                fill="none"
+                stroke="#ffffff"
+                stroke-width="34"/>
+        <path d="M702 683 L790 683"
+              fill="none"
+              stroke="#ffffff"
+              stroke-width="30"
+              stroke-linecap="round"/>
+    </g>
+</svg>
