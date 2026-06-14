@@ -4,6 +4,7 @@ set -e
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEBUI_DIR="$ROOT_DIR/source/webui"
 CONFIG_PATH="$HOME/.airtype/config.toml"
+WEBUI_LOG_PATH="$HOME/.airtype/airtype-webui.log"
 VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
 UV_BIN="${UV_BIN:-}"
 
@@ -53,10 +54,15 @@ if [[ -z "$UV_BIN" ]]; then
     exit 1
 fi
 
+mkdir -p "$(dirname "$WEBUI_LOG_PATH")"
+
 "$UV_BIN" pip install --python "$VENV_PYTHON" -r "$WEBUI_DIR/requirements.txt"
 
 # Start the WebUI server using the virtual environment's Python
-"$VENV_PYTHON" -m uvicorn app.main:app \
+exec 3>&1 4>&2
+AIRTYPE_WEBUI_CAPTURE_UVICORN_LOGS=0 "$VENV_PYTHON" -m uvicorn app.main:app \
     --host "$AIRTYPE_WEBUI_HOST" \
     --port "$AIRTYPE_WEBUI_PORT" \
-    --reload
+    --reload \
+    > >(tee /dev/fd/3 | sed -u 's/^/[webui] /' >> "$WEBUI_LOG_PATH") \
+    2> >(tee /dev/fd/4 | sed -u 's/^/[webui] /' >> "$WEBUI_LOG_PATH")
