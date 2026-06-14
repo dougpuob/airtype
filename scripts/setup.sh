@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="$ROOT_DIR/.venv"
 AIRTYPE_HOME="$HOME/.airtype"
-CONFIG_PATH="$HOME/.airtype-config.toml"
+CONFIG_PATH="$HOME/.airtype/config.toml"
 MODEL_DIR="$AIRTYPE_HOME/models"
 DEFAULT_WHISPER_MODEL_NAME="large-v3-turbo-q5_0"
 DEFAULT_WHISPER_MODEL_FILE="ggml-${DEFAULT_WHISPER_MODEL_NAME}.bin"

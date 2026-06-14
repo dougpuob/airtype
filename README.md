@@ -27,7 +27,7 @@ A macOS desktop speech-to-text app. Double-press the configured hotkey to start 
 │  │ multipart upload │  │ async jobs        │  │ settings + records       │   │
 │  └──────────────────┘  └───────────────────┘  └──────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │ ffmpeg / yt-dlp / records / ~/.airtype-config.toml coordination      │    │
+│  │ ffmpeg / yt-dlp / records / ~/.airtype/config.toml coordination      │    │
 │  └──────────────────────────────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────────────────────────┘
                                       │
@@ -60,7 +60,7 @@ A macOS desktop speech-to-text app. Double-press the configured hotkey to start 
 
 ```
 AirType.git/
-├── config.example.toml      # Template for ~/.airtype-config.toml
+├── config.example.toml      # Template for ~/.airtype/config.toml
 ├── source/
 │   ├── localapp/
 │   │   └── macos/               # Native SwiftUI menu bar frontend
@@ -96,9 +96,9 @@ Then run the setup script:
 ./scripts/setup.sh
 ```
 
-The setup script creates `~/.airtype-config.toml` if it does not exist. AirType will not start without that file.
+The setup script creates `~/.airtype/config.toml` if it does not exist. AirType will not start without that file.
 
-For media URLs that require logged-in browser cookies, configure yt-dlp in `~/.airtype-config.toml`:
+For media URLs that require logged-in browser cookies, configure yt-dlp in `~/.airtype/config.toml`:
 
 ```toml
 [webui.yt-dlp]
@@ -115,7 +115,7 @@ Use `cookies` for a `cookies.txt` path, or `cookies_from_browser` for a browser 
 ./run.sh
 ```
 
-`run.sh` starts the native SwiftUI menu bar app. The frontend starts the local WebUI automatically when `~/.airtype-config.toml` uses `mode = "local"`.
+`run.sh` starts the native SwiftUI menu bar app. The frontend starts the local WebUI automatically when `~/.airtype/config.toml` uses `mode = "local"`.
 
 ### Manual WebUI
 
@@ -140,7 +140,7 @@ open dist/AirType.app
 
 Runtime user data is stored outside the app:
 
-- config: `~/.airtype-config.toml`
+- config: `~/.airtype/config.toml`
 - Whisper models: `~/.airtype/models`
 
 macOS will ask for Microphone permission when recording. If the global hotkey or paste action does not work, grant Accessibility permission to `AirType.app` in System Settings.
@@ -179,7 +179,7 @@ Global keyboard monitoring requires Accessibility permission:
 |---|---|
 | Start/Stop recording | Double-press configured **Right Ctrl** or **Right Option** |
 
-Configure it in the macOS menu under **Hotkey**, or set `[localapp.hotkey] trigger = "right_ctrl"` / `"right_option"` in `~/.airtype-config.toml`.
+Configure it in the macOS menu under **Hotkey**, or set `[localapp.hotkey] trigger = "right_ctrl"` / `"right_option"` in `~/.airtype/config.toml`.
 
 ## License
 

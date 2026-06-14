@@ -51,7 +51,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _find_config_path() -> str:
-    config_path = os.path.abspath(os.path.expanduser("~/.airtype-config.toml"))
+    config_path = os.path.abspath(os.path.expanduser("~/.airtype/config.toml"))
     if not os.path.exists(config_path):
         message = (
             f"AirType config file was not found: {config_path}\n"

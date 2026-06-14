@@ -3,7 +3,7 @@ set -e
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEBUI_DIR="$ROOT_DIR/source/webui"
-CONFIG_PATH="$HOME/.airtype-config.toml"
+CONFIG_PATH="$HOME/.airtype/config.toml"
 
 AIRTYPE_WEBUI_PORT="${AIRTYPE_WEBUI_PORT:-8003}"
 

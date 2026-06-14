@@ -1023,7 +1023,7 @@ final class ConfigStore: ObservableObject {
 
     private static var configPath: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".airtype-config.toml")
+            .appendingPathComponent(".airtype/config.toml")
     }
 }
 
