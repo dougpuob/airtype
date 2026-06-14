@@ -22,7 +22,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from opencc import OpenCC
 
-from .config_schema import read_webui_settings
+from .config_schema import ensure_config_exists, read_webui_settings
 from .service_log import append_service_log
 
 LANGUAGE_ALIASES = {
@@ -38,10 +38,8 @@ OPENCC_CONFIGS = {
 def _find_config_path() -> Path:
     config_path = Path("~/.airtype/config.toml").expanduser().resolve()
     if not config_path.exists():
-        raise RuntimeError(
-            f"AirType config file was not found: {config_path}\n"
-            "Run ./scripts/setup.sh to create it, then start AirType again."
-        )
+        ensure_config_exists(config_path, generator_name="webui whisper import")
+        append_service_log("webui", f"config file missing; generated default config from schema path={config_path}")
     return config_path
 
 

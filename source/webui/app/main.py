@@ -27,6 +27,7 @@ install_webui_logging()
 
 from .config_schema import (
     DEFAULT_APP_SETTINGS,
+    ensure_config_exists,
     normalize_app_settings,
     read_config,
     read_webui_data_dir,
@@ -55,15 +56,11 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _find_config_path() -> str:
-    config_path = os.path.abspath(os.path.expanduser("~/.airtype/config.toml"))
-    if not os.path.exists(config_path):
-        message = (
-            f"AirType config file was not found: {config_path}\n"
-            "Run ./scripts/setup.sh to create it, then start AirType again."
-        )
-        print(message, file=sys.stderr)
-        raise RuntimeError(message)
-    return config_path
+    config_path = ensure_config_exists(
+        Path("~/.airtype/config.toml"),
+        generator_name="webui startup",
+    )
+    return str(config_path)
 
 
 TRANSCRIPT_RECORD_TYPE = "transcript"
