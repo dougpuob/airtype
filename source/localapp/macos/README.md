@@ -5,9 +5,11 @@ Native SwiftUI menu bar frontend for AirType.
 ## Run
 
 ```bash
-cd source/localapp/macos
-swift run AirTypeMac
+./scripts/build-localapp-macos.sh
+open dist/AirType.app
 ```
+
+Run these commands from the project root.
 
 ## Implemented
 
