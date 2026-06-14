@@ -2473,6 +2473,11 @@ async def root():
     }
 
 
+@app.get("/favicon.svg")
+async def favicon():
+    return FileResponse(os.path.join(STATIC_DIR, "favicon.svg"), media_type="image/svg+xml")
+
+
 # Fallback for any other routes - serve index.html
 @app.get("/{full_path:path}")
 async def serve_app(full_path: str):
