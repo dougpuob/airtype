@@ -6,22 +6,22 @@ final class BackendProcessManager {
 
     func startIfNeeded(config: AirTypeConfig, projectRoot: URL?) {
         guard config.backend.mode.lowercased() != "remote" else {
-            Logger.shared.log("Using remote backend endpoint: \(config.backend.selectedEndpoint)")
+            Logger.shared.log("Using remote WebUI endpoint: \(config.backend.selectedEndpoint)")
             return
         }
 
         guard isLocalEndpoint(config.backend.selectedEndpoint) else {
-            Logger.shared.log("Using non-local backend endpoint: \(config.backend.selectedEndpoint)")
+            Logger.shared.log("Using non-local WebUI endpoint: \(config.backend.selectedEndpoint)")
             return
         }
 
         if isBackendReady(endpoint: config.backend.selectedEndpoint) {
-            Logger.shared.log("Backend already running: \(config.backend.selectedEndpoint)")
+            Logger.shared.log("WebUI already running: \(config.backend.selectedEndpoint)")
             return
         }
 
         guard let projectRoot else {
-            Logger.shared.log("Could not find project root; cannot start local backend")
+            Logger.shared.log("Could not find project root; cannot start local WebUI")
             return
         }
 
@@ -49,9 +49,9 @@ final class BackendProcessManager {
         do {
             try process.run()
             self.process = process
-            Logger.shared.log("Started local backend: \(config.backend.selectedEndpoint)")
+            Logger.shared.log("Started local WebUI: \(config.backend.selectedEndpoint)")
         } catch {
-            Logger.shared.log("Could not start local backend: \(error)")
+            Logger.shared.log("Could not start local WebUI: \(error)")
             return
         }
 
@@ -63,16 +63,16 @@ final class BackendProcessManager {
         let backendPID = process.processIdentifier
         let descendantPIDs = descendantPIDs(of: backendPID)
         if descendantPIDs.isEmpty {
-            Logger.shared.log("Stopping local backend: pid=\(backendPID)")
+            Logger.shared.log("Stopping local WebUI: pid=\(backendPID)")
         } else {
             Logger.shared.log(
-                "Stopping local backend: pid=\(backendPID), descendant_pids=\(descendantPIDs.map(String.init).joined(separator: ","))"
+                "Stopping local WebUI: pid=\(backendPID), descendant_pids=\(descendantPIDs.map(String.init).joined(separator: ","))"
             )
         }
 
         process.terminate()
         if !waitForExit(process, timeoutSeconds: 8) {
-            Logger.shared.log("Backend did not exit after SIGTERM; sending SIGKILL: pid=\(backendPID)")
+            Logger.shared.log("WebUI did not exit after SIGTERM; sending SIGKILL: pid=\(backendPID)")
             kill(backendPID, SIGKILL)
             _ = waitForExit(process, timeoutSeconds: 3)
         }
@@ -87,7 +87,7 @@ final class BackendProcessManager {
             return
         }
 
-        Logger.shared.log("Stopping backend child processes: pids=\(livePIDs.map(String.init).joined(separator: ","))")
+        Logger.shared.log("Stopping WebUI child processes: pids=\(livePIDs.map(String.init).joined(separator: ","))")
         for pid in livePIDs {
             kill(pid, SIGTERM)
         }
@@ -102,7 +102,7 @@ final class BackendProcessManager {
 
         let remaining = livePIDs.filter { isProcessRunning($0) }
         if !remaining.isEmpty {
-            Logger.shared.log("Force killing backend child processes: pids=\(remaining.map(String.init).joined(separator: ","))")
+            Logger.shared.log("Force killing WebUI child processes: pids=\(remaining.map(String.init).joined(separator: ","))")
             for pid in remaining {
                 kill(pid, SIGKILL)
             }
@@ -161,12 +161,12 @@ final class BackendProcessManager {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
             if isBackendReady(endpoint: endpoint) {
-                Logger.shared.log("Backend ready: \(endpoint)")
+                Logger.shared.log("WebUI ready: \(endpoint)")
                 return true
             }
             Thread.sleep(forTimeInterval: 0.2)
         }
-        Logger.shared.log("Backend still starting: \(endpoint)")
+        Logger.shared.log("WebUI still starting: \(endpoint)")
         return isBackendReady(endpoint: endpoint)
     }
 
