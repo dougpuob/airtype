@@ -1850,6 +1850,7 @@
         let selectedIndex = 0;
         let recorder = null;
         let chunks = [];
+        let discardCurrentRecording = false;
         let timer = null;
         let seconds = 24;
         let activeJobId = null;
@@ -3119,6 +3120,12 @@
                 recorder.onstop = async () => {
                     stream.getTracks().forEach(track => track.stop());
                     micToggle.checked = false;
+                    if (discardCurrentRecording) {
+                        discardCurrentRecording = false;
+                        chunks = [];
+                        currentTime.textContent = "00:00";
+                        return;
+                    }
                     try {
                         await transcribeBlob(new Blob(chunks, { type: "audio/webm" }));
                     } catch (error) {
@@ -3138,6 +3145,17 @@
             } catch {
                 showToast("Microphone permission denied");
             }
+        }
+
+        function cancelRecording() {
+            if (!recorder || recorder.state !== "recording") return false;
+            discardCurrentRecording = true;
+            recorder.stop();
+            clearInterval(timer);
+            recordButton.classList.remove("recording");
+            micToggle.checked = false;
+            showToast("Recording discarded");
+            return true;
         }
 
         audioFile.addEventListener("change", async () => {
@@ -3299,6 +3317,10 @@
         });
         document.addEventListener("keydown", event => {
             if (event.key === "Escape") {
+                if (cancelRecording()) {
+                    event.preventDefault();
+                    return;
+                }
                 hideRecordContextMenu();
                 closeRenameDialog();
             }

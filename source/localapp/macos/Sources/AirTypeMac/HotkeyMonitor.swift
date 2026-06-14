@@ -3,6 +3,7 @@ import Foundation
 
 final class HotkeyMonitor {
     private let onDoublePress: () -> Void
+    private let onEscape: () -> Void
     private let stateLock = NSLock()
     private var eventTap: CFMachPort?
     private var globalMonitor: Any?
@@ -14,9 +15,10 @@ final class HotkeyMonitor {
     private let threshold: TimeInterval = 0.4
     private var trigger: HotkeyKey
 
-    init(trigger: HotkeyKey, onDoublePress: @escaping () -> Void) {
+    init(trigger: HotkeyKey, onDoublePress: @escaping () -> Void, onEscape: @escaping () -> Void) {
         self.trigger = trigger
         self.onDoublePress = onDoublePress
+        self.onEscape = onEscape
     }
 
     func updateTrigger(_ trigger: HotkeyKey) {
@@ -55,8 +57,13 @@ final class HotkeyMonitor {
     private func startGlobalMonitor() {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.globalMonitor == nil else { return }
-            self.globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            self.globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
                 guard let self else { return }
+                if event.type == .keyDown, event.keyCode == 53 {
+                    self.handleEscapePress(source: "nsevent")
+                    return
+                }
+
                 let keycode = Int64(event.keyCode)
                 let flags = event.modifierFlags
                 let trigger = self.currentTrigger()
@@ -71,7 +78,7 @@ final class HotkeyMonitor {
     }
 
     private func run() {
-        let eventMask = (1 << CGEventType.flagsChanged.rawValue)
+        let eventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
         callback = { _, type, event, refcon in
             guard let refcon else { return Unmanaged.passUnretained(event) }
             let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(refcon).takeUnretainedValue()
@@ -106,6 +113,14 @@ final class HotkeyMonitor {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
+            }
+            return
+        }
+
+        if type == .keyDown {
+            let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+            if keycode == 53 {
+                handleEscapePress(source: "quartz")
             }
             return
         }
@@ -145,6 +160,13 @@ final class HotkeyMonitor {
                 onDoublePress()
             }
             Logger.shared.log("\(hotkeyKey.displayName) double-press emitted by \(source)")
+        }
+    }
+
+    private func handleEscapePress(source: String) {
+        Logger.shared.log("Escape press detected by \(source)")
+        DispatchQueue.main.async { [onEscape] in
+            onEscape()
         }
     }
 

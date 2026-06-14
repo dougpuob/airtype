@@ -69,11 +69,19 @@ final class AirTypeCoordinator: ObservableObject {
     }
 
     private func setupHotkey() {
-        hotkeyMonitor = HotkeyMonitor(trigger: configStore.config.hotkey.trigger) {
-            Task { @MainActor in
-                self.toggleRecording()
+        hotkeyMonitor = HotkeyMonitor(
+            trigger: configStore.config.hotkey.trigger,
+            onDoublePress: { [weak self] in
+                Task { @MainActor in
+                    self?.toggleRecording()
+                }
+            },
+            onEscape: { [weak self] in
+                Task { @MainActor in
+                    self?.cancelRecording()
+                }
             }
-        }
+        )
         hotkeyMonitor?.start()
     }
 
@@ -203,6 +211,24 @@ final class AirTypeCoordinator: ObservableObject {
                 Logger.shared.log("ASR failed: \(error)")
             }
         }
+    }
+
+    private func cancelRecording() {
+        guard recordingState == .preparing || recordingState == .recording else { return }
+
+        let wasRecording = recordingState == .recording
+        recordingState = .idle
+        statusItem?.button?.image = StatusIcon.make(recording: false)
+        floatingPanel?.hide()
+        targetApp = nil
+
+        if configStore.config.microphone.mode == "on_demand" {
+            audioRecorder.stop()
+        } else {
+            audioRecorder.discardRecording(clearPreRoll: true)
+        }
+
+        Logger.shared.log(wasRecording ? "Recording cancelled by Escape; ASR skipped" : "Recording warmup cancelled by Escape")
     }
 
     private func rebuildMenu() {
