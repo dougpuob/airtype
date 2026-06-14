@@ -202,7 +202,7 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     model_dir, model_filename = _split_whisper_model_settings(whisper_input)
     return {
         "whisper": {
-            "remote_endpoint": whisper_input.get("remote_endpoint", ""),
+            "remote_endpoint": whisper_input.get("remote_endpoint") or whisper_input.get("endpoint", ""),
             "model_dir": model_dir,
             "model_filename": model_filename,
             "server_bin": whisper_input.get("server_bin", ""),
@@ -234,6 +234,23 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _settings_for_whisper_action(incoming: Dict[str, Any]) -> Dict[str, Any]:
+    current = _read_app_settings()
+    current_whisper = current.get("whisper", {})
+    current_whisper = current_whisper if isinstance(current_whisper, dict) else {}
+    requested = normalize_app_settings(_settings_request_to_nested(incoming or {}))
+    requested_whisper = requested.get("whisper", {})
+    requested_whisper = requested_whisper if isinstance(requested_whisper, dict) else {}
+
+    merged_whisper = dict(current_whisper)
+    for key, value in requested_whisper.items():
+        if value not in ("", None):
+            merged_whisper[key] = value
+
+    requested["whisper"] = normalize_app_settings({"whisper": merged_whisper})["whisper"]
+    return requested
+
+
 @app.get("/api/whisper-server/status")
 async def whisper_server_status():
     return {"ok": True, **transcriber.status()}
@@ -242,7 +259,7 @@ async def whisper_server_status():
 @app.post("/api/whisper-server/restart")
 async def restart_whisper_server(request: AppSettingsRequest):
     nested = _settings_request_to_nested(request.settings or {})
-    proposed_settings = normalize_app_settings(nested)
+    proposed_settings = _settings_for_whisper_action(request.settings or {})
     whisper_settings = proposed_settings.get("whisper", {})
     remote_endpoint = str(whisper_settings.get("remote_endpoint") or "").strip()
 
@@ -305,7 +322,7 @@ async def restart_whisper_server(request: AppSettingsRequest):
 
 @app.post("/api/whisper-server/test")
 async def test_whisper_server(request: AppSettingsRequest):
-    settings = normalize_app_settings(request.settings or {})
+    settings = _settings_for_whisper_action(request.settings or {})
     whisper_settings = settings.get("whisper", {})
     model_path = _whisper_model_path_from_settings(whisper_settings)
     remote_endpoint = str(whisper_settings.get("remote_endpoint") or "").strip()

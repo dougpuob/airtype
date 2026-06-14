@@ -129,6 +129,12 @@ class WhisperCppTranscriber:
         output_language = language
         whisper_language = self._whisper_language(language)
         use_local_server = not (server_endpoint or "").strip()
+        append_service_log(
+            "webui",
+            "transcribe start "
+            f"source={source_path} mode={'local' if use_local_server else 'remote'} "
+            f"model={selected_model} language={language or ''} beam={beam_size} temperature={temperature}",
+        )
         if use_local_server and not Path(selected_model).exists():
             raise WhisperCppNotConfigured(
                 f"whisper.cpp model not found: {selected_model}. Set [webui.whisper-server].model_dir and model_filename in ~/.airtype/config.toml."
@@ -140,24 +146,34 @@ class WhisperCppTranscriber:
             convert_started_at = time.monotonic()
             conversion_mode = self._convert_to_wav(source_path, wav_path, cancel_event, process_callback)
             convert_ms = self._elapsed_ms(convert_started_at)
+            wav_bytes = os.path.getsize(wav_path) if os.path.exists(wav_path) else 0
+            append_service_log(
+                "webui",
+                f"audio ready mode={conversion_mode} wav_bytes={wav_bytes} elapsed_ms={convert_ms}",
+            )
             self._raise_if_cancelled(cancel_event)
             endpoint = (server_endpoint or "").strip()
             server_ready_started_at = time.monotonic()
             if not endpoint:
                 endpoint = self._ensure_local_server(selected_model, server_args, progress_callback)
             server_ready_ms = self._elapsed_ms(server_ready_started_at)
+            append_service_log("webui", f"whisper-server ready endpoint={endpoint} elapsed_ms={server_ready_ms}")
             self._progress(progress_callback, 35, "Sending audio to whisper.cpp server")
-            result = self._transcribe_with_server(
-                endpoint=endpoint,
-                wav_path=wav_path,
-                language=whisper_language,
-                output_language=output_language,
-                temperature=temperature,
-                beam_size=beam_size,
-                progress_callback=progress_callback,
-                cancel_event=cancel_event,
-                segment_callback=segment_callback,
-            )
+            try:
+                result = self._transcribe_with_server(
+                    endpoint=endpoint,
+                    wav_path=wav_path,
+                    language=whisper_language,
+                    output_language=output_language,
+                    temperature=temperature,
+                    beam_size=beam_size,
+                    progress_callback=progress_callback,
+                    cancel_event=cancel_event,
+                    segment_callback=segment_callback,
+                )
+            except Exception as exc:
+                append_service_log("webui", f"transcribe failed endpoint={endpoint} error={exc}")
+                raise
             self._raise_if_cancelled(cancel_event)
             self._progress(progress_callback, 92, "Reading transcript")
             timing = result.setdefault("debug", {}).setdefault("timing_ms", {})
@@ -169,6 +185,12 @@ class WhisperCppTranscriber:
                 }
             )
             result["debug"]["conversion_mode"] = conversion_mode
+            append_service_log(
+                "webui",
+                "transcribe complete "
+                f"endpoint={endpoint} chars={len(result.get('text', ''))} "
+                f"segments={len(result.get('segments', []))} elapsed_ms={timing['total_backend']}",
+            )
             return result
 
     def _convert_to_wav(
@@ -244,13 +266,19 @@ class WhisperCppTranscriber:
                 and self._server_model == model_path
                 and self._server_args == parsed_server_args
             ):
+                append_service_log(
+                    "webui",
+                    f"reusing local whisper-server pid={self._server_process.pid} endpoint={self._server_endpoint}",
+                )
                 return self._server_endpoint
 
             if self._server_process and self._server_process.poll() is None:
+                append_service_log("webui", f"stopping stale whisper-server pid={self._server_process.pid}")
                 self._server_process.terminate()
                 try:
                     self._server_process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
+                    append_service_log("webui", f"killing stale whisper-server pid={self._server_process.pid}")
                     self._server_process.kill()
 
             server_bin = self.server_binary
@@ -273,6 +301,10 @@ class WhisperCppTranscriber:
             ]
             command.extend(parsed_server_args)
             self._progress(progress_callback, 20, "Starting local whisper.cpp server")
+            append_service_log(
+                "webui",
+                f"starting local whisper-server bin={server_bin} model={model_path} endpoint={endpoint} args={parsed_server_args}",
+            )
             self._server_process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
@@ -286,6 +318,7 @@ class WhisperCppTranscriber:
             self._server_model = model_path
             self._server_args = parsed_server_args
             self._wait_for_server(endpoint)
+            append_service_log("webui", f"started local whisper-server pid={self._server_process.pid} endpoint={endpoint}")
             return endpoint
 
     def shutdown(self) -> None:
@@ -301,10 +334,12 @@ class WhisperCppTranscriber:
         if not process or process.poll() is not None:
             return
 
+        append_service_log("webui", f"stopping managed whisper-server pid={process.pid}")
         process.terminate()
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
+            append_service_log("webui", f"killing managed whisper-server pid={process.pid}")
             process.kill()
             process.wait(timeout=5)
 
@@ -398,14 +433,29 @@ class WhisperCppTranscriber:
             method="POST",
         )
         self._progress(progress_callback, 45, "Transcribing with whisper.cpp server")
+        append_service_log(
+            "webui",
+            f"whisper inference request url={url} bytes={len(data)} language={language or ''} "
+            f"beam={beam_size} temperature={temperature}",
+        )
         try:
             request_started_at = time.monotonic()
             with urllib.request.urlopen(request, timeout=60 * 60) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+                status = getattr(response, "status", None)
+                payload_bytes = response.read()
+                payload = json.loads(payload_bytes.decode("utf-8"))
             whisper_http_ms = self._elapsed_ms(request_started_at)
+            append_service_log(
+                "webui",
+                f"whisper inference response url={url} status={status} bytes={len(payload_bytes)} elapsed_ms={whisper_http_ms}",
+            )
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            append_service_log("webui", f"whisper inference http_error url={url} status={exc.code} detail={detail}")
             raise RuntimeError(f"whisper.cpp server failed: {detail}") from exc
+        except Exception as exc:
+            append_service_log("webui", f"whisper inference error url={url} error={exc}")
+            raise
 
         self._raise_if_cancelled(cancel_event)
         parse_started_at = time.monotonic()
@@ -426,6 +476,11 @@ class WhisperCppTranscriber:
             text = self._convert_text_language(payload.get("text", ""), output_language)
         duration = segments[-1]["end"] if segments else 0
         parse_ms = self._elapsed_ms(parse_started_at)
+        append_service_log(
+            "webui",
+            f"whisper inference parsed url={url} raw_segments={debug['raw_segment_count']} "
+            f"final_segments={len(segments)} chars={len(text)} elapsed_ms={parse_ms}",
+        )
         debug["timing_ms"] = {
             "multipart": multipart_ms,
             "whisper_http": whisper_http_ms,
