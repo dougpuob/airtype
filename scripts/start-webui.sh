@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEBUI_DIR="$ROOT_DIR/source/webui"
 CONFIG_PATH="$HOME/.airtype/config.toml"
 VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
+UV_BIN="${UV_BIN:-}"
 
 AIRTYPE_WEBUI_PORT="${AIRTYPE_WEBUI_PORT:-8003}"
 
@@ -39,8 +40,19 @@ if [[ ! -x "$VENV_PYTHON" ]]; then
     exit 1
 fi
 
-# Install dependencies through Python so moved workspaces do not break pip's shebang.
-"$VENV_PYTHON" -m pip install -r "$WEBUI_DIR/requirements.txt"
+if [[ -z "$UV_BIN" ]]; then
+    UV_BIN="$(command -v uv || true)"
+fi
+
+if [[ -z "$UV_BIN" ]]; then
+    echo "uv is not installed or not in PATH."
+    echo
+    echo "Install uv by following README.md, then run setup again:"
+    echo "  ./scripts/setup.sh"
+    exit 1
+fi
+
+"$UV_BIN" pip install --python "$VENV_PYTHON" -r "$WEBUI_DIR/requirements.txt"
 
 # Start the WebUI server using the virtual environment's Python
 "$VENV_PYTHON" -m uvicorn app.main:app \
