@@ -138,6 +138,19 @@ final class AudioRecorder {
         Logger.shared.log("Audio recorder stopped and pre-roll cleared")
     }
 
+    func discardRecording(clearPreRoll: Bool) {
+        audioLock.lock()
+        isRecording = false
+        onLevel = nil
+        recordingStartedAt = nil
+        pcm = Data()
+        if clearPreRoll {
+            preRollPCM = Data()
+        }
+        audioLock.unlock()
+        Logger.shared.log("Audio recorder discarded current recording")
+    }
+
     private func normalizeMicrophoneDeviceName(_ microphoneDeviceName: String) -> String {
         microphoneDeviceName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
