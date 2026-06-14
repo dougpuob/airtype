@@ -22,6 +22,9 @@ final class AirTypeCoordinator: ObservableObject {
     private var hotkeyMonitor: HotkeyMonitor?
     private var floatingPanel: FloatingPanelController?
     private var targetApp: RunningAppIdentity?
+    private var nextInputID = 1
+    private var activeInputID: Int?
+    private var activeInputStartedAt: Date?
     private enum RecordingState {
         case idle
         case preparing
@@ -158,7 +161,12 @@ final class AirTypeCoordinator: ObservableObject {
     }
 
     private func startRecording() {
-        Logger.shared.log("Recording started")
+        let inputID = nextInputID
+        nextInputID += 1
+        activeInputID = inputID
+        activeInputStartedAt = Date()
+        Logger.shared.log("========== INPUT #\(inputID) START ==========")
+        Logger.shared.log("Input #\(inputID): first hotkey double-press received; recording flow started")
         targetApp = RunningAppIdentity.frontmost()
         recordingState = .preparing
         statusItem?.button?.image = StatusIcon.make(recording: true)
@@ -171,7 +179,7 @@ final class AirTypeCoordinator: ObservableObject {
                 microphoneDeviceName: config.microphone.selectedDeviceName,
                 preRollSeconds: config.microphone.preRollSeconds
             )
-            Logger.shared.log("On-demand microphone warmup started: delay_ms=\(Int(warmupDelay * 1000))")
+            Logger.shared.log("Input #\(inputID): on-demand microphone warmup started: delay_ms=\(Int(warmupDelay * 1000))")
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + warmupDelay) { [weak self] in
@@ -182,6 +190,7 @@ final class AirTypeCoordinator: ObservableObject {
     private func beginRecordingIfStillPreparing() {
         guard recordingState == .preparing else { return }
         let config = configStore.config
+        let inputID = activeInputID
         recordingState = .recording
         floatingPanel?.showRecording()
         audioRecorder.start(
@@ -191,11 +200,13 @@ final class AirTypeCoordinator: ObservableObject {
                 Task { @MainActor in self?.floatingPanel?.setLevel(level) }
             }
         )
-        Logger.shared.log("Recording capture active: microphone_mode=\(config.microphone.mode), pre_roll_seconds=\(config.microphone.preRollSeconds)")
+        Logger.shared.log("\(inputLogPrefix(inputID))recording capture active: microphone_mode=\(config.microphone.mode), pre_roll_seconds=\(config.microphone.preRollSeconds)")
     }
 
     private func stopRecording() {
-        Logger.shared.log("Recording stopped")
+        let inputID = activeInputID
+        let inputStartedAt = activeInputStartedAt
+        Logger.shared.log("\(inputLogPrefix(inputID))second hotkey double-press received; recording stop requested")
         let wasRecording = recordingState == .recording
         recordingState = .idle
         statusItem?.button?.image = StatusIcon.make(recording: false)
@@ -205,15 +216,17 @@ final class AirTypeCoordinator: ObservableObject {
             if configStore.config.microphone.mode == "on_demand" {
                 audioRecorder.stop()
             }
-            Logger.shared.log("Recording cancelled before capture became active")
+            Logger.shared.log("\(inputLogPrefix(inputID))recording cancelled before capture became active")
+            finishInput(inputID, startedAt: inputStartedAt, result: "CANCELLED", details: "reason=stopped_before_capture")
             return
         }
 
         guard let wavData = audioRecorder.stopAndMakeWav() else {
-            Logger.shared.log("Recording skipped: no wav data")
+            Logger.shared.log("\(inputLogPrefix(inputID))recording skipped: no wav data")
             if configStore.config.microphone.mode == "on_demand" {
                 audioRecorder.stop()
             }
+            finishInput(inputID, startedAt: inputStartedAt, result: "CANCELLED", details: "reason=no_wav_data")
             return
         }
 
@@ -222,23 +235,30 @@ final class AirTypeCoordinator: ObservableObject {
         }
 
         let config = configStore.config
-        Logger.shared.marker(
-            "TRANSCRIBE",
-            details: "endpoint=\(config.backend.selectedEndpoint), language=\(config.chineseMode.mode), wav_bytes=\(wavData.count)"
-        )
-        Logger.shared.log("Submitting ASR: endpoint=\(config.backend.selectedEndpoint), language=\(config.chineseMode.mode), wav_bytes=\(wavData.count)")
+        let targetApp = targetApp
+        Logger.shared.log("\(inputLogPrefix(inputID))recording stopped; wav_bytes=\(wavData.count)")
+        Logger.shared.log("\(inputLogPrefix(inputID))submitting ASR: endpoint=\(config.backend.selectedEndpoint), language=\(config.chineseMode.mode), wav_bytes=\(wavData.count)")
         Task {
             do {
                 let text = try await backendClient.transcribeIME(
                     wavData: wavData,
                     endpoint: config.backend.selectedEndpoint,
-                    language: config.chineseMode.mode
+                    language: config.chineseMode.mode,
+                    inputID: inputID
                 )
                 await MainActor.run {
-                    self.pasteController.paste(text, to: self.targetApp)
+                    Logger.shared.log("\(self.inputLogPrefix(inputID))ASR completed; paste requested")
+                    self.pasteController.paste(text, to: targetApp) { ok in
+                        let result = ok ? "COMPLETE" : "FAILED"
+                        let details = "paste=\(ok ? "ok" : "failed"), chars=\(text.count)"
+                        self.finishInput(inputID, startedAt: inputStartedAt, result: result, details: details)
+                    }
                 }
             } catch {
-                Logger.shared.log("ASR failed: \(error)")
+                Logger.shared.log("\(self.inputLogPrefix(inputID))ASR failed: \(error)")
+                await MainActor.run {
+                    self.finishInput(inputID, startedAt: inputStartedAt, result: "FAILED", details: "reason=asr_failed")
+                }
             }
         }
     }
@@ -258,7 +278,26 @@ final class AirTypeCoordinator: ObservableObject {
             audioRecorder.discardRecording(clearPreRoll: true)
         }
 
-        Logger.shared.log(wasRecording ? "Recording cancelled by Escape; ASR skipped" : "Recording warmup cancelled by Escape")
+        let inputID = activeInputID
+        let inputStartedAt = activeInputStartedAt
+        Logger.shared.log(wasRecording ? "\(inputLogPrefix(inputID))recording cancelled by Escape; ASR skipped" : "\(inputLogPrefix(inputID))recording warmup cancelled by Escape")
+        finishInput(inputID, startedAt: inputStartedAt, result: "CANCELLED", details: "reason=escape")
+    }
+
+    private func inputLogPrefix(_ inputID: Int?) -> String {
+        guard let inputID else { return "" }
+        return "Input #\(inputID): "
+    }
+
+    private func finishInput(_ inputID: Int?, startedAt: Date?, result: String, details: String) {
+        guard let inputID else { return }
+        let elapsedMs = startedAt.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
+        Logger.shared.log("========== INPUT #\(inputID) \(result) elapsed_ms=\(elapsedMs) \(details) ==========")
+        if activeInputID == inputID {
+            activeInputID = nil
+            activeInputStartedAt = nil
+            targetApp = nil
+        }
     }
 
     private func rebuildMenu() {
