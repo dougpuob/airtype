@@ -31,8 +31,11 @@ struct RunningAppIdentity {
 }
 
 final class PasteController {
-    func paste(_ text: String, to app: RunningAppIdentity?) {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    func paste(_ text: String, to app: RunningAppIdentity?, completion: ((Bool) -> Void)? = nil) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            completion?(false)
+            return
+        }
 
         // Check Accessibility permission before attempting to paste
         let accessibilityEnabled = AXIsProcessTrusted()
@@ -40,6 +43,7 @@ final class PasteController {
             Logger.shared.log("Accessibility permission not granted. Opening System Settings...")
             openAccessibilitySettings()
             Logger.shared.log("Please grant Accessibility permission for AirTypeMac in System Settings")
+            completion?(false)
             return
         }
 
@@ -60,6 +64,7 @@ final class PasteController {
             } else {
                 Logger.shared.log("Paste failed. Check Accessibility permission for AirTypeMac.")
             }
+            completion?(ok)
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
                 if NSPasteboard.general.string(forType: .string) == text, let previous {
