@@ -21,6 +21,10 @@ import uuid
 import json
 import time
 
+from .service_log import install_webui_logging
+
+install_webui_logging()
+
 from .config_schema import (
     DEFAULT_APP_SETTINGS,
     normalize_app_settings,
