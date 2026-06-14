@@ -11,13 +11,22 @@ UV_BIN="${UV_BIN:-}"
 AIRTYPE_WEBUI_PORT="${AIRTYPE_WEBUI_PORT:-8003}"
 AIRTYPE_WEBUI_HOST="${AIRTYPE_WEBUI_HOST:-0.0.0.0}"
 
+mkdir -p "$(dirname "$WEBUI_LOG_PATH")"
+
 if [[ ! -f "$CONFIG_PATH" ]]; then
     echo "AirType config file is missing:"
     echo "  $CONFIG_PATH"
-    echo
-    echo "Run setup to create it:"
-    echo "  ./scripts/setup.sh"
-    exit 1
+    echo "Generating default config from schema:"
+    echo "  $ROOT_DIR/config.schema.json"
+    {
+        echo "[webui] config file missing: $CONFIG_PATH"
+        echo "[webui] generating default config from schema: $ROOT_DIR/config.schema.json"
+    } >> "$WEBUI_LOG_PATH"
+    python3 "$ROOT_DIR/scripts/generate-config-from-schema.py" \
+        "$CONFIG_PATH" \
+        "$ROOT_DIR/config.schema.json" \
+        "scripts/start-webui.sh"
+    echo "[webui] generated default config: $CONFIG_PATH" >> "$WEBUI_LOG_PATH"
 fi
 
 echo "Checking port $AIRTYPE_WEBUI_PORT..."
@@ -53,8 +62,6 @@ if [[ -z "$UV_BIN" ]]; then
     echo "  ./scripts/setup.sh"
     exit 1
 fi
-
-mkdir -p "$(dirname "$WEBUI_LOG_PATH")"
 
 "$UV_BIN" pip install --python "$VENV_PYTHON" -r "$WEBUI_DIR/requirements.txt"
 

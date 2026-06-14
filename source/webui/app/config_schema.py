@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tomllib
 from pathlib import Path
@@ -34,6 +35,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
     },
 }
 DEFAULT_WEBUI_DATA_DIR = "~/.airtype/data"
+DEFAULT_CONFIG_SCHEMA_PATH = Path(__file__).resolve().parents[3] / "config.schema.json"
 
 WEBUI_SECTION_ALIASES = {
     "whisper": ("whisper-server",),
@@ -54,6 +56,99 @@ def read_config(path: str | Path) -> Dict[str, Any]:
         return {}
 
     return loaded if isinstance(loaded, dict) else {}
+
+
+def ensure_config_exists(
+    path: str | Path,
+    schema_path: str | Path = DEFAULT_CONFIG_SCHEMA_PATH,
+    generator_name: str = "webui",
+) -> Path:
+    config_path = Path(path).expanduser().resolve()
+    if config_path.exists():
+        return config_path
+
+    schema_file = Path(schema_path)
+    schema = json.loads(schema_file.read_text(encoding="utf-8"))
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(_render_schema_defaults_toml(schema, generator_name), encoding="utf-8")
+    return config_path
+
+
+def _render_schema_defaults_toml(schema: Dict[str, Any], generator_name: str) -> str:
+    lines = [
+        "# AirType user config",
+        "#:schema ./config.schema.json",
+        f"# Generated from config.schema.json defaults by {generator_name}.",
+        "",
+    ]
+
+    top_properties = schema.get("properties", {})
+    localapp = top_properties.get("localapp", {})
+    if localapp:
+        lines.extend(
+            [
+                "#===============================================================================",
+                "# Local App Settings",
+                "#===============================================================================",
+            ]
+        )
+        _emit_child_sections(lines, "localapp", localapp)
+        lines.append("")
+
+    webui = top_properties.get("webui", {})
+    if webui:
+        lines.extend(
+            [
+                "#===============================================================================",
+                "# Web UI Settings",
+                "#===============================================================================",
+            ]
+        )
+        _emit_object_section(lines, "webui", webui)
+        _emit_child_sections(lines, "webui", webui)
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _emit_object_section(lines: list[str], section_name: str, object_schema: Dict[str, Any]) -> None:
+    lines.append(f"[{section_name}]")
+    for key, property_schema in object_schema.get("properties", {}).items():
+        if property_schema.get("type") in ("object", "array"):
+            continue
+        lines.append(f"{key} = {_toml_value(_default_for_schema_property(property_schema))}")
+
+
+def _emit_child_sections(lines: list[str], parent_name: str, object_schema: Dict[str, Any]) -> None:
+    for key, property_schema in object_schema.get("properties", {}).items():
+        section_name = f"{parent_name}.{key}"
+        property_type = property_schema.get("type")
+        if property_type == "object":
+            lines.append("")
+            _emit_object_section(lines, section_name, property_schema)
+        elif property_type == "array":
+            item_schema = property_schema.get("items", {})
+            lines.append("")
+            lines.append(f"[[{section_name}]]")
+            for item_key, item_property_schema in item_schema.get("properties", {}).items():
+                lines.append(f"{item_key} = {_toml_value(_default_for_schema_property(item_property_schema))}")
+
+
+def _default_for_schema_property(property_schema: Dict[str, Any]) -> Any:
+    if "default" in property_schema:
+        return property_schema["default"]
+    if property_schema.get("type") == "array":
+        return []
+    return ""
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    return _toml_string(value)
 
 
 def _select_default_llm(servers: list | None, default_name: str | None = None) -> dict | None:
