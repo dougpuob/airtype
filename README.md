@@ -123,6 +123,17 @@ This builds and starts the native SwiftUI menu bar app. The frontend starts the 
 ./scripts/start-webui.sh
 ```
 
+By default, the manual WebUI listens on `0.0.0.0:8003`, which accepts
+connections from the same machine and from other devices on your local network.
+Open `http://<this-mac-ip>:8003`, for example `http://192.168.68.83:8003`.
+Make sure your firewall allows incoming connections to the port.
+
+To limit the WebUI to this machine only, bind it to localhost:
+
+```bash
+AIRTYPE_WEBUI_HOST=127.0.0.1 ./scripts/start-webui.sh
+```
+
 ### Build macOS App
 
 ```bash

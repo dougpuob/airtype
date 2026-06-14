@@ -8,6 +8,7 @@ VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
 UV_BIN="${UV_BIN:-}"
 
 AIRTYPE_WEBUI_PORT="${AIRTYPE_WEBUI_PORT:-8003}"
+AIRTYPE_WEBUI_HOST="${AIRTYPE_WEBUI_HOST:-0.0.0.0}"
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
     echo "AirType config file is missing:"
@@ -56,6 +57,6 @@ fi
 
 # Start the WebUI server using the virtual environment's Python
 "$VENV_PYTHON" -m uvicorn app.main:app \
-    --host 127.0.0.1 \
+    --host "$AIRTYPE_WEBUI_HOST" \
     --port "$AIRTYPE_WEBUI_PORT" \
     --reload
