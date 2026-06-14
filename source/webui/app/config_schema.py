@@ -12,6 +12,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "model_filename": "",
         "server_bin": "",
         "endpoint": "",
+        "server_args": "",
         "language": "zh-tw",
         "beam": 5,
         "temperature": 0,
@@ -27,12 +28,17 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "temperature": 0.4,
         "system": "Summarize and answer questions using the transcript as the source of truth.",
     },
+    "ytdlp": {
+        "cookies": "",
+        "cookies_from_browser": "",
+    },
 }
 DEFAULT_WEBUI_DATA_DIR = "~/.airtype/data"
 
 WEBUI_SECTION_ALIASES = {
     "whisper": ("whisper-server",),
     "llm": ("llm-server",),
+    "ytdlp": ("yt-dlp", "ytdlp"),
 }
 
 
@@ -115,6 +121,7 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     model_dir, model_filename = split_whisper_model_settings(whisper)
     whisper["model_dir"] = model_dir
     whisper["model_filename"] = model_filename
+    whisper["server_args"] = str(whisper.get("server_args") or "")
     whisper["beam"] = _int_in_range(whisper.get("beam"), 5, minimum=1, maximum=16)
     whisper["temperature"] = _float_in_range(whisper.get("temperature"), 0, minimum=0, maximum=2)
 
@@ -126,9 +133,18 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     llm["contextLength"] = _int_in_range(llm.get("contextLength"), 8192, minimum=1)
     llm["temperature"] = _float_in_range(llm.get("temperature"), 0.4, minimum=0, maximum=2)
 
+    ytdlp = {**DEFAULT_APP_SETTINGS["ytdlp"], **_dict_value(normalized.get("ytdlp"))}
+    ytdlp["cookies"] = str(ytdlp.get("cookies") or "")
+    ytdlp["cookies_from_browser"] = str(
+        ytdlp.get("cookies_from_browser")
+        or ytdlp.get("cookies-from-browser")
+        or ""
+    )
+
     return {
         "whisper": whisper,
         "llm": llm,
+        "ytdlp": ytdlp,
     }
 
 
@@ -136,7 +152,7 @@ def remove_webui_sections(text: str) -> str:
     import re
 
     pattern = re.compile(
-        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:whisper-server|llm-server)\]{1,2})\n.*?(?=^\[|\Z)"
+        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:whisper-server|llm-server|yt-dlp|ytdlp)\]{1,2})\n.*?(?=^\[|\Z)"
     )
     text = pattern.sub("", text)
     header_pattern = re.compile(
@@ -149,6 +165,7 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
     normalized = normalize_app_settings(settings)
     whisper = normalized["whisper"]
     llm = normalized["llm"]
+    ytdlp = normalized["ytdlp"]
     lines = [
         "#===============================================================================",
         "# Web UI Settings",
@@ -159,9 +176,14 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
         f"model_filename = {_toml_string(whisper.get('model_filename', ''))}",
         f"server_bin = {_toml_string(whisper.get('server_bin', ''))}",
         f"endpoint = {_toml_string(whisper.get('endpoint', ''))}",
+        f"server_args = {_toml_string(whisper.get('server_args', ''))}",
         f"language = {_toml_string(whisper.get('language', 'zh-tw'))}",
         f"beam = {_toml_number(whisper.get('beam', 5), 5)}",
         f"temperature = {_toml_number(whisper.get('temperature', 0), 0)}",
+        "",
+        "[webui.yt-dlp]",
+        f"cookies = {_toml_string(ytdlp.get('cookies', ''))}",
+        f"cookies_from_browser = {_toml_string(ytdlp.get('cookies_from_browser', ''))}",
         "",
         "[[webui.llm-server]]",
         f'name = {_toml_string(llm.get("name", "default"))}',

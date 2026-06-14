@@ -1,7 +1,7 @@
 # AirType user config
 #:schema ./config.schema.json
-# Local app settings live under [localapp.*] below.
-# Web UI runtime settings live under [webui.*] below.
+# Local app settings live under [localapp.*].
+# Web UI runtime settings live under [webui.*].
 
 #===============================================================================
 # Local App Settings
@@ -18,8 +18,8 @@ local_endpoint = "http://localhost:8003"
 remote_endpoint = ""
 
 [localapp.microphone]
-# Microphone Device. Leave empty to use the system default microphone.
-selected_order = "7"
+# Microphone Device Name. Leave empty to use the system default microphone.
+selected_device_name = "Jabra Speak2 55 MS"
 # Microphone Mode. Options: "on_demand", "always"
 mode = "on_demand"
 pre_roll_seconds = 2
@@ -34,13 +34,11 @@ move_lock = false
 # Options: "right_ctrl", "right_option"
 trigger = "right_ctrl"
 
-
 #===============================================================================
 # Web UI Settings
 #===============================================================================
 
 [webui.storage]
-# Runtime data directory. Records are stored under data_dir/records/{ime,transcript}.
 data_dir = "~/.airtype/data"
 
 [webui.whisper-server]
@@ -48,19 +46,26 @@ model_dir = "~/.airtype/models"
 model_filename = "ggml-large-v3-turbo-q5_0.bin"
 server_bin = "/opt/homebrew/bin/whisper-server"
 endpoint = ""
+server_args = ""
 language = "zh-tw"
 beam = 5
 temperature = 0
 
+[webui.yt-dlp]
+# Optional. Use one of these when a media URL requires logged-in browser cookies.
+cookies = ""
+cookies_from_browser = ""
+
 [[webui.llm-server]]
-name = "default"
-provider = "llama.cpp"
-endpoint = "http://114.34.75.131:8088/"
-models = ["unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL"]
-selected-model = "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL"
+# Unique name for this LLM server.
+name = "llama.cpp"
+provider = "openai"
+endpoint = "http://LLM_SERVER:8088/"
+models = ["gemma-4-e2b", "qwen3-coder-30b", "qwen3-coder-30b-1m", "qwen3-coder-next", "qwen3-vl-30b-a3b-thinking", "qwen3.6-27b", "qwen3.6-35b-a3b", "unsloth/Qwen3-VL-30B-A3B-Thinking-GGUF:Q4_K_XL", "unsloth/Qwen3.6-27B-MTP-GGUF:Q4_K_XL", "unsloth/Qwen3.6-35B-A3B-MTP-GGUF:Q4_K_XL", "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL"]
+selected-model = "gemma-4-e2b"
 contextLength = 8192
 temperature = 0.4
-system = ""
+system = "No explanations or detailed listings are needed; simply organize the verbatim transcript, including correcting typos, polishing sentences, and stringing the transcript together into an article."
 
 [webui]
-default-llm-server-name = "default"
+default-llm-server-name = "llama.cpp"

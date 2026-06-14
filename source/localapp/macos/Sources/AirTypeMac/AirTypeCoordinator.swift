@@ -30,7 +30,14 @@ final class AirTypeCoordinator: ObservableObject {
     private var recordingState: RecordingState = .idle
 
     func start() {
-        configStore.load()
+        do {
+            try configStore.load()
+        } catch {
+            Logger.shared.log(error.localizedDescription)
+            showStartupError(error.localizedDescription)
+            NSApp.terminate(nil)
+            return
+        }
         migrateLegacyMicrophoneSelection()
         backendProcessManager.startIfNeeded(config: configStore.config, projectRoot: configStore.projectRoot)
         if configStore.config.microphone.mode == "always" {
@@ -42,6 +49,17 @@ final class AirTypeCoordinator: ObservableObject {
         setupStatusItem()
         setupFloatingPanel()
         setupHotkey()
+    }
+
+    private func showStartupError(_ message: String) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "AirType cannot start"
+        alert.informativeText = message
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "Quit")
+        alert.runModal()
     }
 
     func stop() {

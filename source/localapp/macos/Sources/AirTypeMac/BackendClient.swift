@@ -16,7 +16,6 @@ final class BackendClient {
             boundary: boundary,
             fields: [
                 "beam_size": "1",
-                "response_format": "json",
                 "record_type": "ime",
                 "language": language
             ],

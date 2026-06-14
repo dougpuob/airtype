@@ -4,12 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="$ROOT_DIR/.venv"
 AIRTYPE_HOME="$HOME/.airtype"
+CONFIG_PATH="$HOME/.airtype-config.toml"
 MODEL_DIR="$AIRTYPE_HOME/models"
 DEFAULT_WHISPER_MODEL_NAME="large-v3-turbo-q5_0"
 DEFAULT_WHISPER_MODEL_FILE="ggml-${DEFAULT_WHISPER_MODEL_NAME}.bin"
 DEFAULT_WHISPER_MODEL_PATH="$MODEL_DIR/$DEFAULT_WHISPER_MODEL_FILE"
 DEFAULT_WHISPER_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$DEFAULT_WHISPER_MODEL_FILE"
 UV_BIN="${UV_BIN:-}"
+PYTHON_BIN="${PYTHON_BIN:-}"
 WHISPER_BIN_DIR="/opt/homebrew/bin"
 
 confirm() {
@@ -43,26 +45,18 @@ find_uv() {
   return 1
 }
 
-install_uv() {
-  echo
-  echo "uv is not installed."
-  echo "Installer command:"
-  echo "  curl -LsSf https://astral.sh/uv/install.sh | sh"
-  echo
-  if ! confirm "Install uv now?"; then
-    echo "Setup stopped. Install uv first, then run ./scripts/setup.sh again."
-    exit 1
+ensure_uv_python() {
+  if PYTHON_BIN="$("$UV_BIN" python find 3.11 2>/dev/null)"; then
+    return
   fi
 
-  if ! command -v curl >/dev/null 2>&1; then
-    echo "curl is required to install uv. Please install curl and run ./scripts/setup.sh again."
-    exit 1
-  fi
+  echo
+  echo "Python 3.11 was not found through uv."
+  echo "Installing uv-managed Python 3.11..."
+  "$UV_BIN" python install 3.11
 
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  if ! find_uv; then
-    echo "uv was installed, but setup could not find it in PATH."
-    echo "Open a new terminal or add ~/.local/bin to PATH, then run ./scripts/setup.sh again."
+  if ! PYTHON_BIN="$("$UV_BIN" python find 3.11 2>/dev/null)"; then
+    echo "Python 3.11 was installed with uv, but setup could not find it."
     exit 1
   fi
 }
@@ -90,38 +84,15 @@ ensure_whisper_cpp() {
   fi
 
   if [[ "$(uname -s)" != "Darwin" ]]; then
-    echo "Automatic whisper-cpp installation is currently only configured for macOS/Homebrew."
-    echo "Install whisper.cpp manually, or configure a remote WebUI in config.toml."
+    echo "whisper-server was not found."
+    echo "Install whisper.cpp manually, or configure a remote WebUI in $CONFIG_PATH."
     return
   fi
 
   echo "whisper-server was not found."
   echo "Recommended install command:"
   echo "  brew install whisper-cpp"
-  echo
-  if ! confirm "Install whisper-cpp with Homebrew now?"; then
-    echo "Skipping whisper-cpp installation."
-    return
-  fi
-
-  if ! command -v brew >/dev/null 2>&1; then
-    echo "Homebrew is not installed or not in PATH."
-    echo "Install Homebrew from https://brew.sh, then run ./scripts/setup.sh again."
-    return
-  fi
-
-  echo "Installing whisper-cpp..."
-  brew install whisper-cpp
-
-  if command -v whisper-server >/dev/null 2>&1; then
-    local server_bin
-    server_bin="$(command -v whisper-server)"
-    WHISPER_BIN_DIR="$(dirname "$server_bin")"
-    echo "whisper-server is ready: $server_bin"
-  else
-    echo "whisper-cpp installed, but whisper-server was not found in PATH."
-    echo "AirType may need [webui.whisper-server].server_bin configured manually in config.toml."
-  fi
+  echo "Setup does not install Homebrew or whisper-cpp. Install it yourself, then run setup again."
 }
 
 download_whisper_model() {
@@ -160,8 +131,8 @@ download_whisper_model() {
 
 write_backend_settings() {
   echo
-  echo "Updating config.toml Web UI settings..."
-  "$VENV_DIR/bin/python" - "$ROOT_DIR/config.toml" "$DEFAULT_WHISPER_MODEL_PATH" "$WHISPER_BIN_DIR" <<'PY'
+  echo "Updating $CONFIG_PATH Web UI settings..."
+  "$VENV_DIR/bin/python" - "$CONFIG_PATH" "$DEFAULT_WHISPER_MODEL_PATH" "$WHISPER_BIN_DIR" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -176,7 +147,7 @@ def toml_string(value):
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 def remove_backend_sections(text):
-    text = re.sub(r"(?ms)^\[{1,2}webui\.(?:whisper-server|llm-server|whisper|llm)\]{1,2}\n.*?(?=^\[|\Z)", "", text)
+    text = re.sub(r"(?ms)^\[{1,2}webui\.(?:whisper-server|llm-server|yt-dlp|ytdlp|whisper|llm)\]{1,2}\n.*?(?=^\[|\Z)", "", text)
     text = re.sub(r"(?m)^\[webui\]\n.*?(?=^\[|\Z)", "", text)
     text = re.sub(r"(?m)^#=+\n# Web UI Settings\n#=+\n(?:\n|$)", "", text)
     return text.rstrip()
@@ -194,9 +165,14 @@ backend_text = "\n".join([
     f"model_filename = {toml_string(model_filename)}",
     f"server_bin = {toml_string(server_bin_value)}",
     'endpoint = ""',
+    'server_args = ""',
     'language = "zh-tw"',
     "beam = 5",
     "temperature = 0",
+    "",
+    "[webui.yt-dlp]",
+    'cookies = ""',
+    'cookies_from_browser = ""',
     "",
     "[[webui.llm-server]]",
     'name = "default"',
@@ -231,33 +207,36 @@ PY
 }
 
 ensure_config() {
-  local config="$ROOT_DIR/config.toml"
+  local config="$CONFIG_PATH"
   if [[ -f "$config" ]]; then
-    echo "Config already exists: config.toml"
+    echo "Config already exists: $config"
     return
   fi
 
   cp "$ROOT_DIR/config.example.toml" "$config"
-  echo "Created config.toml from config.example.toml"
+  echo "Created $config from config.example.toml"
 }
 
 echo "AirType setup"
 echo
-echo "This script will prepare the local Python environment with uv."
+echo "This script checks system prerequisites, prepares the project .venv, and creates project config."
+echo "It does not install uv, Homebrew, whisper-cpp, or ffmpeg."
+echo "It may install uv-managed Python 3.11 and Python packages into this project's .venv."
 echo
 echo "Planned actions:"
-echo "  1. Check for uv, and offer to install it if missing"
+echo "  1. Check for uv"
 echo "  2. Ensure Python 3.11 is available through uv"
-echo "  3. Create or reuse .venv"
-echo "  4. Install WebUI dependencies from source/webui/requirements.txt"
+echo "  3. Check for ffmpeg"
+echo "  4. Create or reuse .venv"
+echo "  5. Install WebUI Python dependencies into .venv"
 echo "     - fastapi, uvicorn, python-multipart, pydantic"
 echo "     - yt-dlp, opencc-python-reimplemented"
-echo "  5. Create config.toml if it does not exist"
-echo "  6. Offer to install whisper-cpp with Homebrew on macOS"
-echo "  7. Offer to download the default Whisper model"
+echo "  6. Create $CONFIG_PATH if it does not exist"
+echo "  7. Check for whisper.cpp command-line tools"
+echo "  8. Offer to download the default Whisper model"
 echo "     - $DEFAULT_WHISPER_MODEL_FILE"
 echo "     - stored in $MODEL_DIR"
-echo "  8. Update config.toml Web UI settings to use the downloaded model"
+echo "  9. Update $CONFIG_PATH Web UI settings to use the downloaded model"
 echo
 if ! confirm "Continue with setup?"; then
   echo "Setup cancelled."
@@ -265,22 +244,54 @@ if ! confirm "Continue with setup?"; then
 fi
 
 if ! find_uv; then
-  install_uv
+  echo
+  echo "uv is not installed or not in PATH."
+  echo "Install uv by following README.md, then run ./scripts/setup.sh again."
+  exit 1
 fi
 
 echo
 echo "Using uv: $UV_BIN"
-echo
-echo "Ensuring Python 3.11 is available..."
-"$UV_BIN" python install 3.11
+
+ensure_uv_python
+
+PYTHON_VERSION="$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+if ! "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+  echo
+  echo "Python 3.11+ is required. Found Python $PYTHON_VERSION."
+  echo "Install Python 3.11 with uv by following README.md, then run ./scripts/setup.sh again."
+  exit 1
+fi
 
 echo
-echo "Creating virtual environment: .venv"
-"$UV_BIN" venv --python 3.11 "$VENV_DIR"
+echo "Using Python: $PYTHON_BIN ($PYTHON_VERSION)"
+
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo
+  echo "Missing required command-line tool: ffmpeg"
+  echo "Install it by following README.md, then run ./scripts/setup.sh again."
+  exit 1
+fi
 
 echo
-echo "Installing WebUI dependencies..."
+if [[ -x "$VENV_DIR/bin/python" ]]; then
+  echo "Reusing virtual environment: .venv"
+else
+  echo "Creating virtual environment: .venv"
+  "$UV_BIN" venv --python "$PYTHON_BIN" "$VENV_DIR"
+fi
+
+echo
+echo "Installing WebUI Python dependencies into .venv..."
 "$UV_BIN" pip install --python "$VENV_DIR/bin/python" -r "$ROOT_DIR/source/webui/requirements.txt"
+
+if ! "$VENV_DIR/bin/python" -c 'import fastapi, uvicorn, multipart, pydantic, yt_dlp, opencc' >/dev/null 2>&1; then
+  echo
+  echo "WebUI Python dependencies were not installed correctly in .venv."
+  exit 1
+fi
+
+echo "Found WebUI Python dependencies in .venv."
 
 echo
 echo "Checking config..."

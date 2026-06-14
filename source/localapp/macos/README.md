@@ -18,7 +18,7 @@ swift run AirTypeMac
 - hotkey menu: `right_ctrl`, `right_option`
 - move lock
 - floating recording dialog
-- desktop-ratio dialog position persisted to `config.toml`
+- desktop-ratio dialog position persisted to `~/.airtype-config.toml`
 - configured right Ctrl or right Option double-press hotkey via Quartz event tap
 - microphone recording through `AVAudioEngine`
 - automatic local FastAPI WebUI startup when `[localapp.backend-endpoint].mode = "local"`
@@ -33,21 +33,17 @@ When `[localapp.backend-endpoint].mode = "local"`, the SwiftUI frontend checks `
 .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8003
 ```
 
-The command runs from the project `source/webui/` directory. The Web UI reads `[webui.whisper-server]` from `config.toml` for the local `whisper-server` and model paths.
+The command runs from the project `source/webui/` directory. The Web UI reads `[webui.whisper-server]` from `~/.airtype-config.toml` for the local `whisper-server` and model paths.
 
 ## Config
 
-The app reads `config.toml` from the current project root when launched there. If not found, it falls back to:
+The app reads one config file:
 
 ```text
-~/.airtype/config.toml
+~/.airtype-config.toml
 ```
 
-You can also override the path:
-
-```bash
-AIRTYPE_CONFIG_PATH=/path/to/config.toml swift run AirTypeMac
-```
+If that file does not exist, AirType shows an error and exits. Run `./scripts/setup.sh` from the project root to create it.
 
 ## macOS Permissions
 

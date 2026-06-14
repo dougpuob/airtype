@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_PATH="$HOME/.airtype-config.toml"
 
 if [[ ! -x "$ROOT_DIR/.venv/bin/python" ]]; then
   echo "AirType environment is not ready."
@@ -11,13 +12,11 @@ if [[ ! -x "$ROOT_DIR/.venv/bin/python" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$ROOT_DIR/config.toml" ]]; then
-  echo "config.toml is missing."
+if [[ ! -f "$CONFIG_PATH" ]]; then
+  echo "AirType config file is missing:"
+  echo "  $CONFIG_PATH"
   echo
-  echo "Create one from the example:"
-  echo "  cp config.example.toml config.toml"
-  echo
-  echo "Run setup first:"
+  echo "Run setup to create it:"
   echo "  ./scripts/setup.sh"
   exit 1
 fi

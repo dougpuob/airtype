@@ -75,9 +75,30 @@
             "model_filename": { "type": "string", "default": "" },
             "server_bin": { "type": "string", "default": "" },
             "endpoint": { "type": "string", "default": "" },
+            "server_args": {
+              "type": "string",
+              "default": "",
+              "description": "Extra arguments passed to local whisper-server."
+            },
             "language": { "type": "string", "enum": ["zh-tw", "zh-cn", "en", "ja", "ko"], "default": "zh-tw" },
             "beam": { "type": "integer", "minimum": 1, "maximum": 16, "default": 5 },
             "temperature": { "type": "number", "minimum": 0, "maximum": 2, "default": 0 }
+          }
+        },
+        "yt-dlp": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cookies": {
+              "type": "string",
+              "default": "",
+              "description": "Optional cookies.txt path passed to yt-dlp with --cookies."
+            },
+            "cookies_from_browser": {
+              "type": "string",
+              "default": "",
+              "description": "Optional browser name passed to yt-dlp with --cookies-from-browser, e.g. chrome, safari, firefox, edge."
+            }
           }
         },
         "llm-server": {
