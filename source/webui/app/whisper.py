@@ -16,12 +16,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import wave
+from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from opencc import OpenCC
 
 from .config_schema import read_webui_settings
+from .service_log import append_service_log
 
 LANGUAGE_ALIASES = {
     "zh-tw": "zh",
@@ -64,6 +66,7 @@ class WhisperCppTranscriber:
         self._server_endpoint: Optional[str] = None
         self._server_model: Optional[str] = None
         self._server_args: list[str] = []
+        self._server_output_tail: deque[str] = deque(maxlen=80)
         self._opencc: Dict[str, OpenCC] = {}
 
     @property
@@ -275,7 +278,10 @@ class WhisperCppTranscriber:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                bufsize=1,
             )
+            self._server_output_tail.clear()
+            self._start_server_log_reader(self._server_process)
             self._server_endpoint = endpoint
             self._server_model = model_path
             self._server_args = parsed_server_args
@@ -290,6 +296,7 @@ class WhisperCppTranscriber:
             self._server_endpoint = None
             self._server_model = None
             self._server_args = []
+            self._server_output_tail.clear()
 
         if not process or process.poll() is not None:
             return
@@ -328,13 +335,26 @@ class WhisperCppTranscriber:
             sock.bind(("127.0.0.1", 0))
             return int(sock.getsockname()[1])
 
+    def _start_server_log_reader(self, process: subprocess.Popen) -> None:
+        def read_output() -> None:
+            if not process.stdout:
+                return
+            try:
+                for raw_line in process.stdout:
+                    line = raw_line.rstrip("\r\n")
+                    self._server_output_tail.append(line)
+                    append_service_log("whisper-server", line)
+            except Exception as exc:
+                append_service_log("whisper-server", f"log reader stopped: {exc}")
+
+        thread = threading.Thread(target=read_output, name="whisper-server-log-reader", daemon=True)
+        thread.start()
+
     def _wait_for_server(self, endpoint: str) -> None:
         last_error: Optional[Exception] = None
         for _ in range(60):
             if self._server_process and self._server_process.poll() is not None:
-                output = ""
-                if self._server_process.stdout:
-                    output = self._server_process.stdout.read()
+                output = "\n".join(self._server_output_tail)
                 raise WhisperCppNotConfigured(f"whisper-server exited early: {output.strip()}")
             try:
                 urllib.request.urlopen(endpoint, timeout=1).close()
