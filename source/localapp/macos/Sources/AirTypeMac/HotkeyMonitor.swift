@@ -31,6 +31,7 @@ final class HotkeyMonitor {
 
     func start() {
         Logger.shared.log("Accessibility trusted: \(AXIsProcessTrusted())")
+        requestInputMonitoringAccess()
         startGlobalMonitor()
         thread = Thread { [weak self] in
             self?.run()
@@ -51,6 +52,15 @@ final class HotkeyMonitor {
         if let globalMonitor {
             NSEvent.removeMonitor(globalMonitor)
             self.globalMonitor = nil
+        }
+    }
+
+    private func requestInputMonitoringAccess() {
+        let trusted = CGPreflightListenEventAccess()
+        Logger.shared.log("Input monitoring trusted: \(trusted)")
+        if !trusted {
+            let granted = CGRequestListenEventAccess()
+            Logger.shared.log("Input monitoring requested: \(granted)")
         }
     }
 
