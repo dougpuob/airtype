@@ -38,9 +38,9 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "position_x_ratio": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5 },
-            "position_y_ratio": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.62 },
-            "move_lock": { "type": "boolean", "default": true }
+            "position_x_ratio": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.2598 },
+            "position_y_ratio": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.0597 },
+            "move_lock": { "type": "boolean", "default": false }
           }
         },
         "hotkey": {
@@ -71,9 +71,9 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "model_dir": { "type": "string", "default": "" },
-            "model_filename": { "type": "string", "default": "" },
-            "server_bin": { "type": "string", "default": "" },
+            "model_dir": { "type": "string", "default": "~/.airtype/models" },
+            "model_filename": { "type": "string", "default": "ggml-large-v3-turbo-q5_0.bin" },
+            "server_bin": { "type": "string", "default": "/opt/homebrew/bin/whisper-server" },
             "remote_endpoint": { "type": "string", "default": "" },
             "server_args": {
               "type": "string",
@@ -96,7 +96,7 @@
             },
             "cookies_from_browser": {
               "type": "string",
-              "default": "",
+              "default": "chrome",
               "description": "Optional browser name passed to yt-dlp with --cookies-from-browser, e.g. chrome, safari, firefox, edge."
             }
           }
@@ -107,27 +107,27 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "name": { "type": "string", "default": "" },
-              "provider": { "type": "string", "default": "llama.cpp" },
-              "endpoint": { "type": "string", "default": "http://127.0.0.1:8080" },
+              "name": { "type": "string", "default": "llama.cpp" },
+              "provider": { "type": "string", "default": "openai" },
+              "endpoint": { "type": "string", "default": "http://114.34.75.131:8088/" },
               "models": {
                 "type": "array",
                 "items": { "type": "string" },
-                "default": []
+                "default": ["gemma-4-e2b", "qwen3-coder-30b", "qwen3-coder-30b-1m", "qwen3-coder-next", "qwen3-vl-30b-a3b-thinking", "qwen3.6-27b", "qwen3.6-35b-a3b", "unsloth/Qwen3-VL-30B-A3B-Thinking-GGUF:Q4_K_XL", "unsloth/Qwen3.6-27B-MTP-GGUF:Q4_K_XL", "unsloth/Qwen3.6-35B-A3B-MTP-GGUF:Q4_K_XL", "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL"]
               },
-              "selected-model": { "type": "string", "default": "" },
+              "selected-model": { "type": "string", "default": "gemma-4-e2b" },
               "contextLength": { "type": "integer", "minimum": 1, "default": 8192 },
               "temperature": { "type": "number", "minimum": 0, "maximum": 2, "default": 0.4 },
               "system": {
                 "type": "string",
-                "default": "Summarize and answer questions using the transcript as the source of truth."
+                "default": "No explanations or detailed listings are needed; simply organize the verbatim transcript, including correcting typos, polishing sentences, and stringing the transcript together into an article."
               }
             }
           }
         },
         "default-llm-server-name": {
           "type": "string",
-          "default": "",
+          "default": "llama.cpp",
           "description": "Name of the default LLM server (matches the `name` field in [[webui.llm-server]]."
         }
       }
