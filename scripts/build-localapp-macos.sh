@@ -71,6 +71,11 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>AirType listens for Escape while recording so it can discard the current recording before transcription.</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>AirType activates the previous app so it can paste transcribed text.</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <true/>
+  </dict>
   <key>NSHighResolutionCapable</key>
   <true/>
 </dict>

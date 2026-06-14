@@ -66,6 +66,26 @@ final class Logger {
         }
     }
 
+    func blankLine() {
+        print("")
+        do {
+            try FileManager.default.createDirectory(
+                at: path.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            if FileManager.default.fileExists(atPath: path.path),
+               let handle = try? FileHandle(forWritingTo: path) {
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data("\n".utf8))
+                try handle.close()
+            } else {
+                try "\n".write(to: path, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            print("[AirTypeMac] log write failed: \(error)")
+        }
+    }
+
     func marker(_ title: String, details: String) {
         log("========== \(title) START ==========")
         if !details.isEmpty {
