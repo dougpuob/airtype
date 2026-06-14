@@ -78,6 +78,41 @@ transcription_jobs: Dict[str, Dict[str, Any]] = {}
 executor = ThreadPoolExecutor(max_workers=1)
 
 
+@app.on_event("startup")
+def startup_managed_processes() -> None:
+    """Start the managed whisper.cpp server on WebUI startup if local mode is configured."""
+    settings = _read_app_settings()
+    whisper_settings = settings.get("whisper", {})
+
+    # Only start local server if no remote endpoint is configured
+    remote_endpoint = str(whisper_settings.get("remote_endpoint", "")).strip()
+    if remote_endpoint:
+        return
+
+    # Check if we have model and server binary configured
+    model_path = _whisper_model_path_from_settings(whisper_settings)
+    if not model_path:
+        return
+
+    configured_server_bin = str(whisper_settings.get("server_bin", "")).strip()
+    server_bin = os.path.expanduser(configured_server_bin) if configured_server_bin else transcriber.server_binary
+    if not server_bin or not os.path.exists(server_bin):
+        return
+
+    if not os.path.exists(model_path):
+        return
+
+    # Start the local whisper server
+    try:
+        server_args = str(whisper_settings.get("server_args", ""))
+        transcriber._ensure_local_server(model_path, server_args, None)
+        status = transcriber.status()
+        print(f"[AirType] Local whisper-server started at {status['endpoint']}", flush=True)
+    except Exception as e:
+        # Log but don't fail startup
+        print(f"[AirType] Could not start local whisper-server: {e}", flush=True)
+
+
 @app.on_event("shutdown")
 def shutdown_managed_processes() -> None:
     transcriber.shutdown()
@@ -163,7 +198,7 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     model_dir, model_filename = _split_whisper_model_settings(whisper_input)
     return {
         "whisper": {
-            "endpoint": whisper_input.get("endpoint", ""),
+            "remote_endpoint": whisper_input.get("remote_endpoint", ""),
             "model_dir": model_dir,
             "model_filename": model_filename,
             "server_bin": whisper_input.get("server_bin", ""),
@@ -205,16 +240,16 @@ async def restart_whisper_server(request: AppSettingsRequest):
     nested = _settings_request_to_nested(request.settings or {})
     proposed_settings = normalize_app_settings(nested)
     whisper_settings = proposed_settings.get("whisper", {})
-    endpoint = str(whisper_settings.get("endpoint") or "").strip()
+    remote_endpoint = str(whisper_settings.get("remote_endpoint") or "").strip()
 
-    if endpoint:
+    if remote_endpoint:
         settings = _write_app_settings(nested)
         transcriber.shutdown()
         return {
             "ok": True,
             "mode": "remote",
             "running": False,
-            "endpoint": endpoint,
+            "endpoint": remote_endpoint,
             "settings": settings,
             "message": "Saved settings. External whisper-server endpoint will be used on the next transcription.",
         }
@@ -269,27 +304,27 @@ async def test_whisper_server(request: AppSettingsRequest):
     settings = normalize_app_settings(request.settings or {})
     whisper_settings = settings.get("whisper", {})
     model_path = _whisper_model_path_from_settings(whisper_settings)
-    endpoint = str(whisper_settings.get("endpoint") or "").strip()
+    remote_endpoint = str(whisper_settings.get("remote_endpoint") or "").strip()
 
-    if endpoint:
-        test_url = endpoint.rstrip("/")
+    if remote_endpoint:
+        test_url = remote_endpoint.rstrip("/")
         try:
             with urllib.request.urlopen(test_url, timeout=3) as response:
                 return {
                     "ok": True,
                     "mode": "remote",
-                    "endpoint": endpoint,
+                    "endpoint": remote_endpoint,
                     "status": response.status,
-                    "message": f"Connected to whisper-server at {endpoint}.",
+                    "message": f"Connected to whisper-server at {remote_endpoint}.",
                 }
         except urllib.error.HTTPError as exc:
             if exc.code < 500:
                 return {
                     "ok": True,
                     "mode": "remote",
-                    "endpoint": endpoint,
+                    "endpoint": remote_endpoint,
                     "status": exc.code,
-                    "message": f"Connected to whisper-server at {endpoint}.",
+                    "message": f"Connected to whisper-server at {remote_endpoint}.",
                 }
             raise HTTPException(status_code=502, detail=f"whisper-server returned HTTP {exc.code}") from exc
         except Exception as exc:
@@ -1141,14 +1176,14 @@ def _settings_transcribe_options(
     settings = _read_app_settings()
     whisper_settings = settings.get("whisper", {})
     selected_model = model or _whisper_model_path_from_settings(whisper_settings)
-    
-    endpoint = whisper_endpoint if whisper_endpoint is not None else whisper_settings.get("endpoint", "")
-    if not (endpoint or "").strip():
-        endpoint = ""
+
+    remote_endpoint = whisper_endpoint if whisper_endpoint is not None else whisper_settings.get("remote_endpoint", "")
+    if not (remote_endpoint or "").strip():
+        remote_endpoint = ""
 
     return {
         "model_path": selected_model,
-        "server_endpoint": endpoint,
+        "server_endpoint": remote_endpoint,
         "server_args": whisper_settings.get("server_args", ""),
         "language": language or whisper_settings.get("language") or None,
         "temperature": temperature if temperature is not None else whisper_settings.get("temperature", 0),

@@ -74,7 +74,7 @@
             "model_dir": { "type": "string", "default": "" },
             "model_filename": { "type": "string", "default": "" },
             "server_bin": { "type": "string", "default": "" },
-            "endpoint": { "type": "string", "default": "" },
+            "remote_endpoint": { "type": "string", "default": "" },
             "server_args": {
               "type": "string",
               "default": "",
