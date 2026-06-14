@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import logging
+import os
 import sys
 import threading
 from pathlib import Path
@@ -46,6 +48,29 @@ class _ServiceLogStream(io.TextIOBase):
             self._buffer = ""
 
 
+class _ServiceLogHandler(logging.Handler):
+    def __init__(self, service: str) -> None:
+        super().__init__()
+        self._service = service
+        self.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            append_service_log(self._service, self.format(record))
+        except Exception:
+            self.handleError(record)
+
+
+def _install_logger_handler(logger_name: str) -> None:
+    logger = logging.getLogger(logger_name)
+    if any(getattr(handler, "_airtype_service_log", False) for handler in logger.handlers):
+        return
+
+    handler = _ServiceLogHandler("webui")
+    handler._airtype_service_log = True
+    logger.addHandler(handler)
+
+
 def install_webui_logging() -> None:
     if getattr(install_webui_logging, "_installed", False):
         return
@@ -53,3 +78,6 @@ def install_webui_logging() -> None:
 
     sys.stdout = _ServiceLogStream("webui")
     sys.stderr = _ServiceLogStream("webui")
+    if os.environ.get("AIRTYPE_WEBUI_CAPTURE_UVICORN_LOGS") != "0":
+        for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+            _install_logger_handler(logger_name)
