@@ -127,9 +127,17 @@ final class AirTypeCoordinator: ObservableObject {
             + "pre_roll_seconds=\(config.microphone.preRollSeconds)"
         )
 
+        // Recording will only stop when the current device is unavailable (e.g., the device is removed).
+        // If a new device is added, recording will continue; users can switch between devices in the menu.
+        let currentDeviceAvailable = audioRecorder.isCurrentDeviceAvailable()
+
         if recordingState == .preparing || recordingState == .recording {
-            Logger.shared.log("Recording is active while microphone settings changed; stopping current recording before applying settings")
-            stopRecording()
+            if !currentDeviceAvailable {
+                Logger.shared.log("Recording is active but microphone was removed; stopping current recording before applying settings")
+                stopRecording()
+            } else {
+                Logger.shared.log("Recording is active while microphone settings changed; continuing recording (device still available)")
+            }
         }
 
         audioRecorder.stop()
