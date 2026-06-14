@@ -165,6 +165,7 @@ final class AirTypeCoordinator: ObservableObject {
         nextInputID += 1
         activeInputID = inputID
         activeInputStartedAt = Date()
+        Logger.shared.blankLine()
         Logger.shared.log("========== INPUT #\(inputID) START ==========")
         Logger.shared.log("Input #\(inputID): first hotkey double-press received; recording flow started")
         targetApp = RunningAppIdentity.frontmost()
