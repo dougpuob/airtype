@@ -133,59 +133,99 @@ write_backend_settings() {
   echo
   echo "Updating $CONFIG_PATH Web UI settings..."
   mkdir -p "$(dirname "$CONFIG_PATH")"
-  "$VENV_DIR/bin/python" - "$CONFIG_PATH" "$DEFAULT_WHISPER_MODEL_PATH" "$WHISPER_BIN_DIR" <<'PY'
+  "$VENV_DIR/bin/python" - "$CONFIG_PATH" "$DEFAULT_WHISPER_MODEL_PATH" "$WHISPER_BIN_DIR" "$ROOT_DIR/config.schema.json" <<'PY'
+import json
 import re
 import sys
 from pathlib import Path
 
 config_path = Path(sys.argv[1])
-model_path, whisper_bin_dir = sys.argv[2:4]
+model_path, whisper_bin_dir, schema_path = sys.argv[2:5]
 model = Path(model_path)
 server_bin = str(Path(whisper_bin_dir) / "whisper-server")
+schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
 
 def toml_string(value):
     text = str(value or "")
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
+def toml_value(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(toml_value(item) for item in value) + "]"
+    return toml_string(value)
+
+def object_defaults(object_schema):
+    return {
+        key: property_schema.get("default", "")
+        for key, property_schema in object_schema.get("properties", {}).items()
+    }
+
 def remove_backend_sections(text):
     text = re.sub(r"(?ms)^\[{1,2}webui\.(?:whisper-server|llm-server|yt-dlp|ytdlp|whisper|llm)\]{1,2}\n.*?(?=^\[|\Z)", "", text)
-    text = re.sub(r"(?m)^\[webui\]\n.*?(?=^\[|\Z)", "", text)
+    text = re.sub(r"(?ms)^\[webui\]\n.*?(?=^\[|\Z)", "", text)
     text = re.sub(r"(?m)^#=+\n# Web UI Settings\n#=+\n(?:\n|$)", "", text)
     return text.rstrip()
+
+webui_schema = schema["properties"]["webui"]["properties"]
+whisper_defaults = object_defaults(webui_schema["whisper-server"])
+ytdlp_defaults = object_defaults(webui_schema["yt-dlp"])
+llm_defaults = object_defaults(webui_schema["llm-server"]["items"])
+default_llm_name = webui_schema["default-llm-server-name"].get("default", "")
 
 model_dir = str(model.parent) if model.exists() else ""
 model_filename = model.name if model.exists() else ""
 server_bin_value = server_bin if Path(server_bin).exists() else ""
+whisper_defaults.update({
+    "model_dir": model_dir,
+    "model_filename": model_filename,
+    "server_bin": server_bin_value,
+})
+if not llm_defaults.get("name"):
+    llm_defaults["name"] = "default"
+if not default_llm_name:
+    default_llm_name = llm_defaults["name"]
+
 backend_text = "\n".join([
     "#===============================================================================",
     "# Web UI Settings",
     "#===============================================================================",
     "",
     "[webui.whisper-server]",
-    f"model_dir = {toml_string(model_dir)}",
-    f"model_filename = {toml_string(model_filename)}",
-    f"server_bin = {toml_string(server_bin_value)}",
-    'remote_endpoint = ""',
-    'server_args = ""',
-    'language = "zh-tw"',
-    "beam = 5",
-    "temperature = 0",
+    *(f"{key} = {toml_value(whisper_defaults[key])}" for key in [
+        "model_dir",
+        "model_filename",
+        "server_bin",
+        "remote_endpoint",
+        "server_args",
+        "language",
+        "beam",
+        "temperature",
+    ]),
     "",
     "[webui.yt-dlp]",
-    'cookies = ""',
-    'cookies_from_browser = ""',
+    *(f"{key} = {toml_value(ytdlp_defaults[key])}" for key in [
+        "cookies",
+        "cookies_from_browser",
+    ]),
     "",
     "[[webui.llm-server]]",
-    'name = "default"',
-    'provider = "llama.cpp"',
-    'endpoint = "http://127.0.0.1:8080"',
-    'model = ""',
-    "contextLength = 8192",
-    "temperature = 0.4",
-    'system = ""',
+    *(f"{key} = {toml_value(llm_defaults[key])}" for key in [
+        "name",
+        "provider",
+        "endpoint",
+        "models",
+        "selected-model",
+        "contextLength",
+        "temperature",
+        "system",
+    ]),
     "",
     "[webui]",
-    'default-llm-server-name = "default"',
+    f"default-llm-server-name = {toml_string(default_llm_name)}",
 ])
 
 try:
