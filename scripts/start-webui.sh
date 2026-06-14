@@ -4,6 +4,7 @@ set -e
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEBUI_DIR="$ROOT_DIR/source/webui"
 CONFIG_PATH="$HOME/.airtype/config.toml"
+VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
 
 AIRTYPE_WEBUI_PORT="${AIRTYPE_WEBUI_PORT:-8003}"
 
@@ -29,11 +30,20 @@ fi
 
 cd "$WEBUI_DIR"
 
-# Install dependencies using the virtual environment
-"$ROOT_DIR/.venv/bin/pip" install -r "$WEBUI_DIR/requirements.txt"
+if [[ ! -x "$VENV_PYTHON" ]]; then
+    echo "AirType virtual environment is missing:"
+    echo "  $ROOT_DIR/.venv"
+    echo
+    echo "Run setup to create it:"
+    echo "  ./scripts/setup.sh"
+    exit 1
+fi
+
+# Install dependencies through Python so moved workspaces do not break pip's shebang.
+"$VENV_PYTHON" -m pip install -r "$WEBUI_DIR/requirements.txt"
 
 # Start the WebUI server using the virtual environment's Python
-"$ROOT_DIR/.venv/bin/python" -m uvicorn app.main:app \
+"$VENV_PYTHON" -m uvicorn app.main:app \
     --host 127.0.0.1 \
     --port "$AIRTYPE_WEBUI_PORT" \
     --reload
