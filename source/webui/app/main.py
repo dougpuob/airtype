@@ -86,6 +86,9 @@ executor = ThreadPoolExecutor(max_workers=1)
 def startup_managed_processes() -> None:
     """Start the managed whisper.cpp server on WebUI startup if local mode is configured."""
     settings = _read_app_settings()
+    raw_config = read_config(CONFIG_PATH)
+    raw_webui = raw_config.get("webui", {}) if isinstance(raw_config, dict) else {}
+    raw_whisper = raw_webui.get("whisper-server", {}) if isinstance(raw_webui, dict) else {}
     whisper_settings = settings.get("whisper", {})
     llm = settings.get("llm", {})
     llm_servers = settings.get("llm_servers", [])
@@ -93,6 +96,11 @@ def startup_managed_processes() -> None:
         "webui",
         f"loaded config path={CONFIG_PATH} data_dir={WEBUI_DATA_DIR} records_dir={RECORDS_DIR}",
     )
+    if isinstance(raw_whisper, dict) and "endpoint" in raw_whisper:
+        append_service_log(
+            "webui",
+            "config webui.whisper-server contains legacy key endpoint; ignored. Use remote_endpoint instead.",
+        )
     append_service_log(
         "webui",
         "config webui.whisper-server: "
