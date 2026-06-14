@@ -129,6 +129,16 @@ class WhisperCppTranscriber:
         use_local_server = not (server_endpoint or "").strip()
         append_service_log(
             "webui",
+            "========== TRANSCRIBE START =========="
+        )
+        append_service_log(
+            "webui",
+            "TRANSCRIBE context "
+            f"source={source_path} mode={'local' if use_local_server else 'remote'} "
+            f"model={selected_model} language={language or ''} beam={beam_size} temperature={temperature}",
+        )
+        append_service_log(
+            "webui",
             "transcribe start "
             f"source={source_path} mode={'local' if use_local_server else 'remote'} "
             f"model={selected_model} language={language or ''} beam={beam_size} temperature={temperature}",

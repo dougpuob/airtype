@@ -17,6 +17,7 @@ final class AudioRecorder {
     private var recordingStartedAt: Date?
     private var firstBufferLogged = false
     private var firstVoiceLogged = false
+    private var emptyConvertedBufferLogged = false
     private var activeMicrophoneDeviceName = ""
 
     static func inputDevices() -> [AVCaptureDevice] {
@@ -71,7 +72,7 @@ final class AudioRecorder {
             commonFormat: .pcmFormatInt16,
             sampleRate: outputSampleRate,
             channels: 1,
-            interleaved: true
+            interleaved: false
         )
 
         guard let outputFormat else {
@@ -85,6 +86,7 @@ final class AudioRecorder {
             guard let converted = self.convert(buffer, from: inputFormat, to: outputFormat) else { return }
             let data = self.data(from: converted)
             if data.isEmpty {
+                self.logEmptyConvertedBufferOnce(converted)
                 return
             }
             self.handleAudio(data)
@@ -98,7 +100,9 @@ final class AudioRecorder {
             audioLock.unlock()
             Logger.shared.log(
                 "Microphone input warmed: input_sample_rate=\(Int(inputFormat.sampleRate)), "
-                + "output_sample_rate=\(Int(outputSampleRate)), input_channels=\(inputFormat.channelCount), buffer_size=1024, pre_roll_seconds=\(self.preRollSeconds)"
+                + "output_sample_rate=\(Int(outputSampleRate)), input_channels=\(inputFormat.channelCount), "
+                + "input_format=\(formatDescription(inputFormat)), output_format=\(formatDescription(outputFormat)), "
+                + "buffer_size=1024, pre_roll_seconds=\(self.preRollSeconds)"
             )
         } catch {
             Logger.shared.log("Could not start microphone input: \(error)")
@@ -114,6 +118,7 @@ final class AudioRecorder {
         recordingStartedAt = Date()
         firstBufferLogged = false
         firstVoiceLogged = false
+        emptyConvertedBufferLogged = false
         let preRollBytes = preRollPCM.count
         audioLock.unlock()
         Logger.shared.log(
@@ -344,8 +349,53 @@ final class AudioRecorder {
     }
 
     private func data(from buffer: AVAudioPCMBuffer) -> Data {
-        guard let pointer = buffer.int16ChannelData?[0] else { return Data() }
-        return Data(bytes: pointer, count: Int(buffer.frameLength) * MemoryLayout<Int16>.size)
+        let byteCount = Int(buffer.frameLength) * Int(buffer.format.channelCount) * MemoryLayout<Int16>.size
+        if let pointer = buffer.int16ChannelData?[0], byteCount > 0 {
+            return Data(bytes: pointer, count: byteCount)
+        }
+
+        let audioBuffer = buffer.audioBufferList.pointee.mBuffers
+        guard let data = audioBuffer.mData, audioBuffer.mDataByteSize > 0 else {
+            return Data()
+        }
+        return Data(bytes: data, count: Int(audioBuffer.mDataByteSize))
+    }
+
+    private func logEmptyConvertedBufferOnce(_ buffer: AVAudioPCMBuffer) {
+        audioLock.lock()
+        let shouldLog = !emptyConvertedBufferLogged
+        if shouldLog {
+            emptyConvertedBufferLogged = true
+        }
+        audioLock.unlock()
+
+        guard shouldLog else { return }
+        let audioBuffer = buffer.audioBufferList.pointee.mBuffers
+        Logger.shared.log(
+            "Audio conversion produced empty data: frame_length=\(buffer.frameLength), "
+            + "format=\(formatDescription(buffer.format)), "
+            + "has_int16_channel_data=\(buffer.int16ChannelData != nil), "
+            + "audio_buffer_bytes=\(audioBuffer.mDataByteSize)"
+        )
+    }
+
+    private func formatDescription(_ format: AVAudioFormat) -> String {
+        let commonFormat: String
+        switch format.commonFormat {
+        case .pcmFormatFloat32:
+            commonFormat = "float32"
+        case .pcmFormatFloat64:
+            commonFormat = "float64"
+        case .pcmFormatInt16:
+            commonFormat = "int16"
+        case .pcmFormatInt32:
+            commonFormat = "int32"
+        case .otherFormat:
+            commonFormat = "other"
+        @unknown default:
+            commonFormat = "unknown"
+        }
+        return "\(commonFormat)/\(Int(format.sampleRate))Hz/\(format.channelCount)ch/interleaved=\(format.isInterleaved)"
     }
 
     private func level(from data: Data) -> Double {
