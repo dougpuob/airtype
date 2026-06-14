@@ -23,14 +23,6 @@ from opencc import OpenCC
 
 from .config_schema import read_webui_settings
 
-
-DEFAULT_WHISPER_CPP_ROOT = Path(
-    os.getenv(
-        "WHISPER_CPP_ROOT",
-        "/Users/dougpuob/workdata/dougpuob/workspace/whisper.cpp/whisper.cpp.git",
-    )
-)
-
 LANGUAGE_ALIASES = {
     "zh-tw": "zh",
     "zh-cn": "zh",
@@ -42,15 +34,13 @@ OPENCC_CONFIGS = {
 }
 
 def _find_config_path() -> Path:
-    configured = os.getenv("AIRTYPE_CONFIG_PATH")
-    if configured:
-        return Path(configured).expanduser().resolve()
-
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / "config.toml"
-        if candidate.exists():
-            return candidate
-    return Path(__file__).resolve().parents[3] / "config.toml"
+    config_path = Path("~/.airtype-config.toml").expanduser().resolve()
+    if not config_path.exists():
+        raise RuntimeError(
+            f"AirType config file was not found: {config_path}\n"
+            "Run ./scripts/setup.sh to create it, then start AirType again."
+        )
+    return config_path
 
 
 CONFIG_PATH = _find_config_path()
@@ -78,10 +68,6 @@ class WhisperCppTranscriber:
 
     @property
     def server_binary(self) -> Optional[str]:
-        configured = os.getenv("WHISPER_CPP_SERVER_BIN")
-        if configured:
-            return configured
-
         configured = self._configured_server_bin()
         if configured:
             return configured
@@ -89,31 +75,12 @@ class WhisperCppTranscriber:
         path = shutil.which("whisper-server")
         if path:
             return path
-
-        for candidate in (
-            DEFAULT_WHISPER_CPP_ROOT / "build/bin/whisper-server",
-            DEFAULT_WHISPER_CPP_ROOT / "build--coreml=1/bin/whisper-server",
-            DEFAULT_WHISPER_CPP_ROOT / "build--coreml=0/bin/whisper-server",
-            DEFAULT_WHISPER_CPP_ROOT / "build~/bin/whisper-server",
-        ):
-            if candidate.exists():
-                return str(candidate)
         return None
 
     def _default_model_path(self) -> str:
-        for candidate in (
-            DEFAULT_WHISPER_CPP_ROOT / "models/ggml-large-v3-turbo.bin",
-            DEFAULT_WHISPER_CPP_ROOT / "models/ggml-base.bin",
-        ):
-            if candidate.exists():
-                return str(candidate)
         return "models/ggml-base.bin"
 
     def _configured_model_path(self) -> Optional[str]:
-        configured = os.getenv("WHISPER_CPP_MODEL")
-        if configured:
-            return str(Path(configured).expanduser())
-
         settings = self._whisper_local_config()
         model_dir = settings.get("model_dir")
         model_filename = settings.get("model_filename")
@@ -146,7 +113,6 @@ class WhisperCppTranscriber:
         language: Optional[str] = None,
         temperature: float = 0.0,
         beam_size: int = 5,
-        response_format: Optional[str] = None,
         progress_callback: Optional[Callable[[int, str], None]] = None,
         cancel_event: Optional[threading.Event] = None,
         process_callback: Optional[Callable[[subprocess.Popen], None]] = None,
@@ -162,7 +128,7 @@ class WhisperCppTranscriber:
         use_local_server = not (server_endpoint or "").strip()
         if use_local_server and not Path(selected_model).exists():
             raise WhisperCppNotConfigured(
-                f"whisper.cpp model not found: {selected_model}. Set [webui.whisper-server].model_dir and model_filename in config.toml."
+                f"whisper.cpp model not found: {selected_model}. Set [webui.whisper-server].model_dir and model_filename in ~/.airtype-config.toml."
             )
 
         with tempfile.TemporaryDirectory(prefix="airtype-transcribe-") as work_dir:
@@ -185,7 +151,6 @@ class WhisperCppTranscriber:
                 output_language=output_language,
                 temperature=temperature,
                 beam_size=beam_size,
-                response_format=response_format,
                 progress_callback=progress_callback,
                 cancel_event=cancel_event,
                 segment_callback=segment_callback,
@@ -266,10 +231,6 @@ class WhisperCppTranscriber:
         server_args: Optional[str],
         progress_callback: Optional[Callable[[int, str], None]],
     ) -> str:
-        configured_endpoint = os.getenv("WHISPER_CPP_SERVER_ENDPOINT", "").strip()
-        if configured_endpoint:
-            return configured_endpoint
-
         parsed_server_args = self._server_args_from_settings(server_args)
 
         with self._server_lock:
@@ -292,11 +253,11 @@ class WhisperCppTranscriber:
             server_bin = self.server_binary
             if not server_bin:
                 raise WhisperCppNotConfigured(
-                    "whisper.cpp server executable not found. Set [webui.whisper-server].server_bin in config.toml."
+                    "whisper.cpp server executable not found. Set [webui.whisper-server].server_bin in ~/.airtype-config.toml."
                 )
 
-            host = os.getenv("WHISPER_CPP_SERVER_HOST", "127.0.0.1")
-            port = int(os.getenv("WHISPER_CPP_SERVER_PORT") or self._free_port())
+            host = "127.0.0.1"
+            port = self._free_port()
             endpoint = f"http://{host}:{port}"
             command = [
                 server_bin,
@@ -354,7 +315,7 @@ class WhisperCppTranscriber:
             }
 
     def _server_args_from_settings(self, server_args: Optional[str]) -> list[str]:
-        raw_args = (server_args if server_args is not None else os.getenv("WHISPER_CPP_SERVER_ARGS", "")).strip()
+        raw_args = (server_args or "").strip()
         if not raw_args:
             return []
         try:
@@ -396,7 +357,6 @@ class WhisperCppTranscriber:
         output_language: Optional[str],
         temperature: float,
         beam_size: int,
-        response_format: Optional[str],
         progress_callback: Optional[Callable[[int, str], None]],
         cancel_event: Optional[threading.Event],
         segment_callback: Optional[Callable[[Dict[str, Any]], None]],
@@ -405,7 +365,7 @@ class WhisperCppTranscriber:
         total_started_at = time.monotonic()
         url = self._inference_url(endpoint)
         multipart_started_at = time.monotonic()
-        fields = self._server_request_fields(url, temperature, beam_size, response_format)
+        fields = self._server_request_fields(url, temperature, beam_size)
         if language:
             fields.append(("language", language))
 
@@ -471,7 +431,6 @@ class WhisperCppTranscriber:
         url: str,
         temperature: float,
         beam_size: int,
-        response_format: Optional[str] = None,
     ) -> list[tuple[str, str]]:
         if url.endswith("/v1/audio/transcriptions"):
             return [
@@ -479,14 +438,9 @@ class WhisperCppTranscriber:
                 ("response_format", "verbose_json"),
                 ("timestamp_granularities[]", "segment"),
             ]
-        selected_response_format = (
-            response_format
-            or os.getenv("AIRTYPE_WHISPER_RESPONSE_FORMAT", "verbose_json").strip()
-            or "verbose_json"
-        )
         return [
             ("temperature", str(temperature)),
-            ("response_format", selected_response_format),
+            ("response_format", "verbose_json"),
             ("beam_size", str(beam_size)),
         ]
 

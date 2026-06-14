@@ -11,6 +11,7 @@ import re
 import mimetypes
 import shutil
 import subprocess
+import sys
 import threading
 import tempfile
 import urllib.error
@@ -50,20 +51,15 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _find_config_path() -> str:
-    configured = os.getenv("AIRTYPE_CONFIG_PATH")
-    if configured:
-        return os.path.abspath(os.path.expanduser(configured))
-
-    current = os.path.abspath(APP_DIR)
-    while True:
-        candidate = os.path.join(current, "config.toml")
-        if os.path.exists(candidate):
-            return candidate
-
-        parent = os.path.dirname(current)
-        if parent == current:
-            return os.path.abspath(os.path.join(APP_DIR, "..", "..", "..", "config.toml"))
-        current = parent
+    config_path = os.path.abspath(os.path.expanduser("~/.airtype-config.toml"))
+    if not os.path.exists(config_path):
+        message = (
+            f"AirType config file was not found: {config_path}\n"
+            "Run ./scripts/setup.sh to create it, then start AirType again."
+        )
+        print(message, file=sys.stderr)
+        raise RuntimeError(message)
+    return config_path
 
 
 TRANSCRIPT_RECORD_TYPE = "transcript"
@@ -91,11 +87,9 @@ def shutdown_managed_processes() -> None:
 class TranscribeRequest(BaseModel):
     model: Optional[str] = None
     whisper_endpoint: Optional[str] = None
-    whisper_server_args: Optional[str] = None
     language: Optional[str] = None
     temperature: Optional[float] = None
     beam_size: Optional[int] = None
-    response_format: Optional[str] = None
     record_type: Optional[str] = None
 
 
@@ -160,8 +154,12 @@ async def update_app_settings(request: AppSettingsRequest):
 def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     whisper_input = incoming.get("whisper", {}) if isinstance(incoming.get("whisper"), dict) else {}
     llm_input = incoming.get("llm", {}) if isinstance(incoming.get("llm"), dict) else {}
-    current_whisper = _read_backend_config_settings().get("whisper", {})
+    ytdlp_input = incoming.get("ytdlp", {}) if isinstance(incoming.get("ytdlp"), dict) else {}
+    current_settings = _read_backend_config_settings()
+    current_whisper = current_settings.get("whisper", {})
     current_whisper = current_whisper if isinstance(current_whisper, dict) else {}
+    current_ytdlp = current_settings.get("ytdlp", {})
+    current_ytdlp = current_ytdlp if isinstance(current_ytdlp, dict) else {}
     model_dir, model_filename = _split_whisper_model_settings(whisper_input)
     return {
         "whisper": {
@@ -170,6 +168,7 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
             "model_filename": model_filename,
             "server_bin": whisper_input.get("server_bin", ""),
             "language": whisper_input.get("language", "zh-tw"),
+            "server_args": whisper_input.get("server_args", current_whisper.get("server_args", "")),
             "beam": current_whisper.get("beam", 5),
             "temperature": current_whisper.get("temperature", 0),
         },
@@ -183,6 +182,13 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
             "contextLength": llm_input.get("contextLength", 8192),
             "temperature": llm_input.get("temperature", 0.4),
             "system": llm_input.get("system", ""),
+        },
+        "ytdlp": {
+            "cookies": ytdlp_input.get("cookies", current_ytdlp.get("cookies", "")),
+            "cookies_from_browser": ytdlp_input.get(
+                "cookies_from_browser",
+                ytdlp_input.get("cookies-from-browser", current_ytdlp.get("cookies_from_browser", "")),
+            ),
         },
         "llm_servers": incoming.get("llm_servers", []),
         "default_llm_server_name": incoming.get("default_llm_server_name") or llm_input.get("name", "default"),
@@ -236,7 +242,11 @@ async def restart_whisper_server(request: AppSettingsRequest):
     transcriber.shutdown()
 
     try:
-        ready_endpoint = transcriber._ensure_local_server(model_path, "", None)
+        ready_endpoint = transcriber._ensure_local_server(
+            model_path,
+            str(whisper_settings.get("server_args") or ""),
+            None,
+        )
     except WhisperCppNotConfigured as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -303,7 +313,11 @@ async def test_whisper_server(request: AppSettingsRequest):
         raise HTTPException(status_code=400, detail=f"whisper-server executable not found: {server_bin}")
 
     try:
-        ready_endpoint = transcriber._ensure_local_server(model_path, "", None)
+        ready_endpoint = transcriber._ensure_local_server(
+            model_path,
+            str(whisper_settings.get("server_args") or ""),
+            None,
+        )
     except WhisperCppNotConfigured as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -340,11 +354,9 @@ async def transcribe_audio(
     file: UploadFile = File(None),
     model: Optional[str] = Form(None),
     whisper_endpoint: Optional[str] = Form(None),
-    whisper_server_args: Optional[str] = Form(None),
     language: Optional[str] = Form(None),
     temperature: Optional[float] = Form(None),
     beam_size: Optional[int] = Form(None),
-    response_format: Optional[str] = Form(None),
     record_type: Optional[str] = Form(None)
 ):
     """
@@ -359,7 +371,6 @@ async def transcribe_audio(
         file.filename,
         file.content_type,
         beam_size,
-        response_format,
     )
 
     if not _is_supported_media(file.content_type, file.filename):
@@ -383,11 +394,9 @@ async def transcribe_audio(
         options = _settings_transcribe_options(
             model,
             whisper_endpoint,
-            whisper_server_args,
             language,
             temperature,
             beam_size,
-            response_format,
         )
         settings_ms = _elapsed_ms(settings_started_at)
         transcribe_started_at = time.monotonic()
@@ -443,21 +452,17 @@ async def transcribe_ime_audio(
     file: UploadFile = File(None),
     model: Optional[str] = Form(None),
     whisper_endpoint: Optional[str] = Form(None),
-    whisper_server_args: Optional[str] = Form(None),
     language: Optional[str] = Form(None),
     temperature: Optional[float] = Form(None),
     beam_size: Optional[int] = Form(None),
-    response_format: Optional[str] = Form(None),
 ):
     return await transcribe_audio(
         file=file,
         model=model,
         whisper_endpoint=whisper_endpoint,
-        whisper_server_args=whisper_server_args,
         language=language,
         temperature=temperature,
         beam_size=beam_size,
-        response_format=response_format,
         record_type=IME_RECORD_TYPE,
     )
 
@@ -467,11 +472,9 @@ async def create_transcription_job(
     file: UploadFile = File(None),
     model: Optional[str] = Form(None),
     whisper_endpoint: Optional[str] = Form(None),
-    whisper_server_args: Optional[str] = Form(None),
     language: Optional[str] = Form(None),
     temperature: Optional[float] = Form(None),
-    beam_size: Optional[int] = Form(None),
-    response_format: Optional[str] = Form(None)
+    beam_size: Optional[int] = Form(None)
 ):
     if not file:
         raise HTTPException(status_code=400, detail="No audio or video file provided")
@@ -486,11 +489,9 @@ async def create_transcription_job(
     options = _settings_transcribe_options(
         model,
         whisper_endpoint,
-        whisper_server_args,
         language,
         temperature,
         beam_size,
-        response_format,
     )
 
     job_id = _create_job(
@@ -762,11 +763,9 @@ async def create_url_transcription_job(request: UrlTranscribeRequest):
     options = _settings_transcribe_options(
         request.model,
         request.whisper_endpoint,
-        request.whisper_server_args,
         request.language,
         request.temperature,
         request.beam_size,
-        request.response_format,
     )
     job_id = _create_job(
         request.url,
@@ -903,7 +902,6 @@ async def transcribe_from_url(request: UrlTranscribeRequest):
         options = _settings_transcribe_options(
             request.model,
             request.whisper_endpoint,
-            request.whisper_server_args,
             request.language,
             request.temperature,
             request.beam_size,
@@ -943,7 +941,6 @@ def _is_supported_media(content_type: Optional[str], filename: Optional[str]) ->
 
 
 def _read_app_settings() -> Dict[str, Any]:
-    config_exists = os.path.exists(CONFIG_PATH)
     settings = _read_backend_config_settings()
     merged = normalize_app_settings({**DEFAULT_APP_SETTINGS, **settings})
     llm_servers, default_llm_server_name = _read_backend_llm_servers()
@@ -953,8 +950,6 @@ def _read_app_settings() -> Dict[str, Any]:
             merged["llm"] = normalize_app_settings({"llm": selected})["llm"]
         merged["llm_servers"] = llm_servers
         merged["default_llm_server_name"] = default_llm_server_name or merged["llm"].get("name", "default")
-    if not config_exists:
-        _write_app_settings(merged)
     return merged
 
 
@@ -1074,6 +1069,7 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
 
     normalized = normalize_app_settings(settings)
     whisper = normalized["whisper"]
+    ytdlp = normalized["ytdlp"]
     selected_llm = normalized["llm"]
     default_name = str(settings.get("default_llm_server_name") or selected_llm.get("name") or "default")
     lines = [
@@ -1086,9 +1082,14 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
         f"model_filename = {_toml_string(whisper.get('model_filename', ''))}",
         f"server_bin = {_toml_string(whisper.get('server_bin', ''))}",
         f"endpoint = {_toml_string(whisper.get('endpoint', ''))}",
+        f"server_args = {_toml_string(whisper.get('server_args', ''))}",
         f"language = {_toml_string(whisper.get('language', 'zh-tw'))}",
         f"beam = {whisper.get('beam', 5)}",
         f"temperature = {whisper.get('temperature', 0)}",
+        "",
+        "[webui.yt-dlp]",
+        f"cookies = {_toml_string(ytdlp.get('cookies', ''))}",
+        f"cookies_from_browser = {_toml_string(ytdlp.get('cookies_from_browser', ''))}",
         "",
     ]
 
@@ -1133,11 +1134,9 @@ def _split_whisper_model_settings(
 def _settings_transcribe_options(
     model: Optional[str],
     whisper_endpoint: Optional[str],
-    whisper_server_args: Optional[str],
     language: Optional[str],
     temperature: Optional[float],
     beam_size: Optional[int],
-    response_format: Optional[str] = None,
 ) -> Dict[str, Any]:
     settings = _read_app_settings()
     whisper_settings = settings.get("whisper", {})
@@ -1150,11 +1149,10 @@ def _settings_transcribe_options(
     return {
         "model_path": selected_model,
         "server_endpoint": endpoint,
-        "server_args": whisper_server_args if whisper_server_args is not None else "",
+        "server_args": whisper_settings.get("server_args", ""),
         "language": language or whisper_settings.get("language") or None,
         "temperature": temperature if temperature is not None else whisper_settings.get("temperature", 0),
         "beam_size": beam_size if beam_size is not None else whisper_settings.get("beam", 5),
-        "response_format": response_format,
     }
 
 
@@ -1163,11 +1161,9 @@ def _settings_request_info(request_info: Dict[str, Any], options: Dict[str, Any]
         **request_info,
         "model": options.get("model_path"),
         "whisper_endpoint": options.get("server_endpoint"),
-        "whisper_server_args": options.get("server_args"),
         "language": options.get("language"),
         "temperature": options.get("temperature"),
         "beam_size": options.get("beam_size"),
-        "response_format": options.get("response_format"),
     }
 
 
@@ -1212,12 +1208,11 @@ def _preview_url_metadata(url: str) -> Dict[str, Any]:
     if not _should_use_media_downloader(url):
         return {}
 
-    downloader = shutil.which("yt-dlp")
-    if not downloader:
+    downloader_command = _media_downloader_command()
+    if not downloader_command:
         return {}
 
-    command = [
-        downloader,
+    command = downloader_command + [
         "--no-playlist",
         "--skip-download",
         "--dump-json",
@@ -1265,13 +1260,16 @@ def _should_use_media_downloader(url: str) -> bool:
 
 
 def _download_media_page(url: str, destination: str) -> Dict[str, Any]:
-    downloader = shutil.which("yt-dlp")
-    if not downloader:
-        raise RuntimeError("yt-dlp is required to download YouTube, Bilibili, Instagram, Threads, TikTok, or Shorts URLs.")
+    downloader_command = _media_downloader_command()
+    if not downloader_command:
+        raise RuntimeError(
+            "yt-dlp is required to download YouTube, Bilibili, Instagram, Threads, TikTok, or Shorts URLs. "
+            "Install WebUI Python dependencies into .venv with ./scripts/setup.sh."
+        )
 
     with tempfile.TemporaryDirectory(prefix="airtype-url-media-") as work_dir:
         process = _run_media_downloader(
-            downloader,
+            downloader_command,
             work_dir,
             url,
             "bestaudio/best",
@@ -1314,15 +1312,23 @@ def _destination_with_media_extension(destination: str, media_path: str) -> str:
     return os.path.splitext(destination)[0] + media_ext
 
 
+def _media_downloader_command() -> list[str]:
+    try:
+        import yt_dlp  # noqa: F401
+    except ImportError:
+        downloader = shutil.which("yt-dlp")
+        return [downloader] if downloader else []
+    return [sys.executable, "-m", "yt_dlp"]
+
+
 def _run_media_downloader(
-    downloader: str,
+    downloader_command: list[str],
     work_dir: str,
     url: str,
     format_selector: str,
 ) -> subprocess.CompletedProcess[str]:
     output_template = os.path.join(work_dir, "source.%(ext)s")
-    command = [
-        downloader,
+    command = downloader_command + [
         "--no-playlist",
         "--max-filesize",
         "2G",
@@ -1373,11 +1379,12 @@ def _media_downloader_site_args(url: str) -> list[str]:
 
 
 def _media_downloader_cookie_args() -> list[str]:
-    cookies_path = os.environ.get("AIRTYPE_YTDLP_COOKIES", "").strip()
+    ytdlp_settings = _read_backend_config_settings().get("ytdlp", {})
+    cookies_path = str(ytdlp_settings.get("cookies") or "").strip()
     if cookies_path:
         return ["--cookies", os.path.expanduser(cookies_path)]
 
-    cookies_browser = os.environ.get("AIRTYPE_YTDLP_COOKIES_FROM_BROWSER", "").strip()
+    cookies_browser = str(ytdlp_settings.get("cookies_from_browser") or "").strip()
     if cookies_browser:
         return ["--cookies-from-browser", cookies_browser]
 
@@ -1390,8 +1397,8 @@ def _media_downloader_failure_hint(url: str, detail: str) -> str:
     if ("bilibili.com" in host or "b23.tv" in host) and "HTTP Error 412" in detail:
         return (
             " BiliBili rejected the metadata request. If this video still fails, update yt-dlp "
-            "or provide logged-in cookies with AIRTYPE_YTDLP_COOKIES=/path/to/cookies.txt "
-            "or AIRTYPE_YTDLP_COOKIES_FROM_BROWSER=chrome."
+            "or provide logged-in cookies in [webui.yt-dlp] with cookies = \"/path/to/cookies.txt\" "
+            "or cookies_from_browser = \"chrome\"."
         )
     return ""
 
@@ -1718,7 +1725,6 @@ def _select_direct_record_type(
     filename: Optional[str],
     content_type: Optional[str],
     beam_size: Optional[int],
-    response_format: Optional[str],
 ) -> str:
     if record_type:
         return _normalize_record_type(record_type)
@@ -1730,7 +1736,6 @@ def _select_direct_record_type(
         (filename or "").strip().lower() == "recording.wav"
         and (content_type or "").strip().lower().startswith("audio/")
         and beam_size == 1
-        and (response_format or "").strip().lower() == "json"
     ):
         return IME_RECORD_TYPE
 

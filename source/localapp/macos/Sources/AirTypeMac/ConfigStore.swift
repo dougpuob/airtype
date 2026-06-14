@@ -66,6 +66,7 @@ struct WhisperServerConfig {
     var modelFilename = ""
     var serverBin = ""
     var endpoint = ""
+    var serverArgs = ""
     var language = "zh-tw"
     var beam = 5
     var temperature = 0.0
@@ -113,21 +114,15 @@ final class ConfigStore: ObservableObject {
         let foundProjectRoot = Self.findProjectRoot()
         projectRoot = foundProjectRoot
 
-        if let override = ProcessInfo.processInfo.environment["AIRTYPE_CONFIG_PATH"], !override.isEmpty {
-            path = URL(fileURLWithPath: override)
-        } else if let foundProjectRoot {
-            path = foundProjectRoot.appendingPathComponent("config.toml")
-        } else {
-            path = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".airtype/config.toml")
-        }
+        path = Self.configPath
     }
 
-    func load() {
-        ensureConfigExists()
+    func load() throws {
+        guard FileManager.default.fileExists(atPath: path.path) else {
+            throw ConfigStoreError.missingConfig(path.path)
+        }
         guard let text = try? String(contentsOf: path, encoding: .utf8) else {
-            Logger.shared.log("Could not read config: \(path.path)")
-            return
+            throw ConfigStoreError.unreadableConfig(path.path)
         }
         config = Self.parse(text)
     }
@@ -215,7 +210,7 @@ final class ConfigStore: ObservableObject {
         let patched = Self.patchLLMServerModels(in: text, modelsByServer: modelsByServer)
         do {
             try patched.write(to: path, atomically: true, encoding: .utf8)
-            load()
+            try load()
         } catch {
             Logger.shared.log("Could not write LLM server models: \(error)")
         }
@@ -301,17 +296,6 @@ final class ConfigStore: ObservableObject {
         } else {
             config.webui.llmServers.append(config.webui.llm)
         }
-    }
-
-    private func ensureConfigExists() {
-        if FileManager.default.fileExists(atPath: path.path) {
-            return
-        }
-        try? FileManager.default.createDirectory(
-            at: path.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try? Self.tomlText(config).write(to: path, atomically: true, encoding: .utf8)
     }
 
     private static func parse(_ text: String) -> AirTypeConfig {
@@ -680,6 +664,9 @@ final class ConfigStore: ObservableObject {
                 stringField("webui.whisper-server", "endpoint",
                             apply: { $0.webui.whisper.endpoint = $1 },
                             render: { $0.webui.whisper.endpoint }),
+                stringField("webui.whisper-server", "server_args",
+                            apply: { $0.webui.whisper.serverArgs = $1 },
+                            render: { $0.webui.whisper.serverArgs }),
                 stringField("webui.whisper-server", "language",
                             apply: { $0.webui.whisper.language = $1.isEmpty ? "zh-tw" : $1 },
                             render: { $0.webui.whisper.language }),
@@ -1021,10 +1008,8 @@ final class ConfigStore: ObservableObject {
     private static func findProjectRoot(startingAt start: URL) -> URL? {
         var current = start
         while true {
-            let configPath = current.appendingPathComponent("config.toml").path
             let backendPath = current.appendingPathComponent("source/webui/app/main.py").path
-            if FileManager.default.fileExists(atPath: configPath),
-               FileManager.default.fileExists(atPath: backendPath) {
+            if FileManager.default.fileExists(atPath: backendPath) {
                 return current
             }
 
@@ -1033,6 +1018,25 @@ final class ConfigStore: ObservableObject {
                 return nil
             }
             current = parent
+        }
+    }
+
+    private static var configPath: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".airtype-config.toml")
+    }
+}
+
+enum ConfigStoreError: LocalizedError {
+    case missingConfig(String)
+    case unreadableConfig(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingConfig(let path):
+            return "AirType config file was not found: \(path)\nRun ./scripts/setup.sh to create it, then start AirType again."
+        case .unreadableConfig(let path):
+            return "AirType config file could not be read: \(path)"
         }
     }
 }
