@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: AirTypeCoordinator?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Logger.shared.startNewRunLog()
         NSApp.applicationIconImage = AirTypeIcon.appIcon()
         NSApp.setActivationPolicy(.accessory)
         coordinator = AirTypeCoordinator()

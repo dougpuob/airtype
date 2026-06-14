@@ -222,6 +222,10 @@ final class AirTypeCoordinator: ObservableObject {
         }
 
         let config = configStore.config
+        Logger.shared.marker(
+            "TRANSCRIBE",
+            details: "endpoint=\(config.backend.selectedEndpoint), language=\(config.chineseMode.mode), wav_bytes=\(wavData.count)"
+        )
         Logger.shared.log("Submitting ASR: endpoint=\(config.backend.selectedEndpoint), language=\(config.chineseMode.mode), wav_bytes=\(wavData.count)")
         Task {
             do {
