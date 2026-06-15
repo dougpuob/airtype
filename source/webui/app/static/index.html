@@ -2452,6 +2452,7 @@
 
         function historyFilterText(record) {
             const segmentCount = record.result?.segment_count ?? 0;
+            const timestamp = recordTimestamp(record);
             return [
                 recordTitle(record, "transcript"),
                 record.job_id,
@@ -2459,9 +2460,28 @@
                 record.source?.name,
                 record.source?.type,
                 `${segmentCount} segments`,
+                formatRecordTimestamp(timestamp),
                 record.updated_at,
                 record.created_at
             ].filter(Boolean).join(" ").toLowerCase();
+        }
+
+        function recordTimestamp(record) {
+            return record.updated_at || record.created_at || "";
+        }
+
+        function formatRecordTimestamp(value) {
+            if (!value) return "";
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return "";
+            return date.toLocaleString("zh-TW", {
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false
+            });
         }
 
         function filteredTranscriptRecords() {
@@ -2495,19 +2515,16 @@
                 item.type = "button";
                 const segmentCount = record.result?.segment_count ?? 0;
                 const status = record.status || "unknown";
+                const timestamp = formatRecordTimestamp(recordTimestamp(record));
+                const metadata = [status, `${segmentCount} segments`, timestamp].filter(Boolean).join(" · ");
                 item.innerHTML = `
                     <span class="record-main">
                         <strong>${escapeHtml(recordTitle(record, "transcript"))}</strong>
-                        <span>${escapeHtml(status)} · ${segmentCount} segments</span>
-                    </span>
-                    <span class="record-actions" aria-label="Record actions">
-                        <span class="record-action" role="button" tabindex="0" data-action="rename" title="Rename">Edit</span>
-                        <span class="record-action danger" role="button" tabindex="0" data-action="delete" title="Delete">Del</span>
+                        <span>${escapeHtml(metadata)}</span>
                     </span>
                 `;
                 item.addEventListener("click", () => loadTranscriptRecord(record.job_id));
                 item.addEventListener("contextmenu", event => showRecordContextMenu(event, record, "transcript"));
-                attachInlineRecordActions(item, record, "transcript");
                 recordList.appendChild(item);
             });
         }
