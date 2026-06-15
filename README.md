@@ -107,6 +107,8 @@ cookies_from_browser = "chrome"
 
 Use `cookies` for a `cookies.txt` path, or `cookies_from_browser` for a browser name such as `chrome`, `safari`, `firefox`, or `edge`.
 
+Bilibili URL transcription automatically asks yt-dlp for audio first and applies browser-style headers, Chrome impersonation when available, smaller HTTP chunks, and resume-friendly retries. This avoids common `HTTP Error 412: Precondition Failed` failures from Bilibili metadata and CDN requests. Higher-quality Bilibili formats may still require a logged-in or premium account via cookies.
+
 
 ### Run
 

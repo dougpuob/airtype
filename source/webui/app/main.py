@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+import functools
 import os
 import re
 import mimetypes
@@ -1342,6 +1343,7 @@ def _preview_url_metadata(url: str) -> Dict[str, Any]:
         "--dump-json",
     ]
     command.extend(_media_downloader_site_args(url))
+    command.extend(_media_downloader_browser_args(tuple(downloader_command), url))
     command.extend(_media_downloader_cookie_args())
     command.append(url)
     try:
@@ -1452,46 +1454,49 @@ def _run_media_downloader(
     format_selector: str,
 ) -> subprocess.CompletedProcess[str]:
     output_template = os.path.join(work_dir, "source.%(ext)s")
+    is_bilibili = _is_bilibili_url(url)
     command = downloader_command + [
         "--no-playlist",
         "--max-filesize",
         "2G",
         "--retries",
-        "3",
+        "20" if is_bilibili else "3",
         "--fragment-retries",
-        "3",
+        "20" if is_bilibili else "3",
         "--write-info-json",
         "-f",
         format_selector,
         "-o",
         output_template,
     ]
+    if is_bilibili:
+        command.extend(["--continue", "--http-chunk-size", "512K", "--sleep-requests", "1"])
     command.extend(_media_downloader_site_args(url))
+    command.extend(_media_downloader_browser_args(tuple(downloader_command), url))
     command.extend(_media_downloader_cookie_args())
     command.append(url)
     return subprocess.run(command, capture_output=True, text=True, timeout=60 * 30)
 
 
+def _is_bilibili_url(url: str) -> bool:
+    host = urllib.parse.urlparse(url).netloc.lower()
+    return "bilibili.com" in host or "b23.tv" in host
+
+
 def _media_downloader_site_args(url: str) -> list[str]:
-    parsed = urllib.parse.urlparse(url)
-    host = parsed.netloc.lower()
-    if "bilibili.com" in host or "b23.tv" in host:
-        referer = "https://www.bilibili.com/"
+    if _is_bilibili_url(url):
+        referer = _bilibili_referer(url)
         return [
             "--referer",
             referer,
-            "--user-agent",
-            (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0.0.0 Safari/537.36"
-            ),
+            "--add-header",
+            f"Referer:{referer}",
+            "--add-header",
+            "Origin:https://www.bilibili.com",
             "--add-header",
             "Accept:application/json, text/plain, */*",
             "--add-header",
             "Accept-Language:zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-            "--add-header",
-            f"Origin:{referer.rstrip('/')}",
             "--add-header",
             "Sec-Fetch-Dest:empty",
             "--add-header",
@@ -1500,6 +1505,60 @@ def _media_downloader_site_args(url: str) -> list[str]:
             "Sec-Fetch-Site:same-site",
         ]
     return []
+
+
+def _bilibili_referer(url: str) -> str:
+    match = re.search(r"/video/([^/?#]+)", url, re.IGNORECASE)
+    if match:
+        return f"https://www.bilibili.com/video/{match.group(1)}/"
+    return "https://www.bilibili.com/"
+
+
+def _media_downloader_browser_args(downloader_command: tuple[str, ...], url: str) -> list[str]:
+    if not _is_bilibili_url(url):
+        return []
+
+    impersonate_target = _best_impersonate_target(downloader_command)
+    if impersonate_target:
+        return ["--impersonate", impersonate_target]
+
+    return [
+        "--user-agent",
+        (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        ),
+    ]
+
+
+@functools.lru_cache(maxsize=8)
+def _best_impersonate_target(downloader_command: tuple[str, ...]) -> str:
+    try:
+        process = subprocess.run(
+            [*downloader_command, "--list-impersonate-targets"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+    if process.returncode != 0:
+        return ""
+
+    target_output = process.stdout or ""
+    candidates = [
+        ("chrome-136:macos-15", "Chrome-136", "Macos-15"),
+        ("chrome-133:macos-15", "Chrome-133", "Macos-15"),
+        ("chrome-131:macos-14", "Chrome-131", "Macos-14"),
+        ("chrome-124:macos-14", "Chrome-124", "Macos-14"),
+    ]
+    for target, client, os_name in candidates:
+        if client in target_output and os_name in target_output:
+            return target
+
+    return "chrome" if "Chrome-" in target_output and "unavailable" not in target_output else ""
 
 
 def _media_downloader_cookie_args() -> list[str]:
@@ -1520,9 +1579,10 @@ def _media_downloader_failure_hint(url: str, detail: str) -> str:
     host = parsed.netloc.lower()
     if ("bilibili.com" in host or "b23.tv" in host) and "HTTP Error 412" in detail:
         return (
-            " BiliBili rejected the metadata request. If this video still fails, update yt-dlp "
-            "or provide logged-in cookies in [webui.yt-dlp] with cookies = \"/path/to/cookies.txt\" "
-            "or cookies_from_browser = \"chrome\"."
+            " BiliBili rejected the metadata request. AirType sends BiliBili browser-style headers "
+            "and uses yt-dlp --impersonate when available. If this still fails, update yt-dlp, install "
+            "a compatible curl_cffi package for impersonation, or provide logged-in cookies in "
+            "[webui.yt-dlp] with cookies = \"/path/to/cookies.txt\" or cookies_from_browser = \"chrome\"."
         )
     return ""
 
