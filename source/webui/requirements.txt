@@ -3,4 +3,5 @@ uvicorn==0.32.0
 python-multipart==0.0.9
 pydantic==2.9.0
 yt-dlp
+curl_cffi>=0.10,<0.15
 opencc-python-reimplemented
