@@ -1374,6 +1374,375 @@
             display: none;
         }
 
+        /* 2026 workspace refresh: make the UI feel like an app, not a settings sheet. */
+        :root {
+            --bg: #eef2f7;
+            --panel: #ffffff;
+            --panel-2: #f7f9fc;
+            --line: #d8e0eb;
+            --muted: #647084;
+            --text: #172033;
+            --soft: #445064;
+            --purple: #315fdc;
+            --purple-2: #244fbd;
+            --purple-soft: rgba(49, 95, 220, 0.11);
+            --purple-chrome: #f5f7fb;
+            --purple-chrome-2: #ffffff;
+            --purple-line: #d8e0eb;
+            --purple-muted: #647084;
+            --button: #ffffff;
+            --green: #16a34a;
+            --blue: #2563eb;
+            --red: #dc2626;
+            --yellow: #d97706;
+        }
+
+        body {
+            background:
+                radial-gradient(circle at 18% -10%, rgba(37, 99, 235, 0.12), transparent 28%),
+                linear-gradient(180deg, #f8fafc 0%, var(--bg) 100%);
+        }
+
+        .app-shell {
+            grid-template-columns: 228px minmax(0, 1fr);
+            grid-template-rows: 58px minmax(0, 1fr);
+            background: transparent;
+        }
+
+        .titlebar {
+            padding: 0 22px;
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(18px);
+            border-bottom: 1px solid var(--line);
+        }
+
+        .traffic {
+            display: none;
+        }
+
+        .project-name {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text);
+            font-size: 17px;
+            font-weight: 850;
+        }
+
+        .project-name::before {
+            content: "A";
+            width: 30px;
+            height: 30px;
+            display: grid;
+            place-items: center;
+            color: white;
+            background: linear-gradient(135deg, #315fdc, #12a5a5);
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 900;
+        }
+
+        .sidebar {
+            align-items: stretch;
+            padding: 18px 14px;
+            gap: 18px;
+            background: rgba(255, 255, 255, 0.72);
+            border-right: 1px solid var(--line);
+        }
+
+        .nav {
+            gap: 8px;
+        }
+
+        .nav::before {
+            content: "Workspace";
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 850;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            padding: 0 10px 4px;
+        }
+
+        .nav-item,
+        .settings {
+            width: 100%;
+            min-height: 42px;
+            grid-template-columns: 22px 1fr;
+            justify-items: start;
+            align-items: center;
+            gap: 10px;
+            padding: 0 12px;
+            border-radius: 8px;
+            color: var(--soft);
+            font-size: 13px;
+            font-weight: 750;
+        }
+
+        .nav-item:hover,
+        .settings:hover {
+            background: #eef3fb;
+            color: var(--text);
+        }
+
+        .nav-item.active,
+        .settings.active {
+            color: var(--purple-2);
+            background: #eaf0ff;
+            box-shadow: inset 3px 0 0 var(--purple-2);
+        }
+
+        .nav-item svg,
+        .settings svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        .workspace {
+            grid-column: 2;
+            grid-row: 2;
+            padding: 18px;
+            background: transparent;
+        }
+
+        .content,
+        .settings-page {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.88);
+            box-shadow: 0 18px 50px rgba(31, 42, 68, 0.08);
+        }
+
+        .content {
+            padding: 16px;
+        }
+
+        #transcriptPage {
+            grid-template-rows: auto minmax(0, 1fr);
+            gap: 14px;
+        }
+
+        .drop-zone {
+            padding: 16px;
+            background: linear-gradient(180deg, #ffffff, #f8fbff);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+        }
+
+        .drop-title {
+            font-size: 18px;
+            letter-spacing: 0;
+        }
+
+        .drop-copy {
+            max-width: 58ch;
+        }
+
+        .toolbar-btn,
+        .link-btn {
+            min-height: 34px;
+            border-radius: 7px;
+            transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+        }
+
+        .toolbar-btn:hover,
+        .link-btn:hover {
+            transform: translateY(-1px);
+        }
+
+        .toolbar-btn.primary {
+            background: var(--purple);
+            border-color: var(--purple);
+            box-shadow: 0 8px 22px rgba(49, 95, 220, 0.22);
+        }
+
+        .toolbar-btn.danger {
+            color: #991b1b;
+            border-color: #fecaca;
+            background: #fff1f2;
+        }
+
+        .transcript-workbench {
+            grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+            gap: 16px;
+        }
+
+        .transcript-side-panel,
+        .transcript-review-panel,
+        .settings-panel {
+            background: #ffffff;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            box-shadow: 0 1px 2px rgba(31, 42, 68, 0.04);
+        }
+
+        .transcript-side-panel {
+            padding: 16px;
+        }
+
+        .record-list {
+            gap: 10px;
+        }
+
+        .record-item {
+            position: relative;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 10px;
+            padding: 11px;
+            background: #ffffff;
+            border-color: var(--line);
+            cursor: pointer;
+        }
+
+        .record-item:hover {
+            border-color: #b9c7db;
+            background: #f8fbff;
+        }
+
+        .record-item.active {
+            background: #eef4ff;
+            border-color: #9eb7fb;
+            box-shadow: inset 3px 0 0 var(--purple-2);
+        }
+
+        .record-main {
+            min-width: 0;
+        }
+
+        .record-actions {
+            display: flex;
+            gap: 4px;
+            opacity: 0.35;
+        }
+
+        .record-item:hover .record-actions,
+        .record-item.active .record-actions {
+            opacity: 1;
+        }
+
+        .record-action {
+            width: 28px;
+            height: 28px;
+            display: grid;
+            place-items: center;
+            border: 1px solid transparent;
+            border-radius: 7px;
+            color: var(--muted);
+            background: transparent;
+            cursor: pointer;
+            font-weight: 850;
+        }
+
+        .record-action:hover {
+            color: var(--text);
+            border-color: var(--line);
+            background: #ffffff;
+        }
+
+        .record-action.danger:hover {
+            color: #991b1b;
+            border-color: #fecaca;
+            background: #fff1f2;
+        }
+
+        .media-player-card {
+            padding: 14px 16px;
+            background: #ffffff;
+        }
+
+        .player-heading {
+            align-items: center;
+        }
+
+        .player-heading h2 {
+            font-size: 20px;
+        }
+
+        .segment {
+            grid-template-columns: minmax(132px, 176px) minmax(0, 1fr);
+            border-radius: 8px;
+            padding: 10px 12px;
+        }
+
+        .segment-text {
+            white-space: normal;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+
+        .segment.active .segment-text {
+            -webkit-line-clamp: unset;
+        }
+
+        .settings-page {
+            padding: 22px;
+        }
+
+        .settings-header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 18px;
+        }
+
+        .settings-header h1 {
+            font-size: 24px;
+        }
+
+        .settings-grid {
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        }
+
+        .settings-panel {
+            padding: 18px;
+        }
+
+        .setting-field input,
+        .setting-field select,
+        .setting-field textarea,
+        .url-input {
+            background: #ffffff;
+            border-color: var(--line);
+        }
+
+        .setting-field input:focus,
+        .setting-field select:focus,
+        .setting-field textarea:focus {
+            border-color: #8ea8f7;
+            box-shadow: 0 0 0 3px rgba(49, 95, 220, 0.12);
+        }
+
+        .server-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            gap: 8px;
+        }
+
+        #imePage {
+            grid-template-rows: minmax(0, 1fr);
+        }
+
+        #imePage .results-panel {
+            height: 100%;
+            border-top: 0;
+            padding-top: 0;
+            grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+        }
+
+        #imePage .transcript-segments-panel {
+            min-height: 0;
+            overflow: auto;
+            padding: 16px;
+            background: #ffffff;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+
         @media (max-width: 980px) {
             body {
                 overflow: auto;
@@ -1385,7 +1754,46 @@
                 height: auto;
                 margin: 0;
                 border-radius: 0;
-                grid-template-columns: 68px 1fr;
+                grid-template-columns: 1fr;
+                grid-template-rows: auto auto minmax(0, 1fr);
+            }
+
+            .titlebar {
+                grid-column: 1;
+            }
+
+            .sidebar {
+                grid-column: 1;
+                grid-row: 2;
+                flex-direction: row;
+                align-items: center;
+                overflow-x: auto;
+            }
+
+            .nav {
+                flex-direction: row;
+                width: auto;
+            }
+
+            .nav::before {
+                display: none;
+            }
+
+            .nav-item,
+            .settings {
+                width: auto;
+                min-width: max-content;
+            }
+
+            .settings {
+                margin-top: 0;
+                margin-left: auto;
+            }
+
+            .workspace {
+                grid-column: 1;
+                grid-row: 3;
+                padding: 10px;
             }
 
             .topbar {
@@ -1442,6 +1850,11 @@
 
             .settings-grid {
                 grid-template-columns: 1fr;
+            }
+
+            .settings-header {
+                display: grid;
+                align-items: start;
             }
 
             .workspace {
@@ -1624,12 +2037,18 @@
             </div>
             <div class="settings-page view-hidden" id="settingsPage">
                 <div class="settings-header">
-                    <h1>Settings</h1>
-                    <p>Configure local transcription and local LLM defaults for this app.</p>
+                    <div>
+                        <h1>Settings</h1>
+                        <p>Configure local transcription and local LLM defaults for this app.</p>
+                    </div>
+                    <div class="settings-actions">
+                        <button class="toolbar-btn" id="resetSettingsButton" type="button">Reset</button>
+                        <button class="toolbar-btn primary" id="saveSettingsButton" type="button">Save settings</button>
+                    </div>
                 </div>
                 <div class="settings-grid">
                     <section class="settings-panel" id="whisperSettingsPanel">
-                        <h2>whipser-server</h2>
+                        <h2>whisper-server</h2>
                         <div class="setting-row">
                             <div class="setting-field">
                                 <label for="settingWhisperModelDir">Model directory</label>
@@ -1681,9 +2100,13 @@
                         <p>Reserved for summary, Ask AI, and later transcript post-processing workflows.</p>
                         <div class="setting-field">
                             <label for="settingLlmName">Name</label>
-                            <select id="settingLlmName">
-                                <option value="default">default</option>
-                            </select>
+                            <div class="server-row">
+                                <select id="settingLlmName">
+                                    <option value="default">default</option>
+                                </select>
+                                <button class="toolbar-btn" id="addLlmServerButton" type="button">Add</button>
+                                <button class="toolbar-btn danger" id="deleteLlmServerButton" type="button">Delete</button>
+                            </div>
                         </div>
                         <div class="setting-field">
                             <label for="settingLlmEndpoint">Endpoint</label>
@@ -1725,9 +2148,6 @@
                             <div class="llm-response" id="llmResponse">Local model responses will appear here.</div>
                         </div>
                     </section>
-                </div>
-                <div class="settings-actions">
-                    <button class="toolbar-btn" id="resetSettingsButton">Reset</button>
                 </div>
             </div>
         </main>
@@ -1860,6 +2280,7 @@
         let currentArticleText = "";
         let selectedImeRecordId = null;
         let contextRecord = null;
+        let contextRecordType = "transcript";
         let renameRecordTarget = null;
         let dropInProgress = false;
         let activeMedia = null;
@@ -1967,11 +2388,18 @@
                 const segmentCount = record.result?.segment_count ?? 0;
                 const status = record.status || "unknown";
                 item.innerHTML = `
-                    <strong>${escapeHtml(record.title || record.source?.name || "Untitled transcript")}</strong>
-                    <span>${escapeHtml(status)} · ${segmentCount} segments</span>
+                    <span class="record-main">
+                        <strong>${escapeHtml(recordTitle(record, "transcript"))}</strong>
+                        <span>${escapeHtml(status)} · ${segmentCount} segments</span>
+                    </span>
+                    <span class="record-actions" aria-label="Record actions">
+                        <span class="record-action" role="button" tabindex="0" data-action="rename" title="Rename">Edit</span>
+                        <span class="record-action danger" role="button" tabindex="0" data-action="delete" title="Delete">Del</span>
+                    </span>
                 `;
                 item.addEventListener("click", () => loadTranscriptRecord(record.job_id));
-                item.addEventListener("contextmenu", event => showRecordContextMenu(event, record));
+                item.addEventListener("contextmenu", event => showRecordContextMenu(event, record, "transcript"));
+                attachInlineRecordActions(item, record, "transcript");
                 recordList.appendChild(item);
             });
         }
@@ -1992,11 +2420,50 @@
                 item.type = "button";
                 const textLength = record.result?.text_length ?? 0;
                 item.innerHTML = `
-                    <strong>${escapeHtml(record.job_id || "IME record")}</strong>
-                    <span>${escapeHtml(record.status || "unknown")} · ${textLength} chars</span>
+                    <span class="record-main">
+                        <strong>${escapeHtml(recordTitle(record, "ime"))}</strong>
+                        <span>${escapeHtml(record.status || "unknown")} · ${textLength} chars</span>
+                    </span>
+                    <span class="record-actions" aria-label="IME record actions">
+                        <span class="record-action" role="button" tabindex="0" data-action="rename" title="Rename">Edit</span>
+                        <span class="record-action danger" role="button" tabindex="0" data-action="delete" title="Delete">Del</span>
+                    </span>
                 `;
                 item.addEventListener("click", () => loadImeRecord(record.job_id));
+                item.addEventListener("contextmenu", event => showRecordContextMenu(event, record, "ime"));
+                attachInlineRecordActions(item, record, "ime");
                 imeRecordList.appendChild(item);
+            });
+        }
+
+        function recordTitle(record, recordType = "transcript") {
+            if (record?.title) return record.title;
+            if (record?.source?.name) return record.source.name;
+            if (recordType === "ime") return record?.job_id || "IME record";
+            return "Untitled transcript";
+        }
+
+        function attachInlineRecordActions(item, record, recordType) {
+            item.querySelectorAll(".record-action").forEach(actionButton => {
+                actionButton.addEventListener("click", async event => {
+                    event.stopPropagation();
+                    const action = actionButton.dataset.action;
+                    try {
+                        if (action === "rename") {
+                            openRenameDialog(record, recordType);
+                        } else if (action === "delete") {
+                            await deleteRecord(record, recordType);
+                        }
+                    } catch (error) {
+                        showToast(error.message);
+                    }
+                });
+                actionButton.addEventListener("keydown", event => {
+                    if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        actionButton.click();
+                    }
+                });
             });
         }
 
@@ -2057,9 +2524,10 @@
             }
         }
 
-        function showRecordContextMenu(event, record) {
+        function showRecordContextMenu(event, record, recordType = "transcript") {
             event.preventDefault();
             contextRecord = record;
+            contextRecordType = recordType;
             recordContextMenu.hidden = false;
             recordContextMenu.style.left = `${event.clientX}px`;
             recordContextMenu.style.top = `${event.clientY}px`;
@@ -2068,6 +2536,7 @@
         function hideRecordContextMenu() {
             recordContextMenu.hidden = true;
             contextRecord = null;
+            contextRecordType = "transcript";
         }
 
         function shouldHideRecordContextMenu(event) {
@@ -2076,10 +2545,11 @@
                 !recordContextMenu.contains(event.target);
         }
 
-        function openRenameDialog(record) {
+        function openRenameDialog(record, recordType = "transcript") {
             renameRecordTarget = record;
-            const currentTitle = record.title || record.source?.name || "";
-            renameCurrentTitle.textContent = `Current title: ${currentTitle || "Untitled transcript"}`;
+            renameRecordTarget.recordType = recordType;
+            const currentTitle = recordTitle(record, recordType);
+            renameCurrentTitle.textContent = `Current title: ${currentTitle}`;
             renameTitleInput.value = currentTitle;
             renameDialog.hidden = false;
             requestAnimationFrame(() => {
@@ -2104,7 +2574,9 @@
             }
 
             const renamedRecordId = renameRecordTarget.job_id;
-            const response = await fetch(`/api/transcribe/records/${renamedRecordId}`, {
+            const recordType = renameRecordTarget.recordType || "transcript";
+            const suffix = recordType === "ime" ? "?record_type=ime" : "";
+            const response = await fetch(`/api/transcribe/records/${renamedRecordId}${suffix}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ title })
@@ -2117,19 +2589,28 @@
                 setTranscriptTitle(title);
                 fileName.textContent = title;
             }
+            if (selectedImeRecordId === renamedRecordId) {
+                loadImeRecord(renamedRecordId);
+            }
             closeRenameDialog();
-            await loadTranscriptRecords();
-            showToast("Title renamed");
+            if (recordType === "ime") {
+                await loadImeRecords();
+            } else {
+                await loadTranscriptRecords();
+            }
+            showToast("Record renamed");
         }
 
-        async function deleteRecord(record) {
-            if (!confirm(`Delete "${record.title || record.source?.name || "this transcript"}"?`)) return;
-            const response = await fetch(`/api/transcribe/records/${record.job_id}`, { method: "DELETE" });
+        async function deleteRecord(record, recordType = "transcript") {
+            const name = recordTitle(record, recordType);
+            if (!confirm(`Delete "${name}"?`)) return;
+            const suffix = recordType === "ime" ? "?record_type=ime" : "";
+            const response = await fetch(`/api/transcribe/records/${record.job_id}${suffix}`, { method: "DELETE" });
             if (!response.ok) {
                 const error = await response.json().catch(() => ({}));
-                throw new Error(error.detail || "Could not delete transcript");
+                throw new Error(error.detail || "Could not delete record");
             }
-            if (selectedRecordId === record.job_id) {
+            if (recordType === "transcript" && selectedRecordId === record.job_id) {
                 selectedRecordId = null;
                 setCurrentArticleText("");
                 segments = [];
@@ -2140,8 +2621,18 @@
                 setTranscriptTitle("");
                 clearMediaPlayer();
             }
-            await loadTranscriptRecords();
-            showToast("Transcript deleted");
+            if (recordType === "ime" && selectedImeRecordId === record.job_id) {
+                selectedImeRecordId = null;
+                imeSegmentsEl.innerHTML = `<div class="result-empty">IME record content will appear here.</div>`;
+                imeDebug.hidden = true;
+                imeDebug.innerHTML = "";
+            }
+            if (recordType === "ime") {
+                await loadImeRecords();
+            } else {
+                await loadTranscriptRecords();
+            }
+            showToast("Record deleted");
         }
 
         async function loadTranscriptRecord(jobId) {
@@ -2270,6 +2761,71 @@
             }
             return servers;
         }
+
+        function uniqueLlmServerName(baseName) {
+            const existing = new Set((appSettings.llm_servers || []).map(server => server.name));
+            let name = baseName || "local";
+            let suffix = 2;
+            while (existing.has(name)) {
+                name = `${baseName || "local"}-${suffix}`;
+                suffix += 1;
+            }
+            return name;
+        }
+
+        function addLlmServer() {
+            const rawName = prompt("New LLM server name", "local");
+            if (rawName === null) return;
+            const name = uniqueLlmServerName(rawName.trim() || "local");
+            const current = readSettingsFromForm();
+            const nextServer = normalizeLlmServer({
+                name,
+                provider: "llama.cpp",
+                endpoint: "http://127.0.0.1:8080",
+                model: "",
+                selected_model: "",
+                contextLength: 8192,
+                temperature: 0.4,
+                system: "",
+                models: []
+            });
+            saveSettings({
+                ...current,
+                llm: nextServer,
+                llm_servers: [...current.llm_servers, nextServer],
+                default_llm_server_name: name
+            }, { persist: false });
+            localModels = [];
+            showToast(`Added ${name}`);
+        }
+
+        function deleteLlmServer() {
+            const current = readSettingsFromForm();
+            const selectedName = current.default_llm_server_name;
+            const servers = current.llm_servers.filter(server => server.name !== selectedName);
+            if (!selectedName || current.llm_servers.length <= 1) {
+                showToast("Keep at least one LLM server");
+                return;
+            }
+            if (!confirm(`Delete LLM server "${selectedName}"?`)) return;
+            const nextServer = servers[0] || normalizeLlmServer(defaultSettings.llm);
+            saveSettings({
+                ...current,
+                llm: nextServer,
+                llm_servers: servers.length ? servers : [nextServer],
+                default_llm_server_name: nextServer.name
+            }, { persist: false });
+            localModels = [];
+            showToast(`Deleted ${selectedName}`);
+        }
+
+        async function saveSettingsFromForm() {
+            const settings = readSettingsFromForm();
+            const saved = await persistSettingsToServer(settings);
+            saveSettings(settings, { persist: false, markWhisperClean: true });
+            showToast(saved ? "Settings saved" : "Settings saved locally only");
+        }
+
         function markWhisperSettingsClean() {
             updateSaveSettingsButtonState();
         }
@@ -2329,6 +2885,10 @@
             document.getElementById("settingLlmTemperature").value = llm.temperature || 0.4;
             document.getElementById("settingLlmSystem").value = llm.system || "";
             languageSelect.value = whisper.language || "zh-tw";
+            const deleteServerButton = document.getElementById("deleteLlmServerButton");
+            if (deleteServerButton) {
+                deleteServerButton.disabled = llmServers.length <= 1;
+            }
             updateContextLengthHint();
             updateSaveSettingsButtonState();
         }
@@ -3275,6 +3835,9 @@
             updateSaveSettingsButtonState();
             showToast("Settings reset locally");
         });
+        document.getElementById("saveSettingsButton").addEventListener("click", saveSettingsFromForm);
+        document.getElementById("addLlmServerButton").addEventListener("click", addLlmServer);
+        document.getElementById("deleteLlmServerButton").addEventListener("click", deleteLlmServer);
         document.getElementById("loadLlmModelsButton").addEventListener("click", loadLocalModels);
         document.getElementById("sendLlmPromptButton").addEventListener("click", sendLocalPrompt);
         document.getElementById("testWhisperServerButton").addEventListener("click", testWhisperServer);
@@ -3300,13 +3863,14 @@
         recordContextMenu.addEventListener("click", async event => {
             const action = event.target?.dataset?.action;
             const record = contextRecord;
+            const recordType = contextRecordType;
             hideRecordContextMenu();
             if (!action || !record) return;
             try {
                 if (action === "rename") {
-                    openRenameDialog(record);
+                    openRenameDialog(record, recordType);
                 } else if (action === "delete") {
-                    await deleteRecord(record);
+                    await deleteRecord(record, recordType);
                 }
             } catch (error) {
                 showToast(error.message);
