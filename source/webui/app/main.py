@@ -1337,6 +1337,8 @@ def _preview_url_metadata(url: str) -> Dict[str, Any]:
     if not downloader_command:
         return {}
 
+    original_url = url
+    url = _resolve_media_url(url)
     command = downloader_command + [
         "--no-playlist",
         "--skip-download",
@@ -1363,7 +1365,12 @@ def _preview_url_metadata(url: str) -> Dict[str, Any]:
         except json.JSONDecodeError:
             continue
         if isinstance(metadata, dict):
-            return {"download_method": "yt-dlp-preview", "url": url, **metadata}
+            return {
+                "download_method": "yt-dlp-preview",
+                "url": original_url,
+                **({"resolved_url": url} if url != original_url else {}),
+                **metadata,
+            }
     return {}
 
 
@@ -1393,6 +1400,8 @@ def _download_media_page(url: str, destination: str) -> Dict[str, Any]:
             "Install WebUI Python dependencies into .venv with ./scripts/setup.sh."
         )
 
+    original_url = url
+    url = _resolve_media_url(url)
     with tempfile.TemporaryDirectory(prefix="airtype-url-media-") as work_dir:
         process = _run_media_downloader(
             downloader_command,
@@ -1402,7 +1411,7 @@ def _download_media_page(url: str, destination: str) -> Dict[str, Any]:
         )
         if process.returncode != 0:
             detail = (process.stderr or process.stdout).strip()
-            hint = _media_downloader_failure_hint(url, detail)
+            hint = _media_downloader_failure_hint(original_url, detail)
             raise RuntimeError(f"Could not download media URL with yt-dlp: {detail}{hint}")
 
         downloaded_files = [
@@ -1421,7 +1430,8 @@ def _download_media_page(url: str, destination: str) -> Dict[str, Any]:
         return {
             "download_method": "yt-dlp-audio",
             **metadata,
-            "url": url,
+            "url": original_url,
+            **({"resolved_url": url} if url != original_url else {}),
             "downloaded_path": destination,
         }
 
@@ -1483,6 +1493,81 @@ def _is_bilibili_url(url: str) -> bool:
     return "bilibili.com" in host or "b23.tv" in host
 
 
+def _resolve_media_url(url: str) -> str:
+    if not _is_b23_url(url):
+        return url
+
+    resolved_url = _resolve_b23_with_urllib(url) or _resolve_b23_with_curl(url)
+    return resolved_url if resolved_url and _is_bilibili_url(resolved_url) else url
+
+
+def _resolve_b23_with_urllib(url: str) -> str:
+    headers = _bilibili_browser_headers()
+    for method in ("HEAD", "GET"):
+        request = urllib.request.Request(url, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return response.geturl()
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
+            continue
+    return ""
+
+
+def _resolve_b23_with_curl(url: str) -> str:
+    curl = shutil.which("curl")
+    if not curl:
+        return ""
+
+    try:
+        process = subprocess.run(
+            [
+                curl,
+                "-L",
+                "-sS",
+                "-o",
+                os.devnull,
+                "-w",
+                "%{url_effective}",
+                "-A",
+                _bilibili_user_agent(),
+                "-H",
+                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "-H",
+                "Accept-Language: zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+    if process.returncode != 0:
+        return ""
+    return (process.stdout or "").strip()
+
+
+def _bilibili_browser_headers() -> Dict[str, str]:
+    return {
+        "User-Agent": _bilibili_user_agent(),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
+
+
+def _bilibili_user_agent() -> str:
+    return (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    )
+
+
+def _is_b23_url(url: str) -> bool:
+    return "b23.tv" in urllib.parse.urlparse(url).netloc.lower()
+
+
 def _media_downloader_site_args(url: str) -> list[str]:
     if _is_bilibili_url(url):
         referer = _bilibili_referer(url)
@@ -1524,11 +1609,7 @@ def _media_downloader_browser_args(downloader_command: tuple[str, ...], url: str
 
     return [
         "--user-agent",
-        (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/125.0.0.0 Safari/537.36"
-        ),
+        _bilibili_user_agent(),
     ]
 
 
