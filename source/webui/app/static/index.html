@@ -966,8 +966,9 @@
 
         .source-row {
             display: grid;
-            grid-template-columns: 1fr auto;
+            grid-template-columns: auto minmax(0, 1fr);
             gap: 8px;
+            align-items: center;
         }
 
         .url-input {
@@ -2068,12 +2069,7 @@
         }
 
         .nav::before {
-            content: "Menu";
-            color: var(--rose);
-            font-size: 17px;
-            letter-spacing: 0;
-            padding: 0 2px 4px;
-            text-transform: none;
+            display: none;
         }
 
         .nav-item,
@@ -2601,7 +2597,10 @@
                             <div class="drop-main">
                                 <div>
                                     <div class="drop-kicker">Import</div>
-                                    <div class="drop-title">Drop an audio or video file, or paste a media URL</div>
+                                    <div class="source-row">
+                                        <button class="toolbar-btn primary" id="transcribeUrlButton">Transcribe URL</button>
+                                        <input class="url-input" id="sourceUrl" type="url" placeholder="Paste media URL, YouTube, Bilibili, Shorts, Instagram, Threads, or a direct file link">
+                                    </div>
                                 </div>
                                 <div class="drop-actions">
                                     <label class="toolbar-btn primary" for="audioFile">Choose File</label>
@@ -2633,10 +2632,6 @@
                         </div>
                         <div class="progress-wrap" aria-label="Transcription progress">
                             <div class="progress-bar" id="progressBar"></div>
-                        </div>
-                        <div class="source-row">
-                            <input class="url-input" id="sourceUrl" type="url" placeholder="Paste media URL, YouTube, Bilibili, Shorts, Instagram, Threads, or a direct file link">
-                            <button class="toolbar-btn primary" id="transcribeUrlButton">Transcribe URL</button>
                         </div>
                     </div>
                 </section>
