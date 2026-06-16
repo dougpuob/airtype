@@ -1939,6 +1939,40 @@
                 min-height: calc(100vh - 86px);
             }
         }
+
+        @media (max-width: 640px) {
+            .segment,
+            .segment.active {
+                grid-template-columns: 1fr;
+                align-items: start;
+                gap: 4px;
+                padding: 9px 10px;
+            }
+
+            .segment-meta {
+                color: #8a94a3;
+                font-size: 10px;
+                font-weight: 500;
+                line-height: 1.2;
+                white-space: normal;
+                overflow: visible;
+                text-overflow: clip;
+            }
+
+            .segment-time,
+            .segment.active .segment-meta,
+            .segment.active .segment-time {
+                color: #8a94a3;
+            }
+
+            .segment-text {
+                font-size: 13px;
+                line-height: 1.45;
+                white-space: normal;
+                overflow: visible;
+                text-overflow: clip;
+            }
+        }
     </style>
 </head>
 <body>
