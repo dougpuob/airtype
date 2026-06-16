@@ -1004,6 +1004,28 @@
             justify-content: center;
         }
 
+        .status-copy {
+            flex: 1 1 220px;
+            min-width: 220px;
+            display: grid;
+            gap: 2px;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.35;
+        }
+
+        .status-copy strong {
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 800;
+        }
+
+        .status-copy span {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         .file-info {
             display: grid;
             grid-template-columns: 1fr;
@@ -2608,8 +2630,10 @@
                                 <div class="drop-actions">
                                     <label class="toolbar-btn primary" for="audioFile">Choose File</label>
                                     <button class="toolbar-btn primary" id="transcribeUrlButton">Transcribe</button>
-                                    <button class="toolbar-btn" id="clearTranscriptButton">Clear</button>
-                                    <span class="progress" id="progressText"></span>
+                                    <div class="status-copy" aria-live="polite">
+                                        <strong id="progressText">Ready</strong>
+                                        <span id="progressDetail">Paste a URL or choose a file to begin.</span>
+                                    </div>
                                 </div>
                             </div>
                             <div class="file-info" id="fileInfo">
@@ -2862,6 +2886,7 @@
         const sourceUrl = document.getElementById("sourceUrl");
         const transcribeUrlButton = document.getElementById("transcribeUrlButton");
         const progressText = document.getElementById("progressText");
+        const progressDetail = document.getElementById("progressDetail");
         const progressBar = document.getElementById("progressBar");
         const transcriptDebug = document.getElementById("transcriptDebug");
         const transcriptTitle = document.getElementById("transcriptTitle");
@@ -2927,6 +2952,8 @@
         let timer = null;
         let seconds = 24;
         let activeJobId = null;
+        let transcribePending = false;
+        let stopRequested = false;
         let selectedRecordId = null;
         let transcriptRecords = [];
         let currentArticleText = "";
@@ -3370,16 +3397,19 @@
                     progressBar.style.width = "";
                 }
             }
-            progressText.textContent = message ? `${normalized}% - ${message}` : "";
+            progressText.textContent = message ? `${normalized}% - ${message}` : "Ready";
+            progressDetail.textContent = message
+                ? (busy ? "Working on the current transcription." : "Status updated.")
+                : "Paste a URL or choose a file to begin.";
             dropZone.classList.toggle("busy", busy);
             updateTranscribeButtonState();
         }
 
         function updateTranscribeButtonState() {
-            const canCancel = Boolean(activeJobId);
-            transcribeUrlButton.textContent = canCancel ? "Cancel" : "Transcribe";
-            transcribeUrlButton.classList.toggle("danger", canCancel);
-            transcribeUrlButton.classList.toggle("primary", !canCancel);
+            const canStop = Boolean(activeJobId) || transcribePending;
+            transcribeUrlButton.textContent = canStop ? "Stop" : "Transcribe";
+            transcribeUrlButton.classList.toggle("danger", canStop);
+            transcribeUrlButton.classList.toggle("primary", !canStop);
         }
 
         function loadSettings() {
@@ -4291,6 +4321,11 @@
             const job = await response.json();
             selectedRecordId = job.job_id;
             loadTranscriptRecords();
+            if (stopRequested) {
+                activeJobId = job.job_id;
+                await cancelActiveJob();
+                return;
+            }
             await watchJob(job.job_id);
         }
 
@@ -4601,7 +4636,11 @@
         recordList.addEventListener("wheel", handleRecordListWheel, { passive: false });
         historySearchInput.addEventListener("input", renderTranscriptRecords);
         async function cancelActiveJob() {
-            if (!activeJobId) return;
+            stopRequested = true;
+            if (!activeJobId) {
+                setProgress(0, "Stop requested...", true, true);
+                return;
+            }
             const jobId = activeJobId;
             setProgress(100, "Stopping...", true, true);
             try {
@@ -4610,34 +4649,32 @@
                 showToast("Could not stop job");
             } finally {
                 activeJobId = null;
+                transcribePending = false;
+                stopRequested = false;
                 setProgress(100, "Stopped by user", false);
             }
         }
 
         transcribeUrlButton.addEventListener("click", async () => {
             try {
-                if (activeJobId) {
+                if (activeJobId || transcribePending) {
                     await cancelActiveJob();
                     return;
                 }
+                transcribePending = true;
+                stopRequested = false;
+                updateTranscribeButtonState();
                 await transcribeUrl();
             } catch (error) {
                 showToast(error.message);
                 setProgress(0, error.message, false);
+            } finally {
+                if (!activeJobId) {
+                    transcribePending = false;
+                    stopRequested = false;
+                    updateTranscribeButtonState();
+                }
             }
-        });
-        document.getElementById("clearTranscriptButton").addEventListener("click", () => {
-            activeJobId = null;
-            selectedRecordId = null;
-            setCurrentArticleText("");
-            segments = [];
-            selectedIndex = 0;
-            setProgress(0, "", false);
-            setSourceInfo("", null, "", "");
-            setTranscriptTitle("");
-            clearMediaPlayer();
-            renderSegments();
-            showToast("Transcript cleared");
         });
         document.querySelectorAll("#settingsPage input:not([readonly]), #settingsPage select, #settingsPage textarea").forEach(control => {
             control.addEventListener("input", updateSaveSettingsButtonState);
