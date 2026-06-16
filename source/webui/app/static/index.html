@@ -972,7 +972,7 @@
 
         .url-input {
             min-width: 0;
-            height: 30px;
+            height: 34px;
             color: var(--text);
             background: #ffffff;
             border: 1px solid var(--line);
@@ -1003,6 +1003,13 @@
             grid-template-columns: 1fr;
             gap: 6px;
             width: 100%;
+        }
+
+        .file-detail-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 6px;
+            min-width: 0;
         }
 
         .file-chip {
@@ -2030,7 +2037,7 @@
                         <div class="drop-layout">
                             <div class="drop-main">
                                 <div>
-                                    <div class="drop-kicker">Import media</div>
+                                    <div class="drop-kicker">Import</div>
                                     <div class="drop-title">Drop an audio or video file, or paste a media URL</div>
                                 </div>
                                 <div class="drop-actions">
@@ -2046,12 +2053,18 @@
                                     <strong id="fileName">No file selected</strong>
                                 </div>
                                 <div class="file-chip">
-                                    <span>Size</span>
-                                    <strong id="fileSize">--</strong>
+                                    <span>URL</span>
+                                    <strong id="fileSource">--</strong>
                                 </div>
-                                <div class="file-chip">
-                                    <span>Type</span>
-                                    <strong id="fileType">--</strong>
+                                <div class="file-detail-row">
+                                    <div class="file-chip">
+                                        <span>Size</span>
+                                        <strong id="fileSize">--</strong>
+                                    </div>
+                                    <div class="file-chip">
+                                        <span>Type</span>
+                                        <strong id="fileType">--</strong>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -2060,7 +2073,7 @@
                         </div>
                         <div class="source-row">
                             <input class="url-input" id="sourceUrl" type="url" placeholder="Paste media URL, YouTube, Bilibili, Shorts, Instagram, Threads, or a direct file link">
-                            <button class="toolbar-btn" id="transcribeUrlButton">Transcribe URL</button>
+                            <button class="toolbar-btn primary" id="transcribeUrlButton">Transcribe URL</button>
                         </div>
                     </div>
                 </section>
@@ -2076,7 +2089,7 @@
                         <section class="media-player-card" id="mediaPlayerCard">
                             <div class="player-heading">
                                 <div>
-                                    <div class="drop-kicker">Viewer & Player</div>
+                                    <div class="drop-kicker">Player</div>
                                     <h2 id="transcriptTitle" hidden>Transcript</h2>
                                 </div>
                                 <div class="player-actions">
@@ -2303,6 +2316,7 @@
         const renameCurrentTitle = document.getElementById("renameCurrentTitle");
         const cancelRenameButton = document.getElementById("cancelRenameButton");
         const fileName = document.getElementById("fileName");
+        const fileSource = document.getElementById("fileSource");
         const fileSize = document.getElementById("fileSize");
         const fileType = document.getElementById("fileType");
         const mediaPlayerCard = document.getElementById("mediaPlayerCard");
@@ -2742,7 +2756,7 @@
                 selectedIndex = 0;
                 renderTranscriptDebug(null);
                 renderSegments();
-                setSourceInfo("", null, "");
+                setSourceInfo("", null, "", "");
                 setTranscriptTitle("");
                 clearMediaPlayer();
             }
@@ -2774,7 +2788,7 @@
                 setCurrentArticleText(record.article?.text || "");
                 const title = record.title || record.source?.name || "Transcript";
                 setTranscriptTitle(title);
-                setSourceInfo(title, record.source?.size ?? null, record.source?.type || "record");
+                setSourceInfo(title, record.source?.size ?? null, record.source?.type || "record", record.source?.url || record.source?.path || "Saved record");
                 loadRecordMedia(record);
                 applyTranscriptResult(record.transcript || {});
                 loadTranscriptRecords();
@@ -3324,8 +3338,11 @@
             }
         }
 
-        function setSourceInfo(name, size, type) {
+        function setSourceInfo(name, size, type, source) {
             fileName.textContent = name || "No file selected";
+            if (arguments.length >= 4) {
+                fileSource.textContent = source || "--";
+            }
             fileSize.textContent = typeof size === "number" ? formatBytes(size) : "--";
             fileType.textContent = type || "--";
         }
@@ -3564,11 +3581,11 @@
             showToast("Segments regenerated");
         }
 
-        async function transcribeBlob(blob, filename = "recording.webm") {
+        async function transcribeBlob(blob, filename = "recording.webm", sourceLabel = "Selected file") {
             selectedRecordId = null;
             setCurrentArticleText("");
             setTranscriptTitle(filename);
-            setSourceInfo(filename, blob.size, blob.type || "media");
+            setSourceInfo(filename, blob.size, blob.type || "media", sourceLabel);
             setLocalMediaSource(blob, filename);
             const form = new FormData();
             form.append("file", blob, filename);
@@ -3593,7 +3610,7 @@
             setCurrentArticleText("");
             const urlTitle = url.split("/").pop() || url;
             setTranscriptTitle(urlTitle);
-            setSourceInfo(urlTitle, null, "remote url");
+            setSourceInfo(urlTitle, null, "remote url", url);
             setProgress(2, "Starting URL job...", true, true);
             showToast("URL job started");
             const endpoint = activeWhisperEndpoint();
@@ -3663,7 +3680,12 @@
                         loadTranscriptRecords();
                     }
                     displayedJobSourceInfo = jobSourceInfo;
-                    setSourceInfo(jobTitle, job.source_size, job.source_type || "remote url");
+                    const jobSource = job.source_metadata?.webpage_url || job.source_metadata?.url || job.source_url || "";
+                    if (jobSource) {
+                        setSourceInfo(jobTitle, job.source_size, job.source_type || "remote url", jobSource);
+                    } else {
+                        setSourceInfo(jobTitle, job.source_size, job.source_type || "remote url");
+                    }
                 }
                 if (Array.isArray(job.partial_segments) && job.partial_segments.length) {
                     updatePartialSegments(job.partial_segments);
@@ -3817,7 +3839,7 @@
                         return;
                     }
                     try {
-                        await transcribeBlob(new Blob(chunks, { type: "audio/webm" }));
+                        await transcribeBlob(new Blob(chunks, { type: "audio/webm" }), "recording.webm", "Recorded audio");
                     } catch (error) {
                         showToast(error.message);
                     }
@@ -3852,7 +3874,7 @@
             const file = audioFile.files[0];
             if (!file) return;
             try {
-                await transcribeBlob(file, file.name);
+                await transcribeBlob(file, file.name, "Selected file");
             } catch (error) {
                 showToast(error.message);
                 setProgress(0, error.message, false);
@@ -3881,7 +3903,7 @@
             if (!file) return;
             dropInProgress = true;
             try {
-                await transcribeBlob(file, file.name);
+                await transcribeBlob(file, file.name, "Dropped file");
             } catch (error) {
                 showToast(error.message);
                 setProgress(0, error.message, false);
@@ -3949,7 +3971,7 @@
             segments = [];
             selectedIndex = 0;
             setProgress(0, "", false);
-            setSourceInfo("", null, "");
+            setSourceInfo("", null, "", "");
             setTranscriptTitle("");
             clearMediaPlayer();
             renderSegments();
