@@ -2498,7 +2498,7 @@ def _run_url_transcription_job(
         if not job or not job.get("result"):
             return
 
-        _update_job(job_id, status="running", progress=96, message="Writing article with Local LLM")
+        _update_job(job_id, status="running", progress=96, message="Requesting Local LLM article")
         record = _record_data(job_id, transcription_jobs[job_id])
         try:
             article = _generate_transcription_article(record)
