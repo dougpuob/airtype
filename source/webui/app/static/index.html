@@ -966,21 +966,21 @@
 
         .source-row {
             display: grid;
-            grid-template-columns: auto minmax(0, 1fr);
-            gap: 8px;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 10px;
             align-items: center;
         }
 
         .url-input {
             min-width: 0;
-            height: 34px;
+            height: 40px;
             color: var(--text);
             background: #ffffff;
             border: 1px solid var(--line);
             border-radius: 8px;
-            padding: 0 10px;
+            padding: 0 12px;
             outline: 0;
-            font-size: 12px;
+            font-size: 13px;
         }
 
         .url-input:focus {
@@ -995,8 +995,13 @@
         .drop-actions {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
             flex-wrap: wrap;
+        }
+
+        .drop-actions .toolbar-btn {
+            min-width: 104px;
+            justify-content: center;
         }
 
         .file-info {
@@ -2596,16 +2601,14 @@
                         <div class="drop-layout">
                             <div class="drop-main">
                                 <div>
-                                    <div class="drop-kicker">Import</div>
                                     <div class="source-row">
-                                        <button class="toolbar-btn primary" id="transcribeUrlButton">Transcribe URL</button>
                                         <input class="url-input" id="sourceUrl" type="url" placeholder="Paste media URL, YouTube, Bilibili, Shorts, Instagram, Threads, or a direct file link">
                                     </div>
                                 </div>
                                 <div class="drop-actions">
                                     <label class="toolbar-btn primary" for="audioFile">Choose File</label>
-                                    <button class="toolbar-btn danger" id="stopJobButton" hidden>Stop</button>
-                                    <button class="toolbar-btn" id="clearTranscriptButton">Clear Transcript</button>
+                                    <button class="toolbar-btn primary" id="transcribeUrlButton">Transcribe</button>
+                                    <button class="toolbar-btn" id="clearTranscriptButton">Clear</button>
                                     <span class="progress" id="progressText"></span>
                                 </div>
                             </div>
@@ -2629,9 +2632,6 @@
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="progress-wrap" aria-label="Transcription progress">
-                            <div class="progress-bar" id="progressBar"></div>
                         </div>
                     </div>
                 </section>
@@ -2860,9 +2860,9 @@
         const currentTime = document.getElementById("currentTime");
         const dropZone = document.getElementById("dropZone");
         const sourceUrl = document.getElementById("sourceUrl");
+        const transcribeUrlButton = document.getElementById("transcribeUrlButton");
         const progressText = document.getElementById("progressText");
         const progressBar = document.getElementById("progressBar");
-        const stopJobButton = document.getElementById("stopJobButton");
         const transcriptDebug = document.getElementById("transcriptDebug");
         const transcriptTitle = document.getElementById("transcriptTitle");
         const recordList = document.getElementById("recordList");
@@ -3362,15 +3362,24 @@
 
         function setProgress(percent, message, busy = false, indeterminate = false) {
             const normalized = Math.max(0, Math.min(100, Number(percent) || 0));
-            progressBar.classList.toggle("indeterminate", indeterminate);
-            if (!indeterminate) {
-                progressBar.style.width = `${normalized}%`;
-            } else {
-                progressBar.style.width = "";
+            if (progressBar) {
+                progressBar.classList.toggle("indeterminate", indeterminate);
+                if (!indeterminate) {
+                    progressBar.style.width = `${normalized}%`;
+                } else {
+                    progressBar.style.width = "";
+                }
             }
             progressText.textContent = message ? `${normalized}% - ${message}` : "";
             dropZone.classList.toggle("busy", busy);
-            stopJobButton.hidden = !busy || !activeJobId;
+            updateTranscribeButtonState();
+        }
+
+        function updateTranscribeButtonState() {
+            const canCancel = Boolean(activeJobId);
+            transcribeUrlButton.textContent = canCancel ? "Cancel" : "Transcribe";
+            transcribeUrlButton.classList.toggle("danger", canCancel);
+            transcribeUrlButton.classList.toggle("primary", !canCancel);
         }
 
         function loadSettings() {
@@ -4309,7 +4318,7 @@
 
         async function watchJob(jobId) {
             activeJobId = jobId;
-            stopJobButton.hidden = false;
+            updateTranscribeButtonState();
             let displayedJobTitle = "";
             let displayedJobSourceInfo = "";
             while (activeJobId === jobId) {
@@ -4358,23 +4367,21 @@
                     applyTranscriptResult(job.result || {});
                     await loadTranscriptRecord(jobId);
                     loadTranscriptRecords();
-                    setProgress(100, "Transcript ready", false);
                     activeJobId = null;
-                    stopJobButton.hidden = true;
+                    setProgress(100, "Transcript ready", false);
                     showToast("Transcript updated");
                     return;
                 }
 
                 if (job.status === "failed") {
                     activeJobId = null;
-                    stopJobButton.hidden = true;
+                    updateTranscribeButtonState();
                     loadTranscriptRecords();
                     throw new Error(job.error || "Transcription failed");
                 }
 
                 if (job.status === "cancelled") {
                     activeJobId = null;
-                    stopJobButton.hidden = true;
                     setProgress(100, "Stopped by user", false);
                     loadTranscriptRecords();
                     showToast("Transcription stopped");
@@ -4593,15 +4600,7 @@
         transcriptScrollPanel.addEventListener("wheel", handleTranscriptPanelWheel, { passive: false });
         recordList.addEventListener("wheel", handleRecordListWheel, { passive: false });
         historySearchInput.addEventListener("input", renderTranscriptRecords);
-        document.getElementById("transcribeUrlButton").addEventListener("click", async () => {
-            try {
-                await transcribeUrl();
-            } catch (error) {
-                showToast(error.message);
-                setProgress(0, error.message, false);
-            }
-        });
-        stopJobButton.addEventListener("click", async () => {
+        async function cancelActiveJob() {
             if (!activeJobId) return;
             const jobId = activeJobId;
             setProgress(100, "Stopping...", true, true);
@@ -4611,8 +4610,20 @@
                 showToast("Could not stop job");
             } finally {
                 activeJobId = null;
-                stopJobButton.hidden = true;
                 setProgress(100, "Stopped by user", false);
+            }
+        }
+
+        transcribeUrlButton.addEventListener("click", async () => {
+            try {
+                if (activeJobId) {
+                    await cancelActiveJob();
+                    return;
+                }
+                await transcribeUrl();
+            } catch (error) {
+                showToast(error.message);
+                setProgress(0, error.message, false);
             }
         });
         document.getElementById("clearTranscriptButton").addEventListener("click", () => {
