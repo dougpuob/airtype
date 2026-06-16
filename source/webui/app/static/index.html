@@ -1979,20 +1979,35 @@
 
         .sidebar-brand {
             display: grid;
-            grid-template-columns: 56px minmax(0, 1fr);
+            grid-template-columns: 64px minmax(0, 1fr);
             align-items: center;
-            gap: 12px;
+            gap: 14px;
             padding-bottom: 18px;
             border-bottom: 1px solid var(--line);
         }
 
         .sidebar-logo {
-            width: 56px;
-            height: 56px;
-            padding: 9px;
-            border-radius: 16px;
-            background: linear-gradient(135deg, var(--rose), #f56d7f);
-            box-shadow: 0 16px 30px rgba(236, 100, 117, 0.32);
+            width: 64px;
+            height: 64px;
+            display: grid;
+            place-items: center;
+            color: #ffffff;
+            border: 3px solid #ffffff;
+            border-radius: 50%;
+            background:
+                radial-gradient(circle at 50% 34%, #ffd3dc 0 11px, transparent 12px),
+                radial-gradient(circle at 50% 82%, #ffffff 0 21px, transparent 22px),
+                linear-gradient(135deg, var(--rose), #6864e8);
+            box-shadow: 0 16px 30px rgba(236, 100, 117, 0.24);
+        }
+
+        .sidebar-logo::before {
+            content: "D";
+            position: relative;
+            z-index: 1;
+            margin-top: -3px;
+            font-size: 25px;
+            font-weight: 900;
         }
 
         .sidebar-brand strong,
@@ -2420,17 +2435,21 @@
             }
 
             .sidebar-brand {
-                grid-template-columns: 36px minmax(0, 1fr);
+                grid-template-columns: 42px minmax(0, 1fr);
                 min-width: 180px;
                 padding: 0;
                 border-bottom: 0;
             }
 
             .sidebar-logo {
-                width: 36px;
-                height: 36px;
+                width: 42px;
+                height: 42px;
                 border-radius: 10px;
-                padding: 6px;
+                border-width: 2px;
+            }
+
+            .sidebar-logo::before {
+                font-size: 17px;
             }
         }
 
@@ -2489,10 +2508,10 @@
 
         <aside class="sidebar">
             <div class="sidebar-brand">
-                <img class="sidebar-logo" src="/app/favicon.svg" alt="" aria-hidden="true">
+                <div class="sidebar-logo" aria-hidden="true"></div>
                 <div>
-                    <strong>AirType</strong>
-                    <span>Speech Studio</span>
+                    <strong>Doug</strong>
+                    <span>Profile</span>
                 </div>
             </div>
             <div class="project-card">
