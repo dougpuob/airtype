@@ -3384,6 +3384,10 @@
             return "--";
         }
 
+        function formatCount(value) {
+            return Number(value).toLocaleString("en-US");
+        }
+
         function formatSegmentPosition(details, partialSegments) {
             const lastSegment = partialSegments.length ? partialSegments[partialSegments.length - 1] : null;
             const end = typeof details.last_segment_end === "number"
@@ -3406,15 +3410,14 @@
                 : partialSegments.length;
             const parts = [formatJobStage(job.status, job.message)];
             if (/requesting/i.test(job.message || "")) {
-                parts.push("Requesting");
+                const chars = typeof details.article_request_chars === "number" ? details.article_request_chars : null;
+                parts.push(chars !== null ? `Requesting (${formatCount(chars)} chars)` : "Requesting");
             } else if (/waiting/i.test(job.message || "")) {
                 parts.push("Waiting");
             }
             if (job.status === "downloading") {
                 const downloaded = formatDownloadStatus(details, job.source_size);
                 if (downloaded !== "--") parts.push(downloaded);
-            } else if (typeof job.source_size === "number") {
-                parts.push(formatBytes(job.source_size));
             }
             if (segmentCount) parts.push(`${segmentCount} segments`);
             const position = formatSegmentPosition(details, partialSegments);
