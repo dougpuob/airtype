@@ -2050,20 +2050,20 @@
                             </div>
                             <div class="file-info" id="fileInfo">
                                 <div class="file-chip">
-                                    <span>File</span>
+                                    <span id="fileNameLabel">File</span>
                                     <strong id="fileName">No file selected</strong>
                                 </div>
                                 <div class="file-chip">
-                                    <span>Source</span>
+                                    <span id="fileSourceLabel">Source</span>
                                     <strong id="fileSource">--</strong>
                                 </div>
                                 <div class="file-detail-row">
                                     <div class="file-chip">
-                                        <span>Size</span>
+                                        <span id="fileSizeLabel">Size</span>
                                         <strong id="fileSize">--</strong>
                                     </div>
                                     <div class="file-chip">
-                                        <span>Type</span>
+                                        <span id="fileTypeLabel">Type</span>
                                         <strong id="fileType">--</strong>
                                     </div>
                                 </div>
@@ -2320,6 +2320,10 @@
         const fileSource = document.getElementById("fileSource");
         const fileSize = document.getElementById("fileSize");
         const fileType = document.getElementById("fileType");
+        const fileNameLabel = document.getElementById("fileNameLabel");
+        const fileSourceLabel = document.getElementById("fileSourceLabel");
+        const fileSizeLabel = document.getElementById("fileSizeLabel");
+        const fileTypeLabel = document.getElementById("fileTypeLabel");
         const mediaPlayerCard = document.getElementById("mediaPlayerCard");
         const playerEmptyState = document.getElementById("playerEmptyState");
         const mediaViewer = document.getElementById("mediaViewer");
@@ -3339,13 +3343,78 @@
             }
         }
 
+        function setFileInfoLabels(labels = {}) {
+            fileNameLabel.textContent = labels.name || "File";
+            fileSourceLabel.textContent = labels.source || "Source";
+            fileSizeLabel.textContent = labels.size || "Size";
+            fileTypeLabel.textContent = labels.type || "Type";
+        }
+
         function setSourceInfo(name, size, type, source) {
+            setFileInfoLabels();
             fileName.textContent = name || "No file selected";
             if (arguments.length >= 4) {
                 fileSource.textContent = source || "--";
             }
             fileSize.textContent = typeof size === "number" ? formatBytes(size) : "--";
             fileType.textContent = type || "--";
+        }
+
+        function formatJobStage(status, message) {
+            const normalized = (status || "").toLowerCase();
+            if (normalized === "downloading") return "Downloading";
+            if (normalized === "running" && /article/i.test(message || "")) return "Writing article";
+            if (normalized === "running") return "Transcribing";
+            if (normalized === "queued") return "Queued";
+            if (normalized === "completed") return "Completed";
+            if (normalized === "failed") return "Failed";
+            if (normalized === "cancelled") return "Stopped";
+            return status || "--";
+        }
+
+        function formatDownloadStatus(details, sourceSize) {
+            const downloaded = typeof details.downloaded_bytes === "number" ? details.downloaded_bytes : null;
+            const total = typeof details.total_bytes === "number" ? details.total_bytes : sourceSize;
+            if (downloaded !== null && typeof total === "number" && total > 0) {
+                return `${formatBytes(downloaded)} / ${formatBytes(total)}`;
+            }
+            if (downloaded !== null) return formatBytes(downloaded);
+            if (typeof total === "number" && total > 0) return formatBytes(total);
+            return "--";
+        }
+
+        function formatSegmentPosition(details, partialSegments) {
+            const lastSegment = partialSegments.length ? partialSegments[partialSegments.length - 1] : null;
+            const end = typeof details.last_segment_end === "number"
+                ? details.last_segment_end
+                : lastSegment?.end;
+            if (typeof end === "number") {
+                const duration = typeof details.duration === "number" ? details.duration : null;
+                return duration && duration > 0
+                    ? `${formatSeconds(end)} / ${formatSeconds(duration)}`
+                    : formatSeconds(end);
+            }
+            return "--";
+        }
+
+        function setJobInfo(job) {
+            const details = job.details || {};
+            const partialSegments = Array.isArray(job.partial_segments) ? job.partial_segments : [];
+            const segmentCount = typeof details.segment_count === "number"
+                ? details.segment_count
+                : partialSegments.length;
+            setFileInfoLabels({
+                name: "Stage",
+                source: job.status === "downloading" ? "Downloaded" : "File",
+                size: "Segments",
+                type: "Position"
+            });
+            fileName.textContent = formatJobStage(job.status, job.message);
+            fileSource.textContent = job.status === "downloading"
+                ? formatDownloadStatus(details, job.source_size)
+                : (typeof job.source_size === "number" ? formatBytes(job.source_size) : "--");
+            fileSize.textContent = `${segmentCount || 0}`;
+            fileType.textContent = formatSegmentPosition(details, partialSegments);
         }
 
         function setTranscriptTitle(title) {
@@ -3695,6 +3764,7 @@
                 if (Array.isArray(job.partial_segments) && job.partial_segments.length) {
                     updatePartialSegments(job.partial_segments);
                 }
+                setJobInfo(job);
                 const message = job.message || job.status;
                 const progress = job.progress || 0;
                 const waiting =

@@ -3,7 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1292,7 +1292,12 @@ def _settings_request_info(request_info: Dict[str, Any], options: Dict[str, Any]
     }
 
 
-def _download_url(url: str, destination: str, max_bytes: int = 2 * 1024 * 1024 * 1024) -> Dict[str, Any]:
+def _download_url(
+    url: str,
+    destination: str,
+    max_bytes: int = 2 * 1024 * 1024 * 1024,
+    progress_callback: Optional[Callable[[int, Optional[int]], None]] = None,
+) -> Dict[str, Any]:
     if _should_use_media_downloader(url):
         metadata = _download_media_page(url, destination)
         downloaded_path = metadata.get("downloaded_path") if isinstance(metadata.get("downloaded_path"), str) else destination
@@ -1307,6 +1312,7 @@ def _download_url(url: str, destination: str, max_bytes: int = 2 * 1024 * 1024 *
             content_type = response.headers.get("Content-Type", "")
             if content_type and not _is_supported_media(content_type, urllib.parse.urlparse(url).path):
                 return _download_media_page(url, destination)
+            total_bytes = _header_content_length(response.headers.get("Content-Length"))
 
             with open(destination, "wb") as output:
                 while True:
@@ -1317,6 +1323,8 @@ def _download_url(url: str, destination: str, max_bytes: int = 2 * 1024 * 1024 *
                     if downloaded > max_bytes:
                         raise ValueError("Remote file is larger than 2GB.")
                     output.write(chunk)
+                    if progress_callback:
+                        progress_callback(downloaded, total_bytes)
             return {
                 "download_method": "direct",
                 "title": _title_from_url_response(url, response.headers),
@@ -1327,6 +1335,14 @@ def _download_url(url: str, destination: str, max_bytes: int = 2 * 1024 * 1024 *
         if os.path.exists(destination):
             os.unlink(destination)
         return _download_media_page(url, destination)
+
+
+def _header_content_length(value: Optional[str]) -> Optional[int]:
+    try:
+        parsed = int(value or "")
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
 
 
 def _preview_url_metadata(url: str) -> Dict[str, Any]:
@@ -1940,6 +1956,7 @@ def _create_job(
         "source_size": source_size,
         "source_type": source_type,
         "source_metadata": None,
+        "details": {},
         "request": request_info or {},
         "job_dir": _job_dir(job_id, record_type),
         "source_path": None,
@@ -1965,6 +1982,7 @@ def _public_job(job: Dict[str, Any]) -> Dict[str, Any]:
         "source_size": job["source_size"],
         "source_type": job["source_type"],
         "source_metadata": job.get("source_metadata"),
+        "details": job.get("details") or {},
         "partial_segments": job["partial_segments"],
         "result": job["result"],
         "error": job["error"],
@@ -1979,6 +1997,13 @@ def _update_job(job_id: str, **updates: Any) -> None:
     job.update(updates)
     job["updated_at"] = datetime.now(timezone.utc).isoformat()
     _write_job_record(job_id)
+
+
+def _update_job_details(job_id: str, **updates: Any) -> None:
+    job = transcription_jobs[job_id]
+    details = dict(job.get("details") or {})
+    details.update({key: value for key, value in updates.items() if value is not None})
+    _update_job(job_id, details=details)
 
 
 def _update_job_source(job_id: str, source_path: str) -> None:
@@ -2132,6 +2157,7 @@ def _record_data(job_id: str, job: Dict[str, Any]) -> Dict[str, Any]:
             "metadata": job.get("source_metadata"),
         },
         "request": job.get("request") or {},
+        "details": job.get("details") or {},
         "result": {
             "language": result.get("language"),
             "duration": result.get("duration"),
@@ -2180,6 +2206,46 @@ def _metadata_title(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _metadata_file_size(metadata: Optional[Dict[str, Any]]) -> Optional[int]:
+    if not metadata:
+        return None
+
+    for key in ("filesize", "filesize_approx", "content_length"):
+        value = metadata.get(key)
+        if isinstance(value, (int, float)) and value > 0:
+            return int(value)
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    return None
+
+
+def _metadata_duration(metadata: Optional[Dict[str, Any]]) -> Optional[float]:
+    if not metadata:
+        return None
+
+    value = metadata.get("duration")
+    if isinstance(value, (int, float)) and value > 0:
+        return float(value)
+    if isinstance(value, str):
+        try:
+            parsed = float(value)
+        except ValueError:
+            return None
+        return parsed if parsed > 0 else None
+    return None
+
+
+def format_bytes(value: int) -> str:
+    size = float(max(0, value))
+    units = ("B", "KB", "MB", "GB")
+    unit_index = 0
+    while size >= 1024 and unit_index < len(units) - 1:
+        size /= 1024
+        unit_index += 1
+    precision = 0 if size >= 10 or unit_index == 0 else 1
+    return f"{size:.{precision}f} {units[unit_index]}"
 
 
 def _list_transcription_records(record_type: Optional[str] = None) -> list[Dict[str, Any]]:
@@ -2350,6 +2416,12 @@ def _run_url_transcription_job(
         _update_job(job_id, status="downloading", progress=3, message="Reading media title")
         preview_metadata = _preview_url_metadata(url)
         preview_title = _metadata_title(preview_metadata)
+        if preview_metadata:
+            _update_job_details(
+                job_id,
+                total_bytes=_metadata_file_size(preview_metadata),
+                duration=_metadata_duration(preview_metadata),
+            )
         if preview_title:
             _update_job(
                 job_id,
@@ -2363,9 +2435,34 @@ def _run_url_transcription_job(
         if _is_job_cancelled(job_id):
             return
         _update_job(job_id, status="downloading", progress=5, message="Downloading source URL")
-        metadata = _download_url(url, temp_path)
+
+        def on_download_progress(downloaded_bytes: int, total_bytes: Optional[int]) -> None:
+            if _is_job_cancelled(job_id):
+                return
+            percent = 5
+            if total_bytes and total_bytes > 0:
+                percent = max(5, min(35, 5 + round((downloaded_bytes / total_bytes) * 30)))
+            _update_job_details(
+                job_id,
+                downloaded_bytes=downloaded_bytes,
+                total_bytes=total_bytes,
+            )
+            _update_job(
+                job_id,
+                status="downloading",
+                progress=percent,
+                message=f"Downloading {format_bytes(downloaded_bytes)}",
+            )
+
+        metadata = _download_url(url, temp_path, progress_callback=on_download_progress)
         downloaded_path = metadata.get("downloaded_path") if isinstance(metadata.get("downloaded_path"), str) else temp_path
         metadata_title = _metadata_title(metadata)
+        if metadata:
+            _update_job_details(
+                job_id,
+                total_bytes=_metadata_file_size(metadata),
+                duration=_metadata_duration(metadata),
+            )
         if metadata_title:
             _update_job(
                 job_id,
@@ -2433,11 +2530,22 @@ def _run_transcription_job(
         def on_segment(segment: Dict[str, Any]) -> None:
             job = transcription_jobs[job_id]
             job["partial_segments"].append(segment)
+            segment_count = len(job["partial_segments"])
+            end_value = segment.get("end")
+            last_segment_end = float(end_value) if isinstance(end_value, (int, float)) else None
+            details = dict(job.get("details") or {})
+            details.update(
+                {
+                    "segment_count": segment_count,
+                    **({"last_segment_end": last_segment_end} if last_segment_end is not None else {}),
+                }
+            )
             _update_job(
                 job_id,
                 status="running",
-                progress=max(job["progress"], min(90, 45 + len(job["partial_segments"]) * 4)),
-                message=f"Transcribing segment {len(job['partial_segments'])}",
+                progress=max(job["progress"], min(90, 45 + segment_count * 4)),
+                message=f"Transcribing segment {segment_count}",
+                details=details,
             )
 
         result = transcriber.transcribe(
@@ -2455,6 +2563,11 @@ def _run_transcription_job(
             status="completed" if complete_on_success else "running",
             progress=100 if complete_on_success else 95,
             message="Transcript ready" if complete_on_success else "Transcript ready; preparing article",
+            details={
+                **(transcription_jobs[job_id].get("details") or {}),
+                "segment_count": len(result.get("segments") or []),
+                **({"duration": result.get("duration")} if isinstance(result.get("duration"), (int, float)) else {}),
+            },
             result={"success": True, **result},
         )
 
