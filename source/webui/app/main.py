@@ -2254,6 +2254,38 @@ def _metadata_duration(metadata: Optional[Dict[str, Any]]) -> Optional[float]:
     return None
 
 
+def _probe_media_duration(source_path: str) -> Optional[float]:
+    if not source_path or not os.path.exists(source_path):
+        return None
+
+    try:
+        process = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                source_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    if process.returncode != 0:
+        return None
+    try:
+        duration = float((process.stdout or "").strip())
+    except ValueError:
+        return None
+    return duration if duration > 0 else None
+
+
 def format_bytes(value: int) -> str:
     size = float(max(0, value))
     units = ("B", "KB", "MB", "GB")
@@ -2335,6 +2367,12 @@ def _article_user_prompt(record: Dict[str, Any], transcript_text: str) -> str:
     )
 
 
+def _article_request_payload(record: Dict[str, Any], transcript_text: str) -> tuple[str, str, int]:
+    system_prompt = _article_system_prompt()
+    user_prompt = _article_user_prompt(record, transcript_text)
+    return system_prompt, user_prompt, len(system_prompt) + len(user_prompt)
+
+
 def _generate_transcription_article(
     record: Dict[str, Any],
     existing: Optional[Dict[str, Any]] = None,
@@ -2349,13 +2387,14 @@ def _generate_transcription_article(
     if not llm.get("model"):
         raise ValueError("Local LLM model is not configured")
 
+    system_prompt, user_prompt, request_chars = _article_request_payload(record, transcript_text)
     article_text = _local_chat_response(
         LocalChatRequest(
             provider=llm.get("provider", "llama.cpp"),
             endpoint=llm.get("endpoint", "http://127.0.0.1:8080"),
             model=llm.get("model", ""),
-            system=_article_system_prompt(),
-            prompt=_article_user_prompt(record, transcript_text),
+            system=system_prompt,
+            prompt=user_prompt,
             temperature=float(llm.get("temperature", 0.4) or 0.4),
             context_length=int(llm.get("contextLength", 8192) or 8192),
         )
@@ -2369,6 +2408,7 @@ def _generate_transcription_article(
         "text": article_text,
         "model": llm.get("model"),
         "provider": llm.get("provider", "llama.cpp"),
+        "request_chars": request_chars,
         "created_at": existing.get("created_at") or now,
         "updated_at": now,
     }
@@ -2498,10 +2538,18 @@ def _run_url_transcription_job(
         if not job or not job.get("result"):
             return
 
-        _update_job(job_id, status="running", progress=96, message="Requesting Local LLM article")
         record = _record_data(job_id, transcription_jobs[job_id])
+        transcript_text = _record_transcript_text(record)
+        _, _, article_request_chars = _article_request_payload(record, transcript_text)
+        _update_job_details(job_id, article_request_chars=article_request_chars)
+        _update_job(
+            job_id,
+            status="running",
+            progress=96,
+            message=f"Requesting Local LLM article ({article_request_chars} chars)",
+        )
         try:
-            article = _generate_transcription_article(record)
+            article = _generate_transcription_article(record, transcript_text=transcript_text)
             transcription_jobs[job_id]["article"] = article
             _update_job(
                 job_id,
@@ -2534,6 +2582,9 @@ def _run_transcription_job(
     try:
         if _is_job_cancelled(job_id):
             return
+        duration = _probe_media_duration(source_path)
+        if duration is not None:
+            _update_job_details(job_id, duration=duration)
         _update_job(job_id, status="running", progress=10, message="Starting transcription worker")
 
         def on_progress(progress: int, message: str) -> None:
@@ -2557,10 +2608,14 @@ def _run_transcription_job(
                     **({"last_segment_end": last_segment_end} if last_segment_end is not None else {}),
                 }
             )
+            duration = details.get("duration")
+            audio_progress = None
+            if isinstance(duration, (int, float)) and duration > 0 and last_segment_end is not None:
+                audio_progress = 45 + round(min(1, max(0, last_segment_end / duration)) * 45)
             _update_job(
                 job_id,
                 status="running",
-                progress=max(job["progress"], min(90, 45 + segment_count * 4)),
+                progress=max(job["progress"], min(90, audio_progress if audio_progress is not None else 45 + segment_count * 4)),
                 message=f"Transcribing segment {segment_count}",
                 details=details,
             )
