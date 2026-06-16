@@ -2321,7 +2321,7 @@
         const fileSize = document.getElementById("fileSize");
         const fileType = document.getElementById("fileType");
         const fileNameLabel = document.getElementById("fileNameLabel");
-        const fileSourceLabel = document.getElementById("fileSourceLabel");
+        const fileSourceLabelEl = document.getElementById("fileSourceLabel");
         const fileSizeLabel = document.getElementById("fileSizeLabel");
         const fileTypeLabel = document.getElementById("fileTypeLabel");
         const mediaPlayerCard = document.getElementById("mediaPlayerCard");
@@ -3345,7 +3345,7 @@
 
         function setFileInfoLabels(labels = {}) {
             fileNameLabel.textContent = labels.name || "File";
-            fileSourceLabel.textContent = labels.source || "Source";
+            fileSourceLabelEl.textContent = labels.source || "Source";
             fileSizeLabel.textContent = labels.size || "Size";
             fileTypeLabel.textContent = labels.type || "Type";
         }
