@@ -2053,7 +2053,7 @@
                                     <strong id="fileName">No file selected</strong>
                                 </div>
                                 <div class="file-chip">
-                                    <span>URL</span>
+                                    <span>Source</span>
                                     <strong id="fileSource">--</strong>
                                 </div>
                                 <div class="file-detail-row">
@@ -3581,7 +3581,11 @@
             showToast("Segments regenerated");
         }
 
-        async function transcribeBlob(blob, filename = "recording.webm", sourceLabel = "Selected file") {
+        function fileSourceLabel(file, fallback) {
+            return file?.webkitRelativePath || fallback;
+        }
+
+        async function transcribeBlob(blob, filename = "recording.webm", sourceLabel = "Selected from device") {
             selectedRecordId = null;
             setCurrentArticleText("");
             setTranscriptTitle(filename);
@@ -3874,7 +3878,7 @@
             const file = audioFile.files[0];
             if (!file) return;
             try {
-                await transcribeBlob(file, file.name, "Selected file");
+                await transcribeBlob(file, file.name, fileSourceLabel(file, "Selected from device"));
             } catch (error) {
                 showToast(error.message);
                 setProgress(0, error.message, false);
@@ -3903,7 +3907,7 @@
             if (!file) return;
             dropInProgress = true;
             try {
-                await transcribeBlob(file, file.name, "Dropped file");
+                await transcribeBlob(file, file.name, fileSourceLabel(file, "Dropped from device"));
             } catch (error) {
                 showToast(error.message);
                 setProgress(0, error.message, false);
