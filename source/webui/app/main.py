@@ -1981,6 +1981,7 @@ def _public_job(job: Dict[str, Any]) -> Dict[str, Any]:
         "source_name": job["source_name"],
         "source_size": job["source_size"],
         "source_type": job["source_type"],
+        "source_url": _source_url(job),
         "source_metadata": job.get("source_metadata"),
         "details": job.get("details") or {},
         "partial_segments": job["partial_segments"],
@@ -2141,6 +2142,7 @@ def _record_data(job_id: str, job: Dict[str, Any]) -> Dict[str, Any]:
     source_path = job.get("source_path")
     record_type = _normalize_record_type(job.get("record_type"))
     job_dir = _job_dir(job_id, record_type)
+    source_url = _source_url(job)
     record = {
         "job_id": job_id,
         "record_type": record_type,
@@ -2152,6 +2154,7 @@ def _record_data(job_id: str, job: Dict[str, Any]) -> Dict[str, Any]:
             "name": job.get("source_name"),
             "type": job.get("source_type"),
             "size": job.get("source_size"),
+            "url": source_url,
             "path": source_path,
             "relative_path": os.path.relpath(source_path, job_dir) if source_path else None,
             "metadata": job.get("source_metadata"),
@@ -2202,6 +2205,20 @@ def _metadata_title(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
         return None
 
     for key in ("title", "fulltitle"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _source_url(job: Dict[str, Any]) -> Optional[str]:
+    request_info = job.get("request") if isinstance(job.get("request"), dict) else {}
+    request_url = request_info.get("url")
+    if isinstance(request_url, str) and request_url.strip():
+        return request_url.strip()
+
+    metadata = job.get("source_metadata") if isinstance(job.get("source_metadata"), dict) else {}
+    for key in ("webpage_url", "url", "original_url", "resolved_url"):
         value = metadata.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
