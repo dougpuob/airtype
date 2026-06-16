@@ -2050,20 +2050,20 @@
                             </div>
                             <div class="file-info" id="fileInfo">
                                 <div class="file-chip">
-                                    <span id="fileNameLabel">File</span>
-                                    <strong id="fileName">No file selected</strong>
+                                    <span>Title</span>
+                                    <strong id="fileName">No title selected</strong>
                                 </div>
                                 <div class="file-chip">
-                                    <span id="fileSourceLabel">Source</span>
+                                    <span>Source</span>
                                     <strong id="fileSource">--</strong>
                                 </div>
                                 <div class="file-detail-row">
                                     <div class="file-chip">
-                                        <span id="fileSizeLabel">Size</span>
+                                        <span>Size</span>
                                         <strong id="fileSize">--</strong>
                                     </div>
                                     <div class="file-chip">
-                                        <span id="fileTypeLabel">Type</span>
+                                        <span>Type</span>
                                         <strong id="fileType">--</strong>
                                     </div>
                                 </div>
@@ -2320,10 +2320,6 @@
         const fileSource = document.getElementById("fileSource");
         const fileSize = document.getElementById("fileSize");
         const fileType = document.getElementById("fileType");
-        const fileNameLabel = document.getElementById("fileNameLabel");
-        const fileSourceLabelEl = document.getElementById("fileSourceLabel");
-        const fileSizeLabel = document.getElementById("fileSizeLabel");
-        const fileTypeLabel = document.getElementById("fileTypeLabel");
         const mediaPlayerCard = document.getElementById("mediaPlayerCard");
         const playerEmptyState = document.getElementById("playerEmptyState");
         const mediaViewer = document.getElementById("mediaViewer");
@@ -3343,16 +3339,8 @@
             }
         }
 
-        function setFileInfoLabels(labels = {}) {
-            fileNameLabel.textContent = labels.name || "File";
-            fileSourceLabelEl.textContent = labels.source || "Source";
-            fileSizeLabel.textContent = labels.size || "Size";
-            fileTypeLabel.textContent = labels.type || "Type";
-        }
-
         function setSourceInfo(name, size, type, source) {
-            setFileInfoLabels();
-            fileName.textContent = name || "No file selected";
+            fileName.textContent = name || "No title selected";
             if (arguments.length >= 4) {
                 fileSource.textContent = source || "--";
             }
@@ -3362,6 +3350,7 @@
 
         function formatJobStage(status, message) {
             const normalized = (status || "").toLowerCase();
+            if (/waiting/i.test(message || "")) return "Waiting";
             if (normalized === "downloading") return "Downloading";
             if (normalized === "running" && /article/i.test(message || "")) return "Writing article";
             if (normalized === "running") return "Transcribing";
@@ -3397,24 +3386,23 @@
             return "--";
         }
 
-        function setJobInfo(job) {
+        function formatJobProgressMessage(job) {
             const details = job.details || {};
             const partialSegments = Array.isArray(job.partial_segments) ? job.partial_segments : [];
             const segmentCount = typeof details.segment_count === "number"
                 ? details.segment_count
                 : partialSegments.length;
-            setFileInfoLabels({
-                name: "Stage",
-                source: job.status === "downloading" ? "Downloaded" : "File",
-                size: "Segments",
-                type: "Position"
-            });
-            fileName.textContent = formatJobStage(job.status, job.message);
-            fileSource.textContent = job.status === "downloading"
-                ? formatDownloadStatus(details, job.source_size)
-                : (typeof job.source_size === "number" ? formatBytes(job.source_size) : "--");
-            fileSize.textContent = `${segmentCount || 0}`;
-            fileType.textContent = formatSegmentPosition(details, partialSegments);
+            const parts = [formatJobStage(job.status, job.message)];
+            if (job.status === "downloading") {
+                const downloaded = formatDownloadStatus(details, job.source_size);
+                if (downloaded !== "--") parts.push(downloaded);
+            } else if (typeof job.source_size === "number") {
+                parts.push(formatBytes(job.source_size));
+            }
+            if (segmentCount) parts.push(`${segmentCount} segments`);
+            const position = formatSegmentPosition(details, partialSegments);
+            if (position !== "--") parts.push(position);
+            return parts.filter(Boolean).join(" · ");
         }
 
         function setTranscriptTitle(title) {
@@ -3764,13 +3752,13 @@
                 if (Array.isArray(job.partial_segments) && job.partial_segments.length) {
                     updatePartialSegments(job.partial_segments);
                 }
-                setJobInfo(job);
-                const message = job.message || job.status;
+                const rawMessage = job.message || job.status;
+                const message = formatJobProgressMessage(job) || rawMessage;
                 const progress = job.progress || 0;
                 const waiting =
                     job.status === "queued" ||
                     job.status === "downloading" ||
-                    message.includes("Waiting for transcription worker");
+                    rawMessage.includes("Waiting for transcription worker");
                 setProgress(
                     progress,
                     message,
