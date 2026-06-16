@@ -155,11 +155,11 @@ struct FloatingPanelView: View {
         .padding(.vertical, 3)
         .frame(width: 144, height: 32)
         .background(
-            RoundedRectangle(cornerRadius: 7)
+            Capsule()
                 .fill(Color(red: 0.09, green: 0.11, blue: 0.13))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 7)
+            Capsule()
                 .stroke(Color(red: 0.33, green: 0.91, blue: 0.60), lineWidth: 1)
         )
     }
