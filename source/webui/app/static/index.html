@@ -2286,6 +2286,55 @@
             box-shadow: 0 0 0 4px rgba(236, 100, 117, 0.11);
         }
 
+        .settings-page {
+            padding: 18px;
+            background: rgba(255, 255, 255, 0.88);
+        }
+
+        .settings-header {
+            color: var(--text);
+        }
+
+        .settings-header p,
+        .settings-panel p,
+        .setting-hint,
+        .setting-status {
+            color: var(--muted);
+        }
+
+        .settings-panel {
+            background: #ffffff;
+            border-color: var(--line);
+            box-shadow: var(--shadow-soft);
+        }
+
+        .settings-panel h2,
+        .setting-field label {
+            color: var(--rose);
+        }
+
+        .setting-field input,
+        .setting-field select,
+        .setting-field textarea {
+            color: var(--text);
+            background: #fbfcff;
+            border-color: var(--line);
+        }
+
+        .setting-field input[readonly] {
+            color: var(--muted);
+            background: #f6f8fc;
+            border-color: var(--line);
+        }
+
+        .setting-status.ok {
+            color: #15803d;
+        }
+
+        .setting-status.error {
+            color: #c2414f;
+        }
+
         .progress {
             color: var(--rose);
         }
