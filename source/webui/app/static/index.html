@@ -2100,8 +2100,8 @@
                                 </div>
                             </div>
                             <div class="player-empty-state" id="playerEmptyState">No media selected</div>
-                            <video class="media-viewer" id="mediaViewer" controls playsinline hidden></video>
-                            <audio class="audio-player" id="audioViewer" controls hidden></audio>
+                            <video class="media-viewer" id="mediaViewer" controls playsinline preload="none" hidden></video>
+                            <audio class="audio-player" id="audioViewer" controls preload="none" hidden></audio>
                         </section>
                         <div class="transcript-scroll-panel" id="transcriptScrollPanel">
                             <div class="debug-panel" id="transcriptDebug" hidden></div>
@@ -3437,9 +3437,9 @@
         function clearMediaPlayer() {
             if (activeMedia) activeMedia.pause();
             [mediaViewer, audioViewer].forEach(element => {
+                element.hidden = true;
                 element.removeAttribute("src");
                 element.load();
-                element.hidden = true;
             });
             if (mediaObjectUrl) URL.revokeObjectURL(mediaObjectUrl);
             mediaObjectUrl = null;
@@ -3453,18 +3453,24 @@
             return mediaType.startsWith("video/") ? mediaViewer : audioViewer;
         }
 
-        function setMediaSource(src, type, label = "Media ready") {
+        function setMediaSource(src, type, label = "Media ready", options = {}) {
             if (activeMedia) activeMedia.pause();
             [mediaViewer, audioViewer].forEach(element => {
+                element.hidden = true;
                 element.removeAttribute("src");
                 element.load();
-                element.hidden = true;
             });
-            activeMedia = chooseMediaElement(type);
+            activeMedia = options.audioOnly ? audioViewer : chooseMediaElement(type);
             activeMedia.src = src;
             activeMedia.hidden = false;
             playerEmptyState.hidden = true;
             setPlayerStatus(label);
+            if (activeMedia === audioViewer) {
+                activeMedia.addEventListener("error", () => {
+                    if (!options.audioOnly || activeMedia !== audioViewer) return;
+                    setMediaSource(src, type, "Video ready");
+                }, { once: true });
+            }
             activeMedia.addEventListener("loadedmetadata", updatePlayerTimeline, { once: true });
             if (activeMedia === mediaViewer) {
                 activeMedia.addEventListener("loadedmetadata", () => {
@@ -3499,7 +3505,8 @@
             setMediaSource(
                 `/api/transcribe/records/${encodeURIComponent(record.job_id)}/media`,
                 sourceType,
-                sourceType.startsWith("video/") ? "Video ready" : "Audio ready"
+                "Audio ready",
+                { audioOnly: true }
             );
         }
 
