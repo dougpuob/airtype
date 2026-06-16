@@ -1859,7 +1859,7 @@
         }
 
         .app-shell {
-            grid-template-columns: 244px minmax(0, 1fr);
+            grid-template-columns: 268px minmax(0, 1fr);
             grid-template-rows: 72px minmax(0, 1fr);
             background: transparent;
         }
@@ -1882,8 +1882,9 @@
             box-shadow: 0 12px 26px rgba(236, 100, 117, 0.26);
         }
 
-        .top-search {
-            width: min(430px, 36vw);
+        .history-search-shell {
+            width: 100%;
+            max-width: 430px;
             height: 46px;
             display: grid;
             grid-template-columns: 24px minmax(0, 1fr);
@@ -1897,22 +1898,36 @@
             box-shadow: inset 0 1px 2px rgba(36, 40, 54, 0.03);
         }
 
-        .top-search svg {
+        .history-search-shell svg {
             width: 21px;
             height: 21px;
             stroke: currentColor;
         }
 
-        .top-search input {
+        .history-search-shell .history-search {
+            width: 100%;
+            height: auto;
             min-width: 0;
             color: var(--text);
             background: transparent;
             border: 0;
             outline: 0;
+            padding: 0;
             font-size: 14px;
+            box-shadow: none;
         }
 
-        .top-search input::placeholder {
+        .history-search-shell .history-search:focus {
+            border-color: transparent;
+            box-shadow: none;
+        }
+
+        .history-search-shell:focus-within {
+            border-color: rgba(236, 100, 117, 0.56);
+            box-shadow: 0 0 0 4px rgba(236, 100, 117, 0.11), inset 0 1px 2px rgba(36, 40, 54, 0.03);
+        }
+
+        .history-search-shell .history-search::placeholder {
             color: #b7bbc5;
         }
 
@@ -1953,11 +1968,13 @@
         }
 
         .sidebar {
-            padding: 28px 18px;
-            gap: 22px;
+            margin: 24px 0 24px 24px;
+            padding: 22px 18px;
+            gap: 18px;
             background: rgba(255, 255, 255, 0.9);
-            border-right: 1px solid var(--line);
-            box-shadow: 22px 0 46px rgba(36, 40, 54, 0.045);
+            border: 1px solid rgba(235, 238, 245, 0.94);
+            border-radius: 8px;
+            box-shadow: var(--shadow);
         }
 
         .sidebar-brand {
@@ -2027,12 +2044,12 @@
         }
 
         .nav {
-            gap: 12px;
-            padding: 0;
-            background: transparent;
-            border: 0;
-            border-radius: 0;
-            box-shadow: none;
+            gap: 8px;
+            padding: 12px;
+            background: rgba(247, 247, 250, 0.72);
+            border: 1px solid rgba(235, 238, 245, 0.94);
+            border-radius: 8px;
+            box-shadow: inset 0 1px 2px rgba(36, 40, 54, 0.03);
         }
 
         .nav::before {
@@ -2040,7 +2057,7 @@
             color: var(--rose);
             font-size: 17px;
             letter-spacing: 0;
-            padding: 0 12px 10px;
+            padding: 0 2px 4px;
             text-transform: none;
         }
 
@@ -2052,8 +2069,15 @@
             padding: 0 12px;
             color: #b8bcc5;
             border-radius: 8px;
+            border: 1px solid transparent;
             font-size: 14px;
             font-weight: 750;
+        }
+
+        .settings {
+            background: rgba(247, 247, 250, 0.72);
+            border-color: rgba(235, 238, 245, 0.94);
+            box-shadow: inset 0 1px 2px rgba(36, 40, 54, 0.03);
         }
 
         .nav-item svg,
@@ -2281,8 +2305,9 @@
                 flex-direction: row;
                 align-items: center;
                 overflow-x: auto;
-                width: 100%;
+                width: auto;
                 min-width: 0;
+                margin: 10px;
                 scrollbar-width: none;
             }
 
@@ -2389,7 +2414,6 @@
                 min-height: calc(100vh - 86px);
             }
 
-            .top-search,
             .top-status,
             .project-card {
                 display: none;
@@ -2456,10 +2480,6 @@
             <div class="project-name">
                 <img class="project-icon" src="/app/favicon.svg" alt="" aria-hidden="true">
                 <span>AirType</span>
-            </div>
-            <div class="top-search" role="search">
-                <svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-                <input type="search" placeholder="Search transcripts, IME records, or settings">
             </div>
             <div class="top-status" aria-label="App status">
                 <span class="status-pill">Whisper</span>
@@ -2606,7 +2626,10 @@
                         <div>
                             <div class="drop-kicker">History</div>
                         </div>
-                        <input class="history-search" id="historySearchInput" type="search" placeholder="Search history..." autocomplete="off">
+                        <div class="history-search-shell" role="search">
+                            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                            <input class="history-search" id="historySearchInput" type="search" placeholder="Search history..." autocomplete="off">
+                        </div>
                         <div class="record-list" id="recordList" role="listbox" aria-label="Transcript history"></div>
                     </aside>
                     <div class="transcript-review-panel">
