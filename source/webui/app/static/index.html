@@ -3364,7 +3364,7 @@
             const normalized = (status || "").toLowerCase();
             if (/waiting/i.test(message || "")) return "Waiting";
             if (normalized === "downloading") return "Downloading";
-            if (normalized === "running" && /article/i.test(message || "")) return "Writing article";
+            if (normalized === "running" && /article/i.test(message || "")) return "WriteArticle";
             if (normalized === "running") return "Transcribing";
             if (normalized === "queued") return "Queued";
             if (normalized === "completed") return "Completed";
@@ -3405,6 +3405,11 @@
                 ? details.segment_count
                 : partialSegments.length;
             const parts = [formatJobStage(job.status, job.message)];
+            if (/requesting/i.test(job.message || "")) {
+                parts.push("Requesting");
+            } else if (/waiting/i.test(job.message || "")) {
+                parts.push("Waiting");
+            }
             if (job.status === "downloading") {
                 const downloaded = formatDownloadStatus(details, job.source_size);
                 if (downloaded !== "--") parts.push(downloaded);
@@ -3770,7 +3775,8 @@
                 const waiting =
                     job.status === "queued" ||
                     job.status === "downloading" ||
-                    rawMessage.includes("Waiting for transcription worker");
+                    rawMessage.includes("Waiting for transcription worker") ||
+                    /requesting|article/i.test(rawMessage);
                 setProgress(
                     progress,
                     message,
