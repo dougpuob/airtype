@@ -2789,7 +2789,8 @@
                 setCurrentArticleText(record.article?.text || "");
                 const title = record.title || record.source?.name || "Transcript";
                 setTranscriptTitle(title);
-                setSourceInfo(title, record.source?.size ?? null, record.source?.type || "record", record.source?.url || record.source?.path || "Saved record");
+                const recordSource = sourceUrlFromRecord(record) || record.source?.path || "Saved record";
+                setSourceInfo(title, record.source?.size ?? null, record.source?.type || "record", recordSource);
                 loadRecordMedia(record);
                 applyTranscriptResult(record.transcript || {});
                 loadTranscriptRecords();
@@ -3348,6 +3349,17 @@
             fileType.textContent = type || "--";
         }
 
+        function sourceUrlFromRecord(record) {
+            const metadata = record?.source?.metadata || {};
+            return record?.source?.url ||
+                record?.request?.url ||
+                metadata.webpage_url ||
+                metadata.url ||
+                metadata.original_url ||
+                metadata.resolved_url ||
+                "";
+        }
+
         function formatJobStage(status, message) {
             const normalized = (status || "").toLowerCase();
             if (/waiting/i.test(message || "")) return "Waiting";
@@ -3742,7 +3754,7 @@
                         loadTranscriptRecords();
                     }
                     displayedJobSourceInfo = jobSourceInfo;
-                    const jobSource = job.source_metadata?.webpage_url || job.source_metadata?.url || job.source_url || "";
+                    const jobSource = job.source_url || job.source_metadata?.webpage_url || job.source_metadata?.url || "";
                     if (jobSource) {
                         setSourceInfo(jobTitle, job.source_size, job.source_type || "remote url", jobSource);
                     } else {
