@@ -1196,7 +1196,7 @@
             top: 0;
             z-index: 2;
             display: grid;
-            grid-template-rows: minmax(48px, auto) 128px;
+            grid-template-rows: minmax(48px, auto) 56px;
             gap: 8px;
             padding: 12px 14px;
             background: #f8fbff;
@@ -1260,13 +1260,41 @@
             min-height: 0;
             height: 100%;
             display: grid;
-            place-items: center;
+            grid-template-columns: 32px minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 12px;
             color: var(--muted);
-            background: #f6f8fc;
-            border: 1px dashed var(--line);
+            background: #ffffff;
+            border: 1px solid var(--line);
             border-radius: 8px;
-            font-size: 13px;
-            font-weight: 700;
+            padding: 0 12px;
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .player-empty-state::before {
+            content: "";
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background:
+                linear-gradient(90deg, transparent 0 11px, #ffffff 11px 14px, transparent 14px),
+                var(--rose);
+            box-shadow: 0 8px 18px rgba(236, 100, 117, 0.22);
+        }
+
+        .player-empty-state::after {
+            content: "00:00";
+            color: #9aa3b1;
+            font-size: 11px;
+            font-weight: 850;
+        }
+
+        .player-empty-track {
+            min-width: 0;
+            height: 6px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #dfe5ef, #eef2f7);
         }
 
         .player-empty-state,
@@ -2695,7 +2723,9 @@
                                     <span class="player-status" id="playerStatus">No media loaded</span>
                                 </div>
                             </div>
-                            <div class="player-empty-state" id="playerEmptyState">No media selected</div>
+                            <div class="player-empty-state" id="playerEmptyState">
+                                <span class="player-empty-track" aria-hidden="true"></span>
+                            </div>
                             <video class="media-viewer" id="mediaViewer" controls playsinline hidden></video>
                             <audio class="audio-player" id="audioViewer" controls hidden></audio>
                         </section>
