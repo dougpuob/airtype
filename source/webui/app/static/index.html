@@ -2618,7 +2618,7 @@
             </div>
             <div class="top-status" aria-label="App status">
                 <span class="status-pill checking" id="asrServerStatusPill">ASR SERVER</span>
-                <span class="status-pill accent">Local LLM</span>
+                <span class="status-pill checking" id="localLlmStatusPill">LLM Server</span>
             </div>
         </header>
 
@@ -2626,7 +2626,7 @@
             <div class="sidebar-brand">
                 <div class="sidebar-logo" aria-hidden="true"></div>
                 <div>
-                    <strong>Doug</strong>
+                    <strong>dougpuob</strong>
                     <span>Profile</span>
                 </div>
             </div>
@@ -2976,6 +2976,7 @@
         const dropZone = document.getElementById("dropZone");
         const sourceUrl = document.getElementById("sourceUrl");
         const asrServerStatusPill = document.getElementById("asrServerStatusPill");
+        const localLlmStatusPill = document.getElementById("localLlmStatusPill");
         const transcribeUrlButton = document.getElementById("transcribeUrlButton");
         const progressText = document.getElementById("progressText");
         const progressDetail = document.getElementById("progressDetail");
@@ -3768,27 +3769,63 @@
             modelInput.value = payload.model || payload.model_path || (payload.mode === "remote" ? "External server" : "Not loaded");
         }
 
-        function setAsrServerPillState(state) {
-            asrServerStatusPill.classList.toggle("online", state === "online");
-            asrServerStatusPill.classList.toggle("offline", state === "offline");
-            asrServerStatusPill.classList.toggle("checking", state === "checking");
+        function setStatusPillState(pill, state) {
+            pill.classList.toggle("online", state === "online");
+            pill.classList.toggle("offline", state === "offline");
+            pill.classList.toggle("checking", state === "checking");
         }
 
         async function loadWhisperServerStatus() {
-            setAsrServerPillState("checking");
             try {
                 const response = await fetch("/api/whisper-server/status", { cache: "no-store" });
                 if (!response.ok) {
-                    setAsrServerPillState("offline");
+                    setStatusPillState(asrServerStatusPill, "offline");
                     return;
                 }
                 const payload = await response.json();
                 setActiveWhisperServer(payload);
-                setAsrServerPillState(payload.running ? "online" : "offline");
+                if (payload.running === true) {
+                    setStatusPillState(asrServerStatusPill, "online");
+                } else if (payload.running === false) {
+                    setStatusPillState(asrServerStatusPill, "offline");
+                }
             } catch {
                 setActiveWhisperServer();
-                setAsrServerPillState("offline");
+                setStatusPillState(asrServerStatusPill, "offline");
             }
+        }
+
+        async function loadLocalLlmStatus() {
+            const llm = appSettings.llm || {};
+            if (!llm.provider || !llm.endpoint) return;
+            try {
+                const response = await fetch("/api/local-llm/health", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    cache: "no-store",
+                    body: JSON.stringify({
+                        provider: llm.provider,
+                        endpoint: llm.endpoint
+                    })
+                });
+                if (!response.ok) {
+                    setStatusPillState(localLlmStatusPill, "offline");
+                    return;
+                }
+                const payload = await response.json().catch(() => ({}));
+                if (payload.ok === true) {
+                    setStatusPillState(localLlmStatusPill, "online");
+                } else if (payload.ok === false) {
+                    setStatusPillState(localLlmStatusPill, "offline");
+                }
+            } catch {
+                setStatusPillState(localLlmStatusPill, "offline");
+            }
+        }
+
+        function pollServiceHealth() {
+            loadWhisperServerStatus();
+            loadLocalLlmStatus();
         }
 
         async function testWhisperServer() {
@@ -4883,8 +4920,8 @@
             showPage("transcript");
             renderSegments();
             loadTranscriptRecords();
-            loadWhisperServerStatus();
-            setInterval(loadWhisperServerStatus, 5000);
+            pollServiceHealth();
+            setInterval(pollServiceHealth, 5000);
             renderWaveform();
             window.addEventListener("resize", renderWaveform);
         }

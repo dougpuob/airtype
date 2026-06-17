@@ -678,6 +678,15 @@ async def list_local_models(request: LocalModelsRequest):
         raise HTTPException(status_code=502, detail=f"Could not load local models: {str(e)}")
 
 
+@app.post("/api/local-llm/health")
+async def local_llm_health(request: LocalModelsRequest):
+    try:
+        _check_local_llm_health(request.provider, request.endpoint)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Local LLM health check failed: {str(e)}")
+
+
 @app.post("/api/local-llm/all-models")
 async def list_all_local_models():
     try:
@@ -1767,6 +1776,50 @@ def _http_json(method: str, url: str, payload: Optional[Dict[str, Any]] = None) 
         if body:
             detail += f": {body[:1000]}"
         raise ValueError(detail) from error
+
+
+def _http_json_with_timeout(method: str, url: str, timeout: float, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    data = None
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "AirType/1.0",
+    }
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as error:
+        raise ValueError(f"HTTP {error.code} from {url}") from error
+    except urllib.error.URLError as error:
+        raise ValueError(str(error.reason)) from error
+
+
+def _check_local_llm_health(provider: str, endpoint: str) -> None:
+    provider = (provider or "").strip()
+    endpoint = (endpoint or "").strip()
+    if not endpoint:
+        raise ValueError("No Local LLM endpoint configured.")
+
+    base_endpoint = _llm_base_endpoint(endpoint)
+    if provider == "ollama":
+        _http_json_with_timeout("GET", _join_url(base_endpoint, "/api/tags"), 2)
+        return
+
+    if provider == "llama.cpp":
+        for path in ("/health", "/props", "/v1/models", "/models"):
+            try:
+                _http_json_with_timeout("GET", _join_url(base_endpoint, path), 2)
+                return
+            except Exception:
+                continue
+        raise ValueError("Could not reach llama.cpp health, props, or models endpoints.")
+
+    models_url = endpoint.rstrip("/") if endpoint.rstrip("/").endswith("/v1/models") else _join_url(base_endpoint, "/v1/models")
+    _http_json_with_timeout("GET", models_url, 2)
 
 
 def _llm_messages(system: Optional[str], prompt: str) -> list[Dict[str, str]]:
