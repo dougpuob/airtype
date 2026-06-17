@@ -3797,7 +3797,10 @@
 
         async function loadLocalLlmStatus() {
             const llm = appSettings.llm || {};
-            if (!llm.provider || !llm.endpoint) return;
+            if (!llm.provider || !llm.endpoint) {
+                setStatusPillState(localLlmStatusPill, "offline");
+                return;
+            }
             try {
                 const response = await fetch("/api/local-llm/health", {
                     method: "POST",
@@ -3815,7 +3818,7 @@
                 const payload = await response.json().catch(() => ({}));
                 if (payload.ok === true) {
                     setStatusPillState(localLlmStatusPill, "online");
-                } else if (payload.ok === false) {
+                } else {
                     setStatusPillState(localLlmStatusPill, "offline");
                 }
             } catch {
