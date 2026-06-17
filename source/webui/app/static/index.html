@@ -1201,7 +1201,7 @@
             padding: 12px 14px;
             background: #f8fbff;
             border: 0;
-            border-bottom: 1px solid var(--line);
+            border-bottom: 1px solid var(--panel-line);
             border-radius: 0;
             box-shadow: none;
         }
@@ -1265,7 +1265,7 @@
             gap: 12px;
             color: var(--muted);
             background: #ffffff;
-            border: 1px solid var(--line);
+            border: 1px solid var(--panel-line);
             border-radius: 8px;
             padding: 0 12px;
             font-size: 12px;
@@ -1726,7 +1726,7 @@
         .transcript-side-panel #recordList {
             padding: 8px;
             background: #f6f8fc;
-            border: 1px solid var(--line);
+            border: 1px solid var(--panel-line);
             border-radius: 8px;
         }
 
@@ -1895,6 +1895,7 @@
             --panel: #ffffff;
             --panel-2: #fbfcff;
             --line: #ebeef5;
+            --panel-line: #d5dbe7;
             --hairline: rgba(230, 92, 111, 0.16);
             --hairline-soft: rgba(29, 35, 55, 0.07);
             --muted: #9aa0ad;
@@ -2198,7 +2199,7 @@
         .settings-page {
             min-width: 0;
             background: rgba(255, 255, 255, 0.88);
-            border: 1px solid rgba(235, 238, 245, 0.94);
+            border: 1px solid var(--panel-line);
             border-radius: 8px;
             box-shadow: var(--shadow);
         }
@@ -2214,9 +2215,9 @@
         .settings-panel,
         #imePage .transcript-segments-panel {
             background: #ffffff;
-            border: 1px solid var(--line);
+            border: 1px solid var(--panel-line);
             border-radius: 8px;
-            box-shadow: var(--shadow-soft);
+            box-shadow: var(--shadow-soft), inset 0 0 0 1px rgba(255, 255, 255, 0.72);
         }
 
         .drop-zone {
@@ -2262,7 +2263,7 @@
 
         .file-chip,
         .record-item {
-            border-color: var(--line);
+            border-color: var(--panel-line);
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(36, 40, 54, 0.035);
         }
@@ -2304,8 +2305,8 @@
 
         .settings-panel {
             background: #ffffff;
-            border-color: var(--line);
-            box-shadow: var(--shadow-soft);
+            border-color: var(--panel-line);
+            box-shadow: var(--shadow-soft), inset 0 0 0 1px rgba(255, 255, 255, 0.72);
         }
 
         .settings-panel h2,
@@ -2356,7 +2357,7 @@
 
         .transcript-side-panel #recordList {
             background: #fafbfe;
-            border-color: var(--line);
+            border-color: var(--panel-line);
         }
 
         .record-item:hover {
@@ -2373,7 +2374,7 @@
 
         .media-player-card {
             background: #ffffff;
-            box-shadow: 0 1px 0 var(--line), 0 12px 24px rgba(36, 40, 54, 0.035);
+            box-shadow: 0 1px 0 var(--panel-line), 0 12px 24px rgba(36, 40, 54, 0.035);
         }
 
         .player-status {
@@ -2383,7 +2384,7 @@
         }
 
         .segment {
-            border-color: var(--line);
+            border-color: var(--panel-line);
             border-radius: 8px;
             box-shadow: 0 5px 14px rgba(36, 40, 54, 0.035);
         }
