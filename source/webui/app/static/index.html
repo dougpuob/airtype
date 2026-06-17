@@ -2051,8 +2051,17 @@
             grid-template-columns: 64px minmax(0, 1fr);
             align-items: center;
             gap: 14px;
-            padding-bottom: 18px;
-            border-bottom: 1px solid var(--line);
+            min-height: 116px;
+            padding: 18px;
+            overflow: hidden;
+            color: #ffffff;
+            background:
+                radial-gradient(circle at 24px 22px, rgba(255, 255, 255, 0.28) 0 2px, transparent 3px),
+                radial-gradient(circle at 84% 28%, rgba(255, 255, 255, 0.18), transparent 22px),
+                linear-gradient(135deg, var(--rose), #e65d71);
+            border: 1px solid rgba(255, 255, 255, 0.44);
+            border-radius: 8px;
+            box-shadow: 0 18px 34px rgba(236, 100, 117, 0.28);
         }
 
         .sidebar-logo {
@@ -2088,43 +2097,37 @@
         }
 
         .sidebar-brand strong {
-            color: var(--text);
+            color: #ffffff;
             font-size: 16px;
             line-height: 1.2;
         }
 
         .sidebar-brand span {
-            color: var(--rose);
+            color: rgba(255, 255, 255, 0.78);
             font-size: 13px;
             font-weight: 750;
             margin-top: 2px;
         }
 
-        .project-card {
-            position: relative;
+        .project-meta {
             display: grid;
-            gap: 7px;
-            min-height: 82px;
-            padding: 18px;
-            overflow: hidden;
-            color: #ffffff;
-            background:
-                radial-gradient(circle at 24px 22px, rgba(255, 255, 255, 0.28) 0 2px, transparent 3px),
-                radial-gradient(circle at 84% 28%, rgba(255, 255, 255, 0.18), transparent 22px),
-                linear-gradient(135deg, var(--rose), #e65d71);
-            border-radius: 8px;
-            box-shadow: 0 18px 34px rgba(236, 100, 117, 0.28);
+            gap: 3px;
+            margin-top: 10px;
         }
 
-        .project-card span {
-            opacity: 0.78;
+        .project-meta span {
+            color: rgba(255, 255, 255, 0.72);
             font-size: 12px;
             font-weight: 750;
         }
 
-        .project-card strong {
+        .project-meta strong {
             font-size: 15px;
             line-height: 1.2;
+        }
+
+        .project-card {
+            display: none;
         }
 
         .nav {
@@ -2550,7 +2553,8 @@
             .sidebar-brand {
                 grid-template-columns: 42px minmax(0, 1fr);
                 min-width: 180px;
-                padding: 0;
+                min-height: 72px;
+                padding: 12px;
                 border-bottom: 0;
             }
 
@@ -2563,6 +2567,19 @@
 
             .sidebar-logo::before {
                 font-size: 17px;
+            }
+
+            .project-meta {
+                margin-top: 4px;
+                gap: 1px;
+            }
+
+            .project-meta span {
+                font-size: 10px;
+            }
+
+            .project-meta strong {
+                font-size: 12px;
             }
         }
 
@@ -2625,11 +2642,11 @@
                 <div>
                     <strong>Doug</strong>
                     <span>Profile</span>
+                    <div class="project-meta">
+                        <span>Active Project</span>
+                        <strong>Transcript Desk</strong>
+                    </div>
                 </div>
-            </div>
-            <div class="project-card">
-                <span>Active Project</span>
-                <strong>Transcript Desk</strong>
             </div>
             <nav class="nav" aria-label="Workspace">
                 <div class="nav-item active" data-panel="transcript">
