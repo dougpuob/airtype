@@ -91,7 +91,6 @@ final class AirTypeCoordinator: ObservableObject {
 
     private func setupHotkey() {
         hotkeyMonitor = HotkeyMonitor(
-            trigger: configStore.config.hotkey.trigger,
             onDoublePress: { [weak self] in
                 Task { @MainActor in
                     self?.toggleRecording()
@@ -348,13 +347,6 @@ final class AirTypeCoordinator: ObservableObject {
         microphoneModeItem.submenu = microphoneModeMenu
         menu.addItem(microphoneModeItem)
 
-        let hotkeyMenu = NSMenu()
-        addHotkeyItem(to: hotkeyMenu, title: "Right Ctrl x2", trigger: .rightControl)
-        addHotkeyItem(to: hotkeyMenu, title: "Right Option x2", trigger: .rightOption)
-        let hotkeyItem = NSMenuItem(title: "Hotkey", action: nil, keyEquivalent: "")
-        hotkeyItem.submenu = hotkeyMenu
-        menu.addItem(hotkeyItem)
-
         let llmServerMenu = NSMenu()
         rebuildLLMServerMenu(llmServerMenu)
         let llmServerItem = NSMenuItem(title: "LLM Server", action: nil, keyEquivalent: "")
@@ -405,14 +397,6 @@ final class AirTypeCoordinator: ObservableObject {
         item.target = self
         item.representedObject = mode
         item.state = configStore.config.microphone.mode == mode ? .on : .off
-        menu.addItem(item)
-    }
-
-    private func addHotkeyItem(to menu: NSMenu, title: String, trigger: HotkeyKey) {
-        let item = NSMenuItem(title: title, action: #selector(selectHotkey(_:)), keyEquivalent: "")
-        item.target = self
-        item.representedObject = trigger.rawValue
-        item.state = configStore.config.hotkey.trigger == trigger ? .on : .off
         menu.addItem(item)
     }
 
@@ -530,14 +514,6 @@ final class AirTypeCoordinator: ObservableObject {
         guard let mode = sender.representedObject as? String else { return }
         configStore.updateMicrophoneMode(mode)
         applyMicrophoneRuntimeSettings(reason: "menu_microphone_mode")
-        rebuildMenu()
-    }
-
-    @objc private func selectHotkey(_ sender: NSMenuItem) {
-        guard let rawTrigger = sender.representedObject as? String else { return }
-        let trigger = HotkeyKey(configValue: rawTrigger)
-        configStore.updateHotkeyTrigger(trigger)
-        hotkeyMonitor?.updateTrigger(trigger)
         rebuildMenu()
     }
 

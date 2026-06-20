@@ -13,20 +13,11 @@ final class HotkeyMonitor {
     private var lastPressByKey: [HotkeyKey: TimeInterval] = [:]
     private var lastEmit: TimeInterval = 0
     private let threshold: TimeInterval = 0.4
-    private var trigger: HotkeyKey
+    private let triggers = Set(HotkeyKey.allCases)
 
-    init(trigger: HotkeyKey, onDoublePress: @escaping () -> Void, onEscape: @escaping () -> Void) {
-        self.trigger = trigger
+    init(onDoublePress: @escaping () -> Void, onEscape: @escaping () -> Void) {
         self.onDoublePress = onDoublePress
         self.onEscape = onEscape
-    }
-
-    func updateTrigger(_ trigger: HotkeyKey) {
-        stateLock.lock()
-        self.trigger = trigger
-        lastPressByKey.removeAll()
-        stateLock.unlock()
-        Logger.shared.log("Hotkey trigger updated: \(trigger.displayName) x2")
     }
 
     func start() {
@@ -76,8 +67,7 @@ final class HotkeyMonitor {
 
                 let keycode = Int64(event.keyCode)
                 let flags = event.modifierFlags
-                let trigger = self.currentTrigger()
-                if let hotkeyKey = HotkeyKey.nseventKey(for: keycode, flags: flags), hotkeyKey == trigger {
+                if let hotkeyKey = HotkeyKey.nseventKey(for: keycode, flags: flags), self.isTrigger(hotkeyKey) {
                     self.handleHotkeyPress(hotkeyKey, source: "nsevent")
                 } else if HotkeyKey.monitoredKeycodes.contains(keycode) {
                     Logger.shared.log("NSEvent modifier flagsChanged keycode=\(keycode) flags=\(flags.rawValue)")
@@ -115,7 +105,7 @@ final class HotkeyMonitor {
         runLoop = CFRunLoopGetCurrent()
         CFRunLoopAddSource(runLoop, source, .commonModes)
         CGEvent.tapEnable(tap: eventTap, enable: true)
-        Logger.shared.log("Quartz hotkey listener started: \(currentTrigger().displayName) x2")
+        Logger.shared.log("Quartz hotkey listener started: Right Ctrl x2 or Right Option x2")
         CFRunLoopRun()
     }
 
@@ -139,8 +129,7 @@ final class HotkeyMonitor {
         let keycode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
 
-        let trigger = currentTrigger()
-        if let hotkeyKey = HotkeyKey.quartzKey(for: keycode, flags: flags), hotkeyKey == trigger {
+        if let hotkeyKey = HotkeyKey.quartzKey(for: keycode, flags: flags), isTrigger(hotkeyKey) {
             handleHotkeyPress(hotkeyKey, source: "quartz")
         } else if HotkeyKey.monitoredKeycodes.contains(keycode) {
             Logger.shared.log("Modifier flagsChanged keycode=\(keycode) flags=\(flags.rawValue)")
@@ -180,11 +169,8 @@ final class HotkeyMonitor {
         }
     }
 
-    private func currentTrigger() -> HotkeyKey {
-        stateLock.lock()
-        let value = trigger
-        stateLock.unlock()
-        return value
+    private func isTrigger(_ hotkeyKey: HotkeyKey) -> Bool {
+        triggers.contains(hotkeyKey)
     }
 }
 
@@ -193,15 +179,6 @@ enum HotkeyKey: String, CaseIterable, Hashable {
     case rightOption = "right_option"
 
     static let monitoredKeycodes: Set<Int64> = [58, 59, 61, 62]
-
-    init(configValue: String) {
-        switch configValue.lowercased() {
-        case "right_option", "right-option", "right option", "option":
-            self = .rightOption
-        default:
-            self = .rightControl
-        }
-    }
 
     var displayName: String {
         switch self {

@@ -42,13 +42,6 @@
             "position_y_ratio": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.0597 },
             "move_lock": { "type": "boolean", "default": false }
           }
-        },
-        "hotkey": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "trigger": { "type": "string", "enum": ["right_ctrl", "right_option"], "default": "right_ctrl" }
-          }
         }
       }
     },

@@ -30,10 +30,6 @@ position_x_ratio = 0.2598
 position_y_ratio = 0.0597
 move_lock = false
 
-[localapp.hotkey]
-# Options: "right_ctrl", "right_option"
-trigger = "right_ctrl"
-
 #===============================================================================
 # Web UI Settings
 #===============================================================================

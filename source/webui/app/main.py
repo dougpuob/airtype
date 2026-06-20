@@ -208,6 +208,7 @@ class ArticleRequest(BaseModel):
 class LocalModelsRequest(BaseModel):
     provider: str = "llama.cpp"
     endpoint: str = "http://127.0.0.1:8080"
+    api_key: Optional[str] = None
 
 
 class LocalChatRequest(LocalModelsRequest):
@@ -640,14 +641,14 @@ async def create_transcription_job(
 async def list_local_models(request: LocalModelsRequest):
     try:
         if request.provider == "ollama":
-            payload = _http_json("GET", _join_url(request.endpoint, "/api/tags"))
+            payload = _http_json("GET", _join_url(request.endpoint, "/api/tags"), api_key=request.api_key)
             models = []
             for model in payload.get("models", []):
                 name = model.get("name", "")
                 if not name:
                     continue
 
-                model_details = _ollama_model_details(request.endpoint, name)
+                model_details = _ollama_model_details(request.endpoint, name, request.api_key)
                 models.append(
                     {
                         "name": name,
@@ -664,12 +665,12 @@ async def list_local_models(request: LocalModelsRequest):
             }
 
         if request.provider == "llama.cpp":
-            models = _llamacpp_models(request.endpoint)
+            models = _llamacpp_models(request.endpoint, request.api_key)
             _patch_config_llm_models_for_endpoint(request.provider, request.endpoint, [model["name"] for model in models])
             return {"models": models}
 
         models_url = request.endpoint.rstrip("/") if request.endpoint.rstrip("/").endswith("/v1/models") else _join_url(request.endpoint, "/v1/models")
-        payload = _http_json("GET", models_url)
+        payload = _http_json("GET", models_url, api_key=request.api_key)
         models = [{"name": model.get("id", "")} for model in payload.get("data", []) if model.get("id")]
         _patch_config_llm_models_for_endpoint(request.provider, request.endpoint, [model["name"] for model in models])
         return {"models": models}
@@ -681,7 +682,7 @@ async def list_local_models(request: LocalModelsRequest):
 @app.post("/api/local-llm/health")
 async def local_llm_health(request: LocalModelsRequest):
     try:
-        _check_local_llm_health(request.provider, request.endpoint)
+        _check_local_llm_health(request.provider, request.endpoint, request.api_key)
         return {"ok": True}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Local LLM health check failed: {str(e)}")
@@ -1756,7 +1757,12 @@ def _llm_base_endpoint(endpoint: str) -> str:
     return endpoint
 
 
-def _http_json(method: str, url: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _http_json(
+    method: str,
+    url: str,
+    payload: Optional[Dict[str, Any]] = None,
+    api_key: Optional[str] = None,
+) -> Dict[str, Any]:
     data = None
     headers = {
         "Accept": "application/json",
@@ -1765,6 +1771,8 @@ def _http_json(method: str, url: str, payload: Optional[Dict[str, Any]] = None) 
     }
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
@@ -1778,7 +1786,13 @@ def _http_json(method: str, url: str, payload: Optional[Dict[str, Any]] = None) 
         raise ValueError(detail) from error
 
 
-def _http_json_with_timeout(method: str, url: str, timeout: float, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _http_json_with_timeout(
+    method: str,
+    url: str,
+    timeout: float,
+    payload: Optional[Dict[str, Any]] = None,
+    api_key: Optional[str] = None,
+) -> Dict[str, Any]:
     data = None
     headers = {
         "Accept": "application/json",
@@ -1787,6 +1801,8 @@ def _http_json_with_timeout(method: str, url: str, timeout: float, payload: Opti
     }
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
@@ -1798,7 +1814,7 @@ def _http_json_with_timeout(method: str, url: str, timeout: float, payload: Opti
         raise ValueError(str(error.reason)) from error
 
 
-def _check_local_llm_health(provider: str, endpoint: str) -> None:
+def _check_local_llm_health(provider: str, endpoint: str, api_key: Optional[str] = None) -> None:
     provider = (provider or "").strip()
     endpoint = (endpoint or "").strip()
     if not endpoint:
@@ -1806,20 +1822,20 @@ def _check_local_llm_health(provider: str, endpoint: str) -> None:
 
     base_endpoint = _llm_base_endpoint(endpoint)
     if provider == "ollama":
-        _http_json_with_timeout("GET", _join_url(base_endpoint, "/api/tags"), 2)
+        _http_json_with_timeout("GET", _join_url(base_endpoint, "/api/tags"), 2, api_key=api_key)
         return
 
     if provider == "llama.cpp":
         for path in ("/health", "/props", "/v1/models", "/models"):
             try:
-                _http_json_with_timeout("GET", _join_url(base_endpoint, path), 2)
+                _http_json_with_timeout("GET", _join_url(base_endpoint, path), 2, api_key=api_key)
                 return
             except Exception:
                 continue
         raise ValueError("Could not reach llama.cpp health, props, or models endpoints.")
 
     models_url = endpoint.rstrip("/") if endpoint.rstrip("/").endswith("/v1/models") else _join_url(base_endpoint, "/v1/models")
-    _http_json_with_timeout("GET", models_url, 2)
+    _http_json_with_timeout("GET", models_url, 2, api_key=api_key)
 
 
 def _llm_messages(system: Optional[str], prompt: str) -> list[Dict[str, str]]:
@@ -1844,6 +1860,7 @@ def _local_chat_response(request: LocalChatRequest) -> str:
                     "num_ctx": _request_context_length(request),
                 },
             },
+            api_key=request.api_key,
         )
         return payload.get("message", {}).get("content", "")
 
@@ -1856,6 +1873,7 @@ def _local_chat_response(request: LocalChatRequest) -> str:
             "temperature": request.temperature,
             **({"n_ctx": _request_context_length(request)} if request.provider == "llama.cpp" else {}),
         },
+        api_key=request.api_key,
     )
     choices = payload.get("choices", [])
     return choices[0].get("message", {}).get("content", "") if choices else ""
@@ -1865,18 +1883,18 @@ def _request_context_length(request: LocalChatRequest) -> int:
     return request.context_length or request.context or 8192
 
 
-def _ollama_model_details(endpoint: str, model: str) -> Dict[str, Any]:
+def _ollama_model_details(endpoint: str, model: str, api_key: Optional[str] = None) -> Dict[str, Any]:
     try:
-        return _http_json("POST", _join_url(endpoint, "/api/show"), {"model": model})
+        return _http_json("POST", _join_url(endpoint, "/api/show"), {"model": model}, api_key=api_key)
     except Exception:
         return {}
 
 
-def _llamacpp_models(endpoint: str) -> list[Dict[str, Any]]:
-    payload = _llamacpp_models_payload(endpoint)
+def _llamacpp_models(endpoint: str, api_key: Optional[str] = None) -> list[Dict[str, Any]]:
+    payload = _llamacpp_models_payload(endpoint, api_key)
     props = {}
     if payload is None:
-        props = _llamacpp_props(endpoint)
+        props = _llamacpp_props(endpoint, api_key=api_key)
         if not props:
             raise ValueError("Could not read llama.cpp /models or /props.")
         payload = {"data": []}
@@ -1889,7 +1907,7 @@ def _llamacpp_models(endpoint: str) -> list[Dict[str, Any]]:
 
         props = item.get("meta") if isinstance(item.get("meta"), dict) else {}
         if not props:
-            props = _llamacpp_props(endpoint, name)
+            props = _llamacpp_props(endpoint, name, api_key=api_key)
         models.append(
             {
                 "name": name,
@@ -1903,7 +1921,7 @@ def _llamacpp_models(endpoint: str) -> list[Dict[str, Any]]:
     if models:
         return models
 
-    props = props or _llamacpp_props(endpoint)
+    props = props or _llamacpp_props(endpoint, api_key=api_key)
     if not props:
         return []
 
@@ -1919,24 +1937,28 @@ def _llamacpp_models(endpoint: str) -> list[Dict[str, Any]]:
     ]
 
 
-def _llamacpp_models_payload(endpoint: str) -> Optional[Dict[str, Any]]:
+def _llamacpp_models_payload(endpoint: str, api_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
     endpoint = endpoint.rstrip("/")
     if endpoint.endswith("/v1/models") or endpoint.endswith("/models"):
         try:
-            return _http_json("GET", endpoint)
+            return _http_json("GET", endpoint, api_key=api_key)
         except Exception:
             return None
 
     base_endpoint = _llm_base_endpoint(endpoint)
     for path in ("/v1/models", "/models", "/models?reload=1"):
         try:
-            return _http_json("GET", _join_url(base_endpoint, path))
+            return _http_json("GET", _join_url(base_endpoint, path), api_key=api_key)
         except Exception:
             continue
     return None
 
 
-def _llamacpp_props(endpoint: str, model: Optional[str] = None) -> Dict[str, Any]:
+def _llamacpp_props(
+    endpoint: str,
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> Dict[str, Any]:
     endpoint = _llm_base_endpoint(endpoint)
     paths = ["/props"]
     if model:
@@ -1945,7 +1967,7 @@ def _llamacpp_props(endpoint: str, model: Optional[str] = None) -> Dict[str, Any
 
     for path in paths:
         try:
-            return _http_json("GET", _join_url(endpoint, path))
+            return _http_json("GET", _join_url(endpoint, path), api_key=api_key)
         except Exception:
             continue
     return {}
