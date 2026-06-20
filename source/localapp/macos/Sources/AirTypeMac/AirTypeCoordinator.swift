@@ -12,7 +12,7 @@ private final class LLMModelMenuSelection: NSObject {
 }
 
 @MainActor
-final class AirTypeCoordinator: ObservableObject {
+final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     private let configStore = ConfigStore()
     private let audioRecorder = AudioRecorder()
     private let pasteController = PasteController()
@@ -77,6 +77,9 @@ final class AirTypeCoordinator: ObservableObject {
         item.button?.imagePosition = .imageOnly
         item.button?.toolTip = "AirType"
         statusItem = item
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem?.menu = menu
         rebuildMenu()
     }
 
@@ -314,9 +317,23 @@ final class AirTypeCoordinator: ObservableObject {
         }
     }
 
-    private func rebuildMenu() {
-        let menu = NSMenu()
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        do {
+            try configStore.load()
+        } catch {
+            Logger.shared.log("Could not reload config before opening menu: \(error.localizedDescription)")
+        }
+        populateMenu(menu)
+    }
 
+    private func rebuildMenu() {
+        guard let menu = statusItem?.menu else { return }
+        populateMenu(menu)
+    }
+
+    private func populateMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        menu.delegate = self
         let moveLockItem = NSMenuItem(
             title: "Move Lock",
             action: #selector(toggleMoveLock(_:)),
@@ -358,7 +375,6 @@ final class AirTypeCoordinator: ObservableObject {
         quitItem.target = self
         menu.addItem(quitItem)
 
-        statusItem?.menu = menu
     }
 
     private func addLanguageItem(to menu: NSMenu, title: String, mode: String) {
@@ -452,7 +468,7 @@ final class AirTypeCoordinator: ObservableObject {
                     for server in servers {
                         guard let modelMenu = modelMenusByServer[server.name] else { continue }
                         modelMenu.removeAllItems()
-                        let serverModels = modelsByServer[server.name] ?? []
+                        let serverModels = modelsByServer[server.name] ?? server.models.map { BackendClient.LLMModel(name: $0, server: server.name) }
                         if serverModels.isEmpty {
                             let emptyItem = NSMenuItem(title: "No models found", action: nil, keyEquivalent: "")
                             emptyItem.isEnabled = false
