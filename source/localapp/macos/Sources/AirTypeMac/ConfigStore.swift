@@ -5,7 +5,6 @@ struct AirTypeConfig {
     var backend = BackendConfig()
     var microphone = MicrophoneConfig()
     var floatingDialog = FloatingDialogConfig()
-    var hotkey = HotkeyConfig()
     var webui = WebUIConfig()
 }
 
@@ -36,10 +35,6 @@ struct FloatingDialogConfig {
     var positionXRatio = 0.5
     var positionYRatio = 0.62
     var moveLock = true
-}
-
-struct HotkeyConfig {
-    var trigger: HotkeyKey = .rightControl
 }
 
 struct WebUIConfig {
@@ -142,7 +137,7 @@ final class ConfigStore: ObservableObject {
             + "pre_roll_seconds=\(config.microphone.preRollSeconds)"
         )
         Logger.shared.log(
-            "Config localapp.hotkey: trigger=\(config.hotkey.trigger.rawValue); "
+            "Config localapp: hotkey_triggers=right_ctrl,right_option; "
             + "chinese_mode=\(config.chineseMode.mode); "
             + "floating_dialog=(x=\(config.floatingDialog.positionXRatio), y=\(config.floatingDialog.positionYRatio), move_lock=\(config.floatingDialog.moveLock))"
         )
@@ -187,11 +182,6 @@ final class ConfigStore: ObservableObject {
 
     func updateMoveLock(_ locked: Bool) {
         config.floatingDialog.moveLock = locked
-        save()
-    }
-
-    func updateHotkeyTrigger(_ trigger: HotkeyKey) {
-        config.hotkey.trigger = trigger
         save()
     }
 
@@ -675,15 +665,6 @@ final class ConfigStore: ObservableObject {
                 boolField("localapp.floating-dialog", "move_lock",
                           apply: { $0.floatingDialog.moveLock = parseBool($1, defaultValue: true) },
                           render: { $0.floatingDialog.moveLock ? "true" : "false" })
-            ]
-        ),
-        ConfigSectionSchema(
-            group: "Local App Settings",
-            name: "localapp.hotkey",
-            fields: [
-                stringField("localapp.hotkey", "trigger", comment: #"Options: "right_ctrl", "right_option""#,
-                            apply: { $0.hotkey.trigger = HotkeyKey(configValue: $1) },
-                            render: { $0.hotkey.trigger.rawValue })
             ]
         ),
         ConfigSectionSchema(

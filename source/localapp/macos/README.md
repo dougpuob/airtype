@@ -17,11 +17,10 @@ Run these commands from the project root.
 - Chinese mode menu: `zh-tw`, `zh-cn`
 - microphone device menu with persisted device name
 - microphone mode menu: `on_demand`, `always`
-- hotkey menu: `right_ctrl`, `right_option`
 - move lock
 - floating recording dialog
 - desktop-ratio dialog position persisted to `~/.airtype/config.toml`
-- configured right Ctrl or right Option double-press hotkey via Quartz event tap
+- right Ctrl and right Option double-press hotkeys via Quartz event tap
 - microphone recording through `AVAudioEngine`
 - automatic local FastAPI WebUI startup when `[localapp.backend-endpoint].mode = "local"`
 - `/api/transcribe/ime` multipart upload

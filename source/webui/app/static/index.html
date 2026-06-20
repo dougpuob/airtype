@@ -883,6 +883,12 @@
             word-break: break-word;
         }
 
+        .session-key-status {
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
         .title-dialog input {
             width: 100%;
             height: 38px;
@@ -2876,6 +2882,14 @@
                             <input id="settingLlmEndpoint" type="url" placeholder="http://127.0.0.1:8080">
                         </div>
                         <div class="setting-field">
+                            <label>API key</label>
+                            <div class="server-row">
+                                <button class="toolbar-btn" id="setLlmApiKeyButton" type="button">Enter key</button>
+                                <span class="session-key-status" id="llmApiKeyStatus">Not saved</span>
+                            </div>
+                            <div class="setting-hint">Kept only until this page is refreshed.</div>
+                        </div>
+                        <div class="setting-field">
                             <label for="settingLlmModelSelect">Loaded local models</label>
                             <div class="model-load-row">
                                 <select id="settingLlmModelSelect">
@@ -2929,6 +2943,17 @@
             <div class="title-dialog-actions">
                 <button class="toolbar-btn" type="button" id="cancelRenameButton">Cancel</button>
                 <button class="toolbar-btn primary" type="submit">Save</button>
+            </div>
+        </form>
+    </div>
+    <div class="modal-backdrop" id="llmApiKeyDialog" hidden>
+        <form class="title-dialog" id="llmApiKeyForm">
+            <h2>LLM API key</h2>
+            <p class="title-dialog-current" id="llmApiKeyDialogText"></p>
+            <input id="llmApiKeyInput" type="password" autocomplete="off" placeholder="Bearer token">
+            <div class="title-dialog-actions">
+                <button class="toolbar-btn" type="button" id="cancelLlmApiKeyButton">Cancel</button>
+                <button class="toolbar-btn primary" type="submit">Use key</button>
             </div>
         </form>
     </div>
@@ -2994,6 +3019,12 @@
         const renameTitleInput = document.getElementById("renameTitleInput");
         const renameCurrentTitle = document.getElementById("renameCurrentTitle");
         const cancelRenameButton = document.getElementById("cancelRenameButton");
+        const llmApiKeyDialog = document.getElementById("llmApiKeyDialog");
+        const llmApiKeyForm = document.getElementById("llmApiKeyForm");
+        const llmApiKeyInput = document.getElementById("llmApiKeyInput");
+        const llmApiKeyDialogText = document.getElementById("llmApiKeyDialogText");
+        const cancelLlmApiKeyButton = document.getElementById("cancelLlmApiKeyButton");
+        const llmApiKeyStatus = document.getElementById("llmApiKeyStatus");
         const fileName = document.getElementById("fileName");
         const fileSource = document.getElementById("fileSource");
         const fileSize = document.getElementById("fileSize");
@@ -3060,11 +3091,79 @@
         let lastAutoScrolledIndex = -1;
         let appSettings = loadSettings();
         let localModels = [];
+        let llmSessionApiKeys = {};
+        let pendingLlmApiKeyDialog = null;
         function showToast(message) {
             toast.textContent = message;
             toast.classList.add("show");
             clearTimeout(showToast.timer);
             showToast.timer = setTimeout(() => toast.classList.remove("show"), 1800);
+        }
+
+        function llmApiKeySlot(llm = appSettings.llm || {}) {
+            return `${llm.provider || ""}|${String(llm.endpoint || "").trim().replace(/\/+$/, "")}`;
+        }
+
+        function sessionLlmApiKey(llm = appSettings.llm || {}) {
+            return llmSessionApiKeys[llmApiKeySlot(llm)] || "";
+        }
+
+        function isLocalEndpoint(endpoint = "") {
+            try {
+                const url = new URL(endpoint);
+                return ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+            } catch {
+                return false;
+            }
+        }
+
+        function shouldAskForLlmApiKey(llm = appSettings.llm || {}) {
+            const endpoint = String(llm.endpoint || "").trim();
+            if (!endpoint || sessionLlmApiKey(llm)) return false;
+            try {
+                const url = new URL(endpoint);
+                return url.protocol === "https:" && !isLocalEndpoint(endpoint);
+            } catch {
+                return false;
+            }
+        }
+
+        function updateLlmApiKeyStatus() {
+            if (!llmApiKeyStatus) return;
+            llmApiKeyStatus.textContent = sessionLlmApiKey(appSettings.llm || {}) ? "Set for this session" : "Not saved";
+        }
+
+        function openLlmApiKeyDialog(llm = appSettings.llm || {}, message = "") {
+            if (pendingLlmApiKeyDialog) return pendingLlmApiKeyDialog.promise;
+            const endpoint = String(llm.endpoint || "").trim() || "this endpoint";
+            llmApiKeyDialogText.textContent = message || `Enter the API key for ${endpoint}. It will not be saved.`;
+            llmApiKeyInput.value = "";
+            llmApiKeyDialog.hidden = false;
+            llmApiKeyInput.focus();
+            pendingLlmApiKeyDialog = {};
+            pendingLlmApiKeyDialog.slot = llmApiKeySlot(llm);
+            pendingLlmApiKeyDialog.promise = new Promise(resolve => {
+                pendingLlmApiKeyDialog.resolve = resolve;
+            });
+            return pendingLlmApiKeyDialog.promise;
+        }
+
+        function closeLlmApiKeyDialog(value = "") {
+            llmApiKeyDialog.hidden = true;
+            llmApiKeyInput.value = "";
+            if (pendingLlmApiKeyDialog) {
+                pendingLlmApiKeyDialog.resolve(value);
+                pendingLlmApiKeyDialog = null;
+            }
+        }
+
+        async function ensureLlmApiKey(llm = appSettings.llm || {}) {
+            if (!shouldAskForLlmApiKey(llm)) return sessionLlmApiKey(llm);
+            const apiKey = await openLlmApiKeyDialog(llm);
+            if (!apiKey) {
+                throw new Error("API key is required for this endpoint");
+            }
+            return apiKey;
         }
 
         function setCurrentArticleText(text = "") {
@@ -3722,6 +3821,7 @@
             if (deleteServerButton) {
                 deleteServerButton.disabled = llmServers.length <= 1;
             }
+            updateLlmApiKeyStatus();
             updateContextLengthHint();
             updateSaveSettingsButtonState();
         }
@@ -3975,12 +4075,14 @@
             llmModelSelect.innerHTML = `<option value="">Loading models...</option>`;
             try {
                 const llm = appSettings.llm || {};
+                const apiKey = await ensureLlmApiKey(llm);
                 const response = await fetch("/api/local-llm/models", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         provider: llm.provider,
-                        endpoint: llm.endpoint
+                        endpoint: llm.endpoint,
+                        api_key: apiKey
                     })
                 });
                 if (!response.ok) {
@@ -4025,6 +4127,7 @@
             llmResponse.textContent = "Thinking...";
             try {
                 const llm = appSettings.llm || {};
+                const apiKey = await ensureLlmApiKey(llm);
                 const response = await fetch("/api/local-llm/chat", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -4035,7 +4138,8 @@
                         prompt,
                         system: llm.system,
                         temperature: llm.temperature,
-                        context_length: llm.contextLength
+                        context_length: llm.contextLength,
+                        api_key: apiKey
                     })
                 });
                 if (!response.ok) {
@@ -4832,6 +4936,10 @@
         document.getElementById("saveSettingsButton").addEventListener("click", saveSettingsFromForm);
         document.getElementById("addLlmServerButton").addEventListener("click", addLlmServer);
         document.getElementById("deleteLlmServerButton").addEventListener("click", deleteLlmServer);
+        document.getElementById("setLlmApiKeyButton").addEventListener("click", async () => {
+            saveSettings(readSettingsFromForm(), { persist: false });
+            await openLlmApiKeyDialog(appSettings.llm || {}, "Enter an API key for this LLM endpoint. It will stay in memory only until this page is refreshed.");
+        });
         document.getElementById("loadLlmModelsButton").addEventListener("click", loadLocalModels);
         document.getElementById("sendLlmPromptButton").addEventListener("click", sendLocalPrompt);
         document.getElementById("testWhisperServerButton").addEventListener("click", testWhisperServer);
@@ -4883,6 +4991,7 @@
                 }
                 hideRecordContextMenu();
                 closeRenameDialog();
+                closeLlmApiKeyDialog("");
             }
         });
         document.addEventListener("scroll", hideRecordContextMenu, true);
@@ -4898,6 +5007,25 @@
         renameDialog.addEventListener("pointerdown", event => {
             if (event.target === renameDialog) {
                 closeRenameDialog();
+            }
+        });
+        llmApiKeyForm.addEventListener("submit", event => {
+            event.preventDefault();
+            const apiKey = llmApiKeyInput.value.trim();
+            if (!apiKey) {
+                showToast("API key cannot be empty");
+                return;
+            }
+            const slot = pendingLlmApiKeyDialog?.slot || llmApiKeySlot(appSettings.llm || {});
+            llmSessionApiKeys = { ...llmSessionApiKeys, [slot]: apiKey };
+            updateLlmApiKeyStatus();
+            closeLlmApiKeyDialog(apiKey);
+            showToast("API key set for this session");
+        });
+        cancelLlmApiKeyButton.addEventListener("click", () => closeLlmApiKeyDialog(""));
+        llmApiKeyDialog.addEventListener("pointerdown", event => {
+            if (event.target === llmApiKeyDialog) {
+                closeLlmApiKeyDialog("");
             }
         });
         settingsNav.addEventListener("click", () => {

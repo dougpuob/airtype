@@ -1,6 +1,6 @@
 # AirType
 
-A macOS desktop speech-to-text app. Double-press the configured hotkey to start recording — your voice is transcribed and pasted at the cursor in real time.
+A macOS desktop speech-to-text app. Double-press Right Ctrl or Right Option to start recording — your voice is transcribed and pasted at the cursor in real time.
 
 ## Architecture
 
@@ -9,7 +9,7 @@ A macOS desktop speech-to-text app. Double-press the configured hotkey to start 
 │                              LocalApp (macOS)                                │
 │  ┌──────────────────┐  ┌───────────────────┐  ┌──────────────────────────┐   │
 │  │ Tray/Menu App    │  │ Floating Panel    │  │ Hotkey Listener          │   │
-│  │ config menus     │  │ timer + waveform  │  │ configurable double key  │   │
+│  │ config menus     │  │ timer + waveform  │  │ double-key listener      │   │
 │  └──────────────────┘  └─────────┬─────────┘  └──────────────────────────┘   │
 │                                  │ microphone audio                          │
 │                                  ▼                                           │
@@ -45,7 +45,7 @@ A macOS desktop speech-to-text app. Double-press the configured hotkey to start 
 ## Features
 
 - **Floating dialog** — always-on-top panel with live timer and waveform visualization
-- **Global hotkey** — double-press the configured Right Ctrl or Right Option key to toggle recording
+- **Global hotkey** — double-press Right Ctrl or Right Option to toggle recording
 - **Real-time paste** — transcription result is pasted at the cursor in the active app
 - **Clipboard restore** — original clipboard content is restored after 5 seconds
 - **Background ASR** — transcription runs in a background thread with detailed timing logs
@@ -182,9 +182,9 @@ Global keyboard monitoring requires Accessibility permission:
 
 | Action | Key |
 |---|---|
-| Start/Stop recording | Double-press configured **Right Ctrl** or **Right Option** |
+| Start/Stop recording | Double-press **Right Ctrl** or **Right Option** |
 
-Configure it in the macOS menu under **Hotkey**, or set `[localapp.hotkey] trigger = "right_ctrl"` / `"right_option"` in `~/.airtype/config.toml`.
+Both hotkeys are always enabled, so no menu or config switch is needed.
 
 ## License
 
