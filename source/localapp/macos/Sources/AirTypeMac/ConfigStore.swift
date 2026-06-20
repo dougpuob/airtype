@@ -49,6 +49,7 @@ struct LLMServerEntry {
     let name: String
     let provider: String
     let endpoint: String
+    let apiKey: String
     let models: [String]
     let selectedModel: String
     let contextLength: Int
@@ -71,6 +72,7 @@ struct LLMServerConfig {
     var name: String
     var provider: String
     var endpoint: String
+    var apiKey: String
     var models: [String]
     var selectedModel: String
     var contextLength: Int
@@ -81,6 +83,7 @@ struct LLMServerConfig {
         name: String = "default",
         provider: String = "llama.cpp",
         endpoint: String = "http://127.0.0.1:8080",
+        apiKey: String = "",
         models: [String] = [],
         selectedModel: String = "",
         contextLength: Int = 8192,
@@ -90,6 +93,7 @@ struct LLMServerConfig {
         self.name = name
         self.provider = provider
         self.endpoint = endpoint
+        self.apiKey = apiKey
         self.models = models
         self.selectedModel = selectedModel
         self.contextLength = contextLength
@@ -287,13 +291,14 @@ final class ConfigStore: ObservableObject {
         let name = table["name"] ?? "default"
         let provider = table["provider"] ?? "llama.cpp"
         let endpoint = table["endpoint"] ?? "http://127.0.0.1:8080"
+        let apiKey = table["api_key"] ?? table["api-key"] ?? ""
         let models = parseTomlStringArray(table["models"] ?? "")
         let selectedModel = table["selected-model"] ?? table["default_model"] ?? table["model"] ?? ""
         let contextLength = parseInt(table["contextLength"] ?? "8192", defaultValue: 8192)
         let temperature = parseDouble(table["temperature"] ?? "0.4", defaultValue: 0.4)
         let system = table["system"] ?? ""
         return LLMServerEntry(
-            name: name, provider: provider, endpoint: endpoint,
+            name: name, provider: provider, endpoint: endpoint, apiKey: apiKey,
             models: models, selectedModel: selectedModel, contextLength: contextLength,
             temperature: temperature, system: system
         )
@@ -308,6 +313,7 @@ final class ConfigStore: ObservableObject {
             name: entry.name,
             provider: entry.provider,
             endpoint: entry.endpoint,
+            apiKey: entry.apiKey,
             models: entry.models,
             selectedModel: entry.selectedModel,
             contextLength: entry.contextLength,
@@ -710,6 +716,9 @@ final class ConfigStore: ObservableObject {
                 stringField("webui.llm-server", "endpoint",
                             apply: { $0.webui.llm.endpoint = $1.isEmpty ? "http://127.0.0.1:8080" : $1 },
                             render: { $0.webui.llm.endpoint }),
+                stringField("webui.llm-server", "api_key",
+                            apply: { $0.webui.llm.apiKey = $1 },
+                            render: { $0.webui.llm.apiKey }),
                 arrayField("webui.llm-server", "models",
                            apply: { $0.webui.llm.models = $1 },
                            render: { $0.webui.llm.models }),

@@ -2878,16 +2878,21 @@
                             </div>
                         </div>
                         <div class="setting-field">
+                            <label for="settingLlmProvider">Provider</label>
+                            <select id="settingLlmProvider">
+                                <option value="openai">OpenAI compatible</option>
+                                <option value="llama.cpp">llama.cpp</option>
+                                <option value="ollama">Ollama</option>
+                            </select>
+                        </div>
+                        <div class="setting-field">
                             <label for="settingLlmEndpoint">Endpoint</label>
                             <input id="settingLlmEndpoint" type="url" placeholder="http://127.0.0.1:8080">
                         </div>
                         <div class="setting-field">
-                            <label>API key</label>
-                            <div class="server-row">
-                                <button class="toolbar-btn" id="setLlmApiKeyButton" type="button">Enter key</button>
-                                <span class="session-key-status" id="llmApiKeyStatus">Not saved</span>
-                            </div>
-                            <div class="setting-hint">Kept only until this page is refreshed.</div>
+                            <label for="settingLlmApiKey">API key</label>
+                            <input id="settingLlmApiKey" type="password" autocomplete="off" placeholder="Optional bearer token">
+                            <div class="setting-hint">Saved to ~/.airtype/config.toml for this LLM server.</div>
                         </div>
                         <div class="setting-field">
                             <label for="settingLlmModelSelect">Loaded local models</label>
@@ -3057,6 +3062,7 @@
                 name: "default",
                 provider: "llama.cpp",
                 endpoint: "http://127.0.0.1:8080",
+                api_key: "",
                 model: "",
                 models: [],
                 selected_model: "",
@@ -3108,6 +3114,10 @@
             return llmSessionApiKeys[llmApiKeySlot(llm)] || "";
         }
 
+        function configuredLlmApiKey(llm = appSettings.llm || {}) {
+            return String(llm.api_key || llm["api-key"] || "").trim();
+        }
+
         function isLocalEndpoint(endpoint = "") {
             try {
                 const url = new URL(endpoint);
@@ -3119,7 +3129,7 @@
 
         function shouldAskForLlmApiKey(llm = appSettings.llm || {}) {
             const endpoint = String(llm.endpoint || "").trim();
-            if (!endpoint || sessionLlmApiKey(llm)) return false;
+            if (!endpoint || configuredLlmApiKey(llm) || sessionLlmApiKey(llm)) return false;
             try {
                 const url = new URL(endpoint);
                 return url.protocol === "https:" && !isLocalEndpoint(endpoint);
@@ -3130,7 +3140,9 @@
 
         function updateLlmApiKeyStatus() {
             if (!llmApiKeyStatus) return;
-            llmApiKeyStatus.textContent = sessionLlmApiKey(appSettings.llm || {}) ? "Set for this session" : "Not saved";
+            llmApiKeyStatus.textContent = configuredLlmApiKey(appSettings.llm || {})
+                ? "Saved in config"
+                : (sessionLlmApiKey(appSettings.llm || {}) ? "Set for this session" : "Not saved");
         }
 
         function openLlmApiKeyDialog(llm = appSettings.llm || {}, message = "") {
@@ -3158,6 +3170,8 @@
         }
 
         async function ensureLlmApiKey(llm = appSettings.llm || {}) {
+            const configured = configuredLlmApiKey(llm);
+            if (configured) return configured;
             if (!shouldAskForLlmApiKey(llm)) return sessionLlmApiKey(llm);
             const apiKey = await openLlmApiKeyDialog(llm);
             if (!apiKey) {
@@ -3674,6 +3688,8 @@
         function normalizeLlmServer(server) {
             const llm = { ...defaultSettings.llm, ...(server || {}) };
             llm.name = llm.name || "default";
+            llm.provider = llm.provider || "llama.cpp";
+            llm.api_key = llm.api_key || llm["api-key"] || "";
             llm.models = Array.isArray(llm.models) ? llm.models.filter(Boolean) : [];
             llm.selected_model = llm.selected_model || llm["selected-model"] || llm.default_model || llm.model || "";
             llm.model = llm.selected_model || llm.model || "";
@@ -3714,6 +3730,7 @@
                 name,
                 provider: "llama.cpp",
                 endpoint: "http://127.0.0.1:8080",
+                api_key: "",
                 model: "",
                 selected_model: "",
                 contextLength: 8192,
@@ -3802,7 +3819,13 @@
                 .map(server => `<option value="${escapeHtml(server.name || "default")}">${escapeHtml(server.name || "default")}</option>`)
                 .join("");
             llmNameSelect.value = llm.name || appSettings.default_llm_server_name || "default";
+            const providerSelect = document.getElementById("settingLlmProvider");
+            providerSelect.value = llm.provider || "llama.cpp";
+            if (providerSelect.value !== (llm.provider || "llama.cpp")) {
+                providerSelect.value = "openai";
+            }
             document.getElementById("settingLlmEndpoint").value = llm.endpoint || "http://127.0.0.1:8080";
+            document.getElementById("settingLlmApiKey").value = llm.api_key || "";
             if (Array.isArray(llm.models) && llm.models.length) {
                 llmModelSelect.innerHTML = llm.models
                     .map(modelName => `<option value="${escapeHtml(modelName)}">${escapeHtml(modelName)}</option>`)
@@ -3833,7 +3856,9 @@
             const selectedLlm = {
                 ...existingLlm,
                 name: selectedName,
+                provider: document.getElementById("settingLlmProvider").value || existingLlm.provider || "llama.cpp",
                 endpoint: document.getElementById("settingLlmEndpoint").value.trim(),
+                api_key: document.getElementById("settingLlmApiKey").value.trim(),
                 model: selectedModel,
                 selected_model: selectedModel,
                 contextLength: Number(document.getElementById("settingLlmContext").value) || 8192,
@@ -3902,13 +3927,15 @@
                 return;
             }
             try {
+                const apiKey = configuredLlmApiKey(llm) || sessionLlmApiKey(llm);
                 const response = await fetch("/api/local-llm/health", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     cache: "no-store",
                     body: JSON.stringify({
                         provider: llm.provider,
-                        endpoint: llm.endpoint
+                        endpoint: llm.endpoint,
+                        api_key: apiKey || null
                     })
                 });
                 if (!response.ok) {
@@ -4105,9 +4132,10 @@
                     llmModelSelect.value = storedModel ? storedModel.name : models[0].name;
                     applySelectedModelMetadata();
                 }
-                await saveSettings(readSettingsFromForm(), { persist: false });
+                const saved = await persistSettingsToServer(readSettingsFromForm());
+                saveSettings(readSettingsFromForm(), { persist: false });
                 updateContextLengthHint();
-                showToast(`Loaded ${models.length} model${models.length === 1 ? "" : "s"}`);
+                showToast(`Loaded ${models.length} model${models.length === 1 ? "" : "s"}${saved ? "; settings saved" : ""}`);
             } catch (error) {
                 localModels = [];
                 llmModelSelect.innerHTML = `<option value="">${escapeHtml(error.message || "Fetch model list failed")}</option>`;
@@ -4936,10 +4964,17 @@
         document.getElementById("saveSettingsButton").addEventListener("click", saveSettingsFromForm);
         document.getElementById("addLlmServerButton").addEventListener("click", addLlmServer);
         document.getElementById("deleteLlmServerButton").addEventListener("click", deleteLlmServer);
-        document.getElementById("setLlmApiKeyButton").addEventListener("click", async () => {
-            saveSettings(readSettingsFromForm(), { persist: false });
-            await openLlmApiKeyDialog(appSettings.llm || {}, "Enter an API key for this LLM endpoint. It will stay in memory only until this page is refreshed.");
-        });
+        const setLlmApiKeyButton = document.getElementById("setLlmApiKeyButton");
+        if (setLlmApiKeyButton) {
+            setLlmApiKeyButton.addEventListener("click", async () => {
+                saveSettings(readSettingsFromForm(), { persist: false });
+                const apiKey = await openLlmApiKeyDialog(appSettings.llm || {}, "Enter an API key for this LLM endpoint.");
+                if (apiKey) {
+                    document.getElementById("settingLlmApiKey").value = apiKey;
+                    await saveSettingsFromForm();
+                }
+            });
+        }
         document.getElementById("loadLlmModelsButton").addEventListener("click", loadLocalModels);
         document.getElementById("sendLlmPromptButton").addEventListener("click", sendLocalPrompt);
         document.getElementById("testWhisperServerButton").addEventListener("click", testWhisperServer);
@@ -4948,6 +4983,7 @@
             if (llmModelSelect.value) {
                 applySelectedModelMetadata();
                 saveSettings(readSettingsFromForm(), { persist: false });
+                persistSettingsToServer(readSettingsFromForm());
             }
         });
         document.getElementById("settingLlmName").addEventListener("change", event => {
@@ -4960,6 +4996,7 @@
                 llm: selectedServer,
                 default_llm_server_name: selectedName
             }, { persist: false });
+            persistSettingsToServer(readSettingsFromForm());
             updateContextLengthHint();
         });
         recordContextMenu.addEventListener("click", async event => {
@@ -5018,9 +5055,13 @@
             }
             const slot = pendingLlmApiKeyDialog?.slot || llmApiKeySlot(appSettings.llm || {});
             llmSessionApiKeys = { ...llmSessionApiKeys, [slot]: apiKey };
+            const configInput = document.getElementById("settingLlmApiKey");
+            if (configInput) {
+                configInput.value = apiKey;
+            }
             updateLlmApiKeyStatus();
             closeLlmApiKeyDialog(apiKey);
-            showToast("API key set for this session");
+            showToast("API key ready");
         });
         cancelLlmApiKeyButton.addEventListener("click", () => closeLlmApiKeyDialog(""));
         llmApiKeyDialog.addEventListener("pointerdown", event => {

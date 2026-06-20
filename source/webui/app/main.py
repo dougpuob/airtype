@@ -277,6 +277,7 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
             "name": llm_input.get("name", "default"),
             "provider": llm_input.get("provider", "llama.cpp"),
             "endpoint": llm_input.get("endpoint", "http://127.0.0.1:8080"),
+            "api_key": llm_input.get("api_key") or llm_input.get("api-key") or "",
             "model": llm_input.get("model", ""),
             "models": llm_input.get("models", []),
             "selected_model": llm_input.get("selected_model") or llm_input.get("selected-model") or llm_input.get("model", ""),
@@ -706,10 +707,11 @@ async def list_all_local_models():
             server_name = str(server.get("name", "") or "")
             provider = server.get("provider", "")
             endpoint = server.get("endpoint", "")
+            api_key = server.get("api_key") or server.get("api-key") or None
             if not provider or not endpoint:
                 continue
             try:
-                payload = await list_local_models(LocalModelsRequest(provider=provider, endpoint=endpoint))
+                payload = await list_local_models(LocalModelsRequest(provider=provider, endpoint=endpoint, api_key=api_key))
                 for m in payload.get("models", []):
                     name = m.get("name", "")
                     key = (server_name, name)
@@ -962,8 +964,10 @@ async def create_transcription_article(job_id: str, request: ArticleRequest, rec
     try:
         article = _generate_transcription_article(record, existing, transcript_text)
     except ValueError as e:
+        append_service_log("webui", f"Local LLM article generation skipped: {e}")
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
+        append_service_log("webui", f"Local LLM article generation failed: {e}")
         raise HTTPException(status_code=502, detail=f"Local LLM article generation failed: {str(e)}")
 
     record["article"] = article
@@ -1135,6 +1139,7 @@ def _normalize_llm_server(server: Dict[str, Any]) -> Dict[str, Any]:
     normalized["name"] = str(server.get("name") or normalized.get("name") or "default")
     normalized["provider"] = str(normalized.get("provider") or "llama.cpp")
     normalized["endpoint"] = str(normalized.get("endpoint") or "http://127.0.0.1:8080")
+    normalized["api_key"] = str(normalized.get("api_key") or server.get("api-key") or "")
     normalized["selected_model"] = (
         normalized.get("selected_model")
         or server.get("selected-model")
@@ -1238,6 +1243,7 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
                 f"name = {_toml_string(server.get('name', 'default'))}",
                 f"provider = {_toml_string(server.get('provider', 'llama.cpp'))}",
                 f"endpoint = {_toml_string(server.get('endpoint', 'http://127.0.0.1:8080'))}",
+                f"api_key = {_toml_string(server.get('api_key', ''))}",
                 f"models = {_toml_string_array(server.get('models', []))}",
                 f"selected-model = {_toml_string(server.get('selected_model', server.get('model', '')))}",
                 f"contextLength = {server.get('contextLength', 8192)}",
@@ -2459,15 +2465,31 @@ def _generate_transcription_article(
 
     settings = _read_app_settings()
     llm = settings.get("llm", {}) if isinstance(settings.get("llm"), dict) else {}
-    if not llm.get("model"):
+    model = str(llm.get("model") or llm.get("selected_model") or "").strip()
+    if not model:
+        models = llm.get("models")
+        if isinstance(models, list):
+            model = next((str(candidate).strip() for candidate in models if str(candidate).strip()), "")
+    if not model:
         raise ValueError("Local LLM model is not configured")
 
     system_prompt, user_prompt, request_chars = _article_request_payload(record, transcript_text)
+    provider = str(llm.get("provider") or "llama.cpp")
+    endpoint = str(llm.get("endpoint") or "http://127.0.0.1:8080")
+    api_key = str(llm.get("api_key") or "")
+    server_name = str(llm.get("name") or settings.get("default_llm_server_name") or "default")
+    append_service_log(
+        "webui",
+        "requesting Local LLM article: "
+        f"server={server_name} provider={provider} "
+        f"endpoint={_llm_base_endpoint(endpoint)} model={model} chars={request_chars}",
+    )
     article_text = _local_chat_response(
         LocalChatRequest(
-            provider=llm.get("provider", "llama.cpp"),
-            endpoint=llm.get("endpoint", "http://127.0.0.1:8080"),
-            model=llm.get("model", ""),
+            provider=provider,
+            endpoint=endpoint,
+            api_key=api_key or None,
+            model=model,
             system=system_prompt,
             prompt=user_prompt,
             temperature=float(llm.get("temperature", 0.4) or 0.4),
@@ -2481,8 +2503,9 @@ def _generate_transcription_article(
     now = datetime.now(timezone.utc).isoformat()
     return {
         "text": article_text,
-        "model": llm.get("model"),
-        "provider": llm.get("provider", "llama.cpp"),
+        "model": model,
+        "provider": provider,
+        "server": server_name,
         "request_chars": request_chars,
         "created_at": existing.get("created_at") or now,
         "updated_at": now,
@@ -2633,6 +2656,7 @@ def _run_url_transcription_job(
                 message="Transcript and article ready",
             )
         except Exception as article_error:
+            append_service_log("webui", f"Local LLM article generation failed: {article_error}")
             _update_job(
                 job_id,
                 status="completed",

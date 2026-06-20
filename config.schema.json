@@ -103,6 +103,11 @@
               "name": { "type": "string", "default": "llama.cpp" },
               "provider": { "type": "string", "default": "openai" },
               "endpoint": { "type": "string", "default": "http://114.34.75.131:8088/" },
+              "api_key": {
+                "type": "string",
+                "default": "",
+                "description": "Optional bearer token used when calling this LLM endpoint."
+              },
               "models": {
                 "type": "array",
                 "items": { "type": "string" },

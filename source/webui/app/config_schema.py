@@ -22,6 +22,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "name": "default",
         "provider": "llama.cpp",
         "endpoint": "http://127.0.0.1:8080",
+        "api_key": "",
         "model": "",
         "models": [],
         "selected_model": "",
@@ -222,6 +223,7 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     whisper["temperature"] = _float_in_range(whisper.get("temperature"), 0, minimum=0, maximum=2)
 
     llm = {**DEFAULT_APP_SETTINGS["llm"], **_dict_value(normalized.get("llm"))}
+    llm["api_key"] = str(llm.get("api_key") or llm.get("api-key") or "")
     llm["models"] = _string_list(llm.get("models"))
     llm["selected_model"] = llm.get("selected_model") or llm.get("selected-model") or llm.get("default_model") or llm.get("model", "")
     if llm.get("selected_model"):
@@ -285,6 +287,7 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
         f'name = {_toml_string(llm.get("name", "default"))}',
         f"provider = {_toml_string(llm.get('provider', 'llama.cpp'))}",
         f"endpoint = {_toml_string(llm.get('endpoint', 'http://127.0.0.1:8080'))}",
+        f"api_key = {_toml_string(llm.get('api_key', ''))}",
         f"models = {_toml_string_array(llm.get('models', []))}",
         f"selected-model = {_toml_string(llm.get('selected_model', llm.get('model', '')))}",
         f"contextLength = {_toml_number(llm.get('contextLength', 8192), 8192)}",
