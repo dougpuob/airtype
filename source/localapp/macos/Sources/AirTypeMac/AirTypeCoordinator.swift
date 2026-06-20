@@ -347,11 +347,8 @@ final class AirTypeCoordinator: ObservableObject {
         microphoneModeItem.submenu = microphoneModeMenu
         menu.addItem(microphoneModeItem)
 
-        let llmServerMenu = NSMenu()
-        rebuildLLMServerMenu(llmServerMenu)
-        let llmServerItem = NSMenuItem(title: "LLM Server", action: nil, keyEquivalent: "")
-        llmServerItem.submenu = llmServerMenu
-        menu.addItem(llmServerItem)
+        // The LLM Server menu is only relevant for the web UI and is not needed in the local app.
+        // It has been removed to simplify the local menu.
 
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
