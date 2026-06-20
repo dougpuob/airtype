@@ -2878,6 +2878,14 @@
                             </div>
                         </div>
                         <div class="setting-field">
+                            <label for="settingLlmProvider">Provider</label>
+                            <select id="settingLlmProvider">
+                                <option value="openai">OpenAI compatible</option>
+                                <option value="llama.cpp">llama.cpp</option>
+                                <option value="ollama">Ollama</option>
+                            </select>
+                        </div>
+                        <div class="setting-field">
                             <label for="settingLlmEndpoint">Endpoint</label>
                             <input id="settingLlmEndpoint" type="url" placeholder="http://127.0.0.1:8080">
                         </div>
@@ -3802,6 +3810,11 @@
                 .map(server => `<option value="${escapeHtml(server.name || "default")}">${escapeHtml(server.name || "default")}</option>`)
                 .join("");
             llmNameSelect.value = llm.name || appSettings.default_llm_server_name || "default";
+            const providerSelect = document.getElementById("settingLlmProvider");
+            providerSelect.value = llm.provider || "llama.cpp";
+            if (providerSelect.value !== (llm.provider || "llama.cpp")) {
+                providerSelect.value = "openai";
+            }
             document.getElementById("settingLlmEndpoint").value = llm.endpoint || "http://127.0.0.1:8080";
             if (Array.isArray(llm.models) && llm.models.length) {
                 llmModelSelect.innerHTML = llm.models
@@ -3833,6 +3846,7 @@
             const selectedLlm = {
                 ...existingLlm,
                 name: selectedName,
+                provider: document.getElementById("settingLlmProvider").value || existingLlm.provider || "llama.cpp",
                 endpoint: document.getElementById("settingLlmEndpoint").value.trim(),
                 model: selectedModel,
                 selected_model: selectedModel,
@@ -4105,9 +4119,10 @@
                     llmModelSelect.value = storedModel ? storedModel.name : models[0].name;
                     applySelectedModelMetadata();
                 }
-                await saveSettings(readSettingsFromForm(), { persist: false });
+                const saved = await persistSettingsToServer(readSettingsFromForm());
+                saveSettings(readSettingsFromForm(), { persist: false });
                 updateContextLengthHint();
-                showToast(`Loaded ${models.length} model${models.length === 1 ? "" : "s"}`);
+                showToast(`Loaded ${models.length} model${models.length === 1 ? "" : "s"}${saved ? "; settings saved" : ""}`);
             } catch (error) {
                 localModels = [];
                 llmModelSelect.innerHTML = `<option value="">${escapeHtml(error.message || "Fetch model list failed")}</option>`;
@@ -4948,6 +4963,7 @@
             if (llmModelSelect.value) {
                 applySelectedModelMetadata();
                 saveSettings(readSettingsFromForm(), { persist: false });
+                persistSettingsToServer(readSettingsFromForm());
             }
         });
         document.getElementById("settingLlmName").addEventListener("change", event => {
@@ -4960,6 +4976,7 @@
                 llm: selectedServer,
                 default_llm_server_name: selectedName
             }, { persist: false });
+            persistSettingsToServer(readSettingsFromForm());
             updateContextLengthHint();
         });
         recordContextMenu.addEventListener("click", async event => {

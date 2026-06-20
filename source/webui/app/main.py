@@ -962,8 +962,10 @@ async def create_transcription_article(job_id: str, request: ArticleRequest, rec
     try:
         article = _generate_transcription_article(record, existing, transcript_text)
     except ValueError as e:
+        append_service_log("webui", f"Local LLM article generation skipped: {e}")
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
+        append_service_log("webui", f"Local LLM article generation failed: {e}")
         raise HTTPException(status_code=502, detail=f"Local LLM article generation failed: {str(e)}")
 
     record["article"] = article
@@ -2459,15 +2461,29 @@ def _generate_transcription_article(
 
     settings = _read_app_settings()
     llm = settings.get("llm", {}) if isinstance(settings.get("llm"), dict) else {}
-    if not llm.get("model"):
+    model = str(llm.get("model") or llm.get("selected_model") or "").strip()
+    if not model:
+        models = llm.get("models")
+        if isinstance(models, list):
+            model = next((str(candidate).strip() for candidate in models if str(candidate).strip()), "")
+    if not model:
         raise ValueError("Local LLM model is not configured")
 
     system_prompt, user_prompt, request_chars = _article_request_payload(record, transcript_text)
+    provider = str(llm.get("provider") or "llama.cpp")
+    endpoint = str(llm.get("endpoint") or "http://127.0.0.1:8080")
+    server_name = str(llm.get("name") or settings.get("default_llm_server_name") or "default")
+    append_service_log(
+        "webui",
+        "requesting Local LLM article: "
+        f"server={server_name} provider={provider} "
+        f"endpoint={_llm_base_endpoint(endpoint)} model={model} chars={request_chars}",
+    )
     article_text = _local_chat_response(
         LocalChatRequest(
-            provider=llm.get("provider", "llama.cpp"),
-            endpoint=llm.get("endpoint", "http://127.0.0.1:8080"),
-            model=llm.get("model", ""),
+            provider=provider,
+            endpoint=endpoint,
+            model=model,
             system=system_prompt,
             prompt=user_prompt,
             temperature=float(llm.get("temperature", 0.4) or 0.4),
@@ -2481,8 +2497,9 @@ def _generate_transcription_article(
     now = datetime.now(timezone.utc).isoformat()
     return {
         "text": article_text,
-        "model": llm.get("model"),
-        "provider": llm.get("provider", "llama.cpp"),
+        "model": model,
+        "provider": provider,
+        "server": server_name,
         "request_chars": request_chars,
         "created_at": existing.get("created_at") or now,
         "updated_at": now,
@@ -2633,6 +2650,7 @@ def _run_url_transcription_job(
                 message="Transcript and article ready",
             )
         except Exception as article_error:
+            append_service_log("webui", f"Local LLM article generation failed: {article_error}")
             _update_job(
                 job_id,
                 status="completed",
