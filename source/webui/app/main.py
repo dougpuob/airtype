@@ -1499,13 +1499,10 @@ def _download_media_page(
     max_bytes: int = 2 * 1024 * 1024 * 1024,
     progress_callback: Optional[Callable[[int, Optional[int]], None]] = None,
 ) -> Dict[str, Any]:
-    threads_embed_error = ""
     if _is_threads_url(url):
-        try:
-            return _download_threads_embed(url, destination, max_bytes, progress_callback)
-        except (urllib.error.HTTPError, urllib.error.URLError, RuntimeError) as exc:
-            # Keep yt-dlp as a fallback for a future Threads extractor or authenticated setup.
-            threads_embed_error = str(exc)
+        # yt-dlp does not currently recognise the public threads.com URL form.
+        # Do not obscure a Threads-specific failure with its generic URL error.
+        return _download_threads_embed(url, destination, max_bytes, progress_callback)
 
     downloader_command = _media_downloader_command()
     if not downloader_command:
@@ -1525,8 +1522,6 @@ def _download_media_page(
         )
         if process.returncode != 0:
             detail = (process.stderr or process.stdout).strip()
-            if threads_embed_error:
-                detail = f"Threads embed fallback failed: {threads_embed_error}\n\n{detail}"
             hint = _media_downloader_failure_hint(original_url, detail)
             raise RuntimeError(f"Could not download media URL with yt-dlp: {detail}{hint}")
 
@@ -1588,11 +1583,12 @@ def _download_threads_embed(
     with urllib.request.urlopen(request, timeout=30) as response:
         page = response.read(5 * 1024 * 1024).decode("utf-8", errors="replace")
 
-    match = re.search(r"<source\b[^>]*\bsrc=[\"']([^\"']+)[\"']", page, re.IGNORECASE)
-    if not match:
-        raise RuntimeError("The Threads post does not expose a public video source.")
-
-    media_url = html.unescape(match.group(1))
+    media_url = _threads_media_url_from_embed(page)
+    if not media_url:
+        raise RuntimeError(
+            "The Threads embed response did not contain a public MP4 video source "
+            f"(received {len(page):,} characters)."
+        )
     media_path = _destination_with_media_extension(destination, urllib.parse.urlparse(media_url).path)
     media_request = urllib.request.Request(media_url, headers={**headers, "Referer": embed_url})
     downloaded = 0
@@ -1619,6 +1615,24 @@ def _download_threads_embed(
         "resolved_url": embed_url,
         "downloaded_path": media_path,
     }
+
+
+def _threads_media_url_from_embed(page: str) -> str:
+    """Return a CDN video URL from either HTML markup or embed-page state."""
+    patterns = (
+        r"<(?:source|video)\b[^>]*\bsrc\s*=\s*(?:[\"']([^\"']+)[\"']|([^\s>]+))",
+        r"[\"'](?:video_url|playable_url)[\"']\s*[:=]\s*[\"']([^\"']+)[\"']",
+        r"(https?://[^\"'<\s]+?\.mp4(?:\?[^\"'<\s]*)?)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, page, re.IGNORECASE)
+        if not match:
+            continue
+        candidate = next((group for group in match.groups() if group), "")
+        candidate = html.unescape(candidate).replace("\\/", "/")
+        if candidate.startswith(("http://", "https://")):
+            return candidate
+    return ""
 
 
 def _destination_with_media_extension(destination: str, media_path: str) -> str:
