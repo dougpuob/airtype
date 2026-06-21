@@ -258,6 +258,7 @@ final class AirTypeCoordinator: ObservableObject {
                     wavData: wavData,
                     endpoint: config.backend.selectedEndpoint,
                     language: config.chineseMode.mode,
+                    auth: config.webui.auth,
                     inputID: inputID
                 )
                 await MainActor.run {
@@ -437,7 +438,7 @@ final class AirTypeCoordinator: ObservableObject {
         let backendEndpoint = configStore.config.backend.selectedEndpoint
         Task {
             do {
-                let models = try await backendClient.fetchAllLLMModels(endpoint: backendEndpoint)
+                let models = try await backendClient.fetchAllLLMModels(endpoint: backendEndpoint, auth: configStore.config.webui.auth)
                 await MainActor.run {
                     let modelsByServer = Dictionary(grouping: models) { model in
                         model.server ?? ""
