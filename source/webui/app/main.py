@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import functools
 import base64
+import html
 import os
 import re
 import mimetypes
@@ -1378,7 +1379,7 @@ def _download_url(
     progress_callback: Optional[Callable[[int, Optional[int]], None]] = None,
 ) -> Dict[str, Any]:
     if _should_use_media_downloader(url):
-        metadata = _download_media_page(url, destination)
+        metadata = _download_media_page(url, destination, max_bytes, progress_callback)
         downloaded_path = metadata.get("downloaded_path") if isinstance(metadata.get("downloaded_path"), str) else destination
         if os.path.getsize(downloaded_path) > max_bytes:
             raise ValueError("Remote file is larger than 2GB.")
@@ -1390,7 +1391,7 @@ def _download_url(
         with urllib.request.urlopen(request, timeout=30) as response:
             content_type = response.headers.get("Content-Type", "")
             if content_type and not _is_supported_media(content_type, urllib.parse.urlparse(url).path):
-                return _download_media_page(url, destination)
+                return _download_media_page(url, destination, max_bytes, progress_callback)
             total_bytes = _header_content_length(response.headers.get("Content-Length"))
 
             with open(destination, "wb") as output:
@@ -1413,7 +1414,7 @@ def _download_url(
     except (urllib.error.HTTPError, urllib.error.URLError, ValueError):
         if os.path.exists(destination):
             os.unlink(destination)
-        return _download_media_page(url, destination)
+        return _download_media_page(url, destination, max_bytes, progress_callback)
 
 
 def _header_content_length(value: Optional[str]) -> Optional[int]:
@@ -1426,6 +1427,10 @@ def _header_content_length(value: Optional[str]) -> Optional[int]:
 
 def _preview_url_metadata(url: str) -> Dict[str, Any]:
     if not _should_use_media_downloader(url):
+        return {}
+    if _is_threads_url(url):
+        # The public embed page is the authoritative lightweight source for
+        # Threads until yt-dlp supports the current threads.com URL format.
         return {}
 
     downloader_command = _media_downloader_command()
@@ -1479,6 +1484,7 @@ def _should_use_media_downloader(url: str) -> bool:
             "youtube.com",
             "youtu.be",
             "instagram.com",
+            "threads.com",
             "threads.net",
             "tiktok.com",
             "bilibili.com",
@@ -1487,7 +1493,19 @@ def _should_use_media_downloader(url: str) -> bool:
     ) or "/shorts/" in path
 
 
-def _download_media_page(url: str, destination: str) -> Dict[str, Any]:
+def _download_media_page(
+    url: str,
+    destination: str,
+    max_bytes: int = 2 * 1024 * 1024 * 1024,
+    progress_callback: Optional[Callable[[int, Optional[int]], None]] = None,
+) -> Dict[str, Any]:
+    if _is_threads_url(url):
+        try:
+            return _download_threads_embed(url, destination, max_bytes, progress_callback)
+        except (urllib.error.HTTPError, urllib.error.URLError, RuntimeError):
+            # Keep yt-dlp as a fallback for a future Threads extractor or authenticated setup.
+            pass
+
     downloader_command = _media_downloader_command()
     if not downloader_command:
         raise RuntimeError(
@@ -1529,6 +1547,73 @@ def _download_media_page(url: str, destination: str) -> Dict[str, Any]:
             **({"resolved_url": url} if url != original_url else {}),
             "downloaded_path": destination,
         }
+
+
+def _is_threads_url(url: str) -> bool:
+    host = urllib.parse.urlparse(url).netloc.lower().split(":", 1)[0]
+    return host == "threads.com" or host.endswith(".threads.com") or host == "threads.net" or host.endswith(".threads.net")
+
+
+def _download_threads_embed(
+    url: str,
+    destination: str,
+    max_bytes: int,
+    progress_callback: Optional[Callable[[int, Optional[int]], None]],
+) -> Dict[str, Any]:
+    """Download public Threads video media from the server-rendered embed page.
+
+    Threads moved its public URLs to threads.com before yt-dlp's extractor learned
+    the new host. Its embed page still contains the expiring CDN video URL in a
+    regular <source> tag, so no logged-in cookies or browser automation is needed.
+    """
+    parsed = urllib.parse.urlparse(url)
+    embed_url = urllib.parse.urlunparse((
+        "https",
+        "www.threads.com",
+        parsed.path.rstrip("/") + "/embed",
+        "",
+        "",
+        "",
+    ))
+    headers = {
+        "User-Agent": _bilibili_user_agent(),
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
+    request = urllib.request.Request(embed_url, headers=headers)
+    with urllib.request.urlopen(request, timeout=30) as response:
+        page = response.read(5 * 1024 * 1024).decode("utf-8", errors="replace")
+
+    match = re.search(r"<source\\b[^>]*\\bsrc=[\"']([^\"']+)[\"']", page, re.IGNORECASE)
+    if not match:
+        raise RuntimeError("The Threads post does not expose a public video source.")
+
+    media_url = html.unescape(match.group(1))
+    media_path = _destination_with_media_extension(destination, urllib.parse.urlparse(media_url).path)
+    media_request = urllib.request.Request(media_url, headers={**headers, "Referer": embed_url})
+    downloaded = 0
+    with urllib.request.urlopen(media_request, timeout=60) as response, open(media_path, "wb") as output:
+        total_bytes = _header_content_length(response.headers.get("Content-Length"))
+        if total_bytes and total_bytes > max_bytes:
+            raise ValueError("Remote file is larger than 2GB.")
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            downloaded += len(chunk)
+            if downloaded > max_bytes:
+                raise ValueError("Remote file is larger than 2GB.")
+            output.write(chunk)
+            if progress_callback:
+                progress_callback(downloaded, total_bytes)
+
+    return {
+        "download_method": "threads-embed",
+        "title": _title_from_url_response(url, {}),
+        "content_type": "video/mp4",
+        "url": url,
+        "resolved_url": embed_url,
+        "downloaded_path": media_path,
+    }
 
 
 def _destination_with_media_extension(destination: str, media_path: str) -> str:
