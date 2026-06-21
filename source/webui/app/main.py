@@ -1499,12 +1499,13 @@ def _download_media_page(
     max_bytes: int = 2 * 1024 * 1024 * 1024,
     progress_callback: Optional[Callable[[int, Optional[int]], None]] = None,
 ) -> Dict[str, Any]:
+    threads_embed_error = ""
     if _is_threads_url(url):
         try:
             return _download_threads_embed(url, destination, max_bytes, progress_callback)
-        except (urllib.error.HTTPError, urllib.error.URLError, RuntimeError):
+        except (urllib.error.HTTPError, urllib.error.URLError, RuntimeError) as exc:
             # Keep yt-dlp as a fallback for a future Threads extractor or authenticated setup.
-            pass
+            threads_embed_error = str(exc)
 
     downloader_command = _media_downloader_command()
     if not downloader_command:
@@ -1524,6 +1525,8 @@ def _download_media_page(
         )
         if process.returncode != 0:
             detail = (process.stderr or process.stdout).strip()
+            if threads_embed_error:
+                detail = f"Threads embed fallback failed: {threads_embed_error}\n\n{detail}"
             hint = _media_downloader_failure_hint(original_url, detail)
             raise RuntimeError(f"Could not download media URL with yt-dlp: {detail}{hint}")
 
@@ -1577,7 +1580,9 @@ def _download_threads_embed(
     ))
     headers = {
         "User-Agent": _bilibili_user_agent(),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://www.threads.com/",
     }
     request = urllib.request.Request(embed_url, headers=headers)
     with urllib.request.urlopen(request, timeout=30) as response:
