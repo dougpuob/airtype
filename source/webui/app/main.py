@@ -1573,13 +1573,11 @@ def _download_threads_embed(
         "",
         "",
     ))
-    headers = {
-        "User-Agent": _bilibili_user_agent(),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Referer": "https://www.threads.com/",
-    }
-    request = urllib.request.Request(embed_url, headers=headers)
+    # Threads serves the complete public embed markup, including its media
+    # source, to the same preview client used for link unfurls. Browser-shaped
+    # requests instead receive an app shell without the video URL.
+    embed_headers = {"User-Agent": "facebookexternalhit/1.1"}
+    request = urllib.request.Request(embed_url, headers=embed_headers)
     with urllib.request.urlopen(request, timeout=30) as response:
         page = response.read(5 * 1024 * 1024).decode("utf-8", errors="replace")
 
@@ -1590,7 +1588,10 @@ def _download_threads_embed(
             f"(received {len(page):,} characters)."
         )
     media_path = _destination_with_media_extension(destination, urllib.parse.urlparse(media_url).path)
-    media_request = urllib.request.Request(media_url, headers={**headers, "Referer": embed_url})
+    media_request = urllib.request.Request(media_url, headers={
+        "User-Agent": _bilibili_user_agent(),
+        "Referer": embed_url,
+    })
     downloaded = 0
     with urllib.request.urlopen(media_request, timeout=60) as response, open(media_path, "wb") as output:
         total_bytes = _header_content_length(response.headers.get("Content-Length"))
