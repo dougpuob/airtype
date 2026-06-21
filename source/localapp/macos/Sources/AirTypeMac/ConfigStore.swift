@@ -39,6 +39,7 @@ struct FloatingDialogConfig {
 
 struct WebUIConfig {
     var whisper = WhisperServerConfig()
+    var auth = WebUIAuthConfig()
     var llm = LLMServerConfig()
     var llmServers: [LLMServerConfig] = []
     var selectedServerName = ""
@@ -55,6 +56,12 @@ struct LLMServerEntry {
     let contextLength: Int
     let temperature: Double
     let system: String
+}
+
+struct WebUIAuthConfig {
+    var enabled = false
+    var username = "airtype"
+    var password = ""
 }
 
 struct WhisperServerConfig {
@@ -153,6 +160,11 @@ final class ConfigStore: ObservableObject {
             + "language=\(config.webui.whisper.language), "
             + "beam=\(config.webui.whisper.beam), "
             + "temperature=\(config.webui.whisper.temperature)"
+        )
+        Logger.shared.log(
+            "Config webui.auth: enabled=\(config.webui.auth.enabled), "
+            + "username=\(config.webui.auth.username), "
+            + "password_set=\(!config.webui.auth.password.isEmpty)"
         )
         Logger.shared.log(
             "Config webui.llm-server: selected_server=\(config.webui.selectedServerName), "
@@ -671,6 +683,21 @@ final class ConfigStore: ObservableObject {
                 boolField("localapp.floating-dialog", "move_lock",
                           apply: { $0.floatingDialog.moveLock = parseBool($1, defaultValue: true) },
                           render: { $0.floatingDialog.moveLock ? "true" : "false" })
+            ]
+        ),
+        ConfigSectionSchema(
+            group: "Web UI Settings",
+            name: "webui.auth",
+            fields: [
+                boolField("webui.auth", "enabled", comment: "Require HTTP Basic authentication for the Web UI and API.",
+                          apply: { $0.webui.auth.enabled = parseBool($1, defaultValue: false) },
+                          render: { $0.webui.auth.enabled ? "true" : "false" }),
+                stringField("webui.auth", "username",
+                            apply: { $0.webui.auth.username = $1.isEmpty ? "airtype" : $1 },
+                            render: { $0.webui.auth.username }),
+                stringField("webui.auth", "password",
+                            apply: { $0.webui.auth.password = $1 },
+                            render: { $0.webui.auth.password })
             ]
         ),
         ConfigSectionSchema(

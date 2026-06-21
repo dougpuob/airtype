@@ -8,9 +8,11 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 import functools
+import base64
 import os
 import re
 import mimetypes
+import secrets
 import shutil
 import subprocess
 import sys
@@ -71,6 +73,53 @@ CONFIG_PATH = _find_config_path()
 WEBUI_DATA_DIR = read_webui_data_dir(CONFIG_PATH)
 RECORDS_DIR = os.path.join(WEBUI_DATA_DIR, "records")
 RECORD_ID_PATTERN = re.compile(r"\d{8}-\d{6}")
+
+
+def _webui_auth_settings() -> Dict[str, Any]:
+    settings = read_webui_settings(CONFIG_PATH)
+    auth = settings.get("auth", {}) if isinstance(settings.get("auth"), dict) else {}
+    return auth
+
+
+def _webui_auth_enabled(auth: Dict[str, Any]) -> bool:
+    return bool(auth.get("enabled")) and bool(str(auth.get("username") or "")) and bool(str(auth.get("password") or ""))
+
+
+def _unauthorized_response(request: Request) -> JSONResponse:
+    headers = {"WWW-Authenticate": 'Basic realm="AirType"'}
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"detail": "Authentication required"}, status_code=401, headers=headers)
+    return JSONResponse({"detail": "Authentication required"}, status_code=401, headers=headers)
+
+
+def _basic_auth_ok(authorization: str, auth: Dict[str, Any]) -> bool:
+    prefix = "Basic "
+    if not authorization.startswith(prefix):
+        return False
+    try:
+        decoded = base64.b64decode(authorization[len(prefix):], validate=True).decode("utf-8")
+    except Exception:
+        return False
+    username, separator, password = decoded.partition(":")
+    if not separator:
+        return False
+    return secrets.compare_digest(username, str(auth.get("username") or "")) and secrets.compare_digest(
+        password,
+        str(auth.get("password") or ""),
+    )
+
+
+@app.middleware("http")
+async def require_webui_basic_auth(request: Request, call_next: Callable):
+    if request.method == "OPTIONS" or request.url.path == "/api/health":
+        return await call_next(request)
+    auth = _webui_auth_settings()
+    if not _webui_auth_enabled(auth):
+        return await call_next(request)
+    if _basic_auth_ok(request.headers.get("authorization", ""), auth):
+        return await call_next(request)
+    return _unauthorized_response(request)
+
 
 # Mount static files at /app route (must be before @app.get routes)
 app.mount("/app", StaticFiles(directory=STATIC_DIR, html=True), name="app_static")
@@ -256,11 +305,14 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     whisper_input = incoming.get("whisper", {}) if isinstance(incoming.get("whisper"), dict) else {}
     llm_input = incoming.get("llm", {}) if isinstance(incoming.get("llm"), dict) else {}
     ytdlp_input = incoming.get("ytdlp", {}) if isinstance(incoming.get("ytdlp"), dict) else {}
+    auth_input = incoming.get("auth", {}) if isinstance(incoming.get("auth"), dict) else {}
     current_settings = _read_backend_config_settings()
     current_whisper = current_settings.get("whisper", {})
     current_whisper = current_whisper if isinstance(current_whisper, dict) else {}
     current_ytdlp = current_settings.get("ytdlp", {})
     current_ytdlp = current_ytdlp if isinstance(current_ytdlp, dict) else {}
+    current_auth = current_settings.get("auth", {})
+    current_auth = current_auth if isinstance(current_auth, dict) else {}
     model_dir, model_filename = _split_whisper_model_settings(whisper_input)
     return {
         "whisper": {
@@ -291,6 +343,11 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
                 "cookies_from_browser",
                 ytdlp_input.get("cookies-from-browser", current_ytdlp.get("cookies_from_browser", "")),
             ),
+        },
+        "auth": {
+            "enabled": bool(auth_input.get("enabled", current_auth.get("enabled", False))),
+            "username": auth_input.get("username", current_auth.get("username", "airtype")),
+            "password": auth_input.get("password", current_auth.get("password", "")),
         },
         "llm_servers": incoming.get("llm_servers", []),
         "default_llm_server_name": incoming.get("default_llm_server_name") or llm_input.get("name", "default"),
@@ -1210,6 +1267,7 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
     normalized = normalize_app_settings(settings)
     whisper = normalized["whisper"]
     ytdlp = normalized["ytdlp"]
+    auth = normalized["auth"]
     selected_llm = normalized["llm"]
     default_name = str(settings.get("default_llm_server_name") or selected_llm.get("name") or "default")
     lines = [
@@ -1230,6 +1288,11 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
         "[webui.yt-dlp]",
         f"cookies = {_toml_string(ytdlp.get('cookies', ''))}",
         f"cookies_from_browser = {_toml_string(ytdlp.get('cookies_from_browser', ''))}",
+        "",
+        "[webui.auth]",
+        f"enabled = {'true' if auth.get('enabled') else 'false'}",
+        f"username = {_toml_string(auth.get('username', 'airtype'))}",
+        f"password = {_toml_string(auth.get('password', ''))}",
         "",
     ]
 

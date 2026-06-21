@@ -60,6 +60,23 @@
             }
           }
         },
+        "auth": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Require HTTP Basic authentication for the Web UI and API."
+            },
+            "username": { "type": "string", "default": "airtype" },
+            "password": {
+              "type": "string",
+              "default": "",
+              "description": "Plain-text HTTP Basic password. Leave empty to disable authentication."
+            }
+          }
+        },
         "whisper-server": {
           "type": "object",
           "additionalProperties": false,

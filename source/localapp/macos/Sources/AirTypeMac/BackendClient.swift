@@ -5,13 +5,14 @@ struct TranscriptionResponse: Decodable {
 }
 
 final class BackendClient {
-    func transcribeIME(wavData: Data, endpoint: String, language: String, inputID: Int? = nil) async throws -> String {
+    func transcribeIME(wavData: Data, endpoint: String, language: String, auth: WebUIAuthConfig, inputID: Int? = nil) async throws -> String {
         let url = URL(string: endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/api/transcribe/ime")!
         let startedAt = Date()
         let logPrefix = inputID.map { "Input #\($0): " } ?? ""
         let boundary = "----AirType\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        applyAuth(auth, to: &request)
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = multipartBody(
             boundary: boundary,
@@ -55,10 +56,11 @@ final class BackendClient {
         let models: [LLMModel]
     }
 
-    func fetchAllLLMModels(endpoint: String) async throws -> [LLMModel] {
+    func fetchAllLLMModels(endpoint: String, auth: WebUIAuthConfig) async throws -> [LLMModel] {
         let url = URL(string: endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/api/local-llm/all-models")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        applyAuth(auth, to: &request)
         let (data, response) = try await URLSession.shared.data(for: request)
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(statusCode) else {
@@ -70,6 +72,13 @@ final class BackendClient {
         let models = payload.models.filter { !$0.name.isEmpty }
         Logger.shared.log("fetchAllLLMModels: found \(models.count) models")
         return models
+    }
+
+    private func applyAuth(_ auth: WebUIAuthConfig, to request: inout URLRequest) {
+        guard auth.enabled, !auth.username.isEmpty, !auth.password.isEmpty else { return }
+        let token = "\(auth.username):\(auth.password)"
+        guard let data = token.data(using: .utf8) else { return }
+        request.setValue("Basic \(data.base64EncodedString())", forHTTPHeaderField: "Authorization")
     }
 
     private func multipartBody(boundary: String, fields: [String: String], wavData: Data) -> Data {
