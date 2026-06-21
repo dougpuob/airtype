@@ -2816,6 +2816,26 @@
                     </div>
                 </div>
                 <div class="settings-grid">
+                    <section class="settings-panel">
+                        <h2>Web UI access</h2>
+                        <div class="setting-field">
+                            <label>
+                                <input id="settingAuthEnabled" type="checkbox">
+                                Require username and password
+                            </label>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-field">
+                                <label for="settingAuthUsername">Username</label>
+                                <input id="settingAuthUsername" type="text" autocomplete="username" placeholder="airtype">
+                            </div>
+                            <div class="setting-field">
+                                <label for="settingAuthPassword">Password</label>
+                                <input id="settingAuthPassword" type="password" autocomplete="new-password" placeholder="Required when enabled">
+                            </div>
+                        </div>
+                    </section>
+
                     <section class="settings-panel" id="whisperSettingsPanel">
                         <h2>whisper-server</h2>
                         <div class="setting-row">
@@ -3069,6 +3089,11 @@
                 contextLength: 8192,
                 temperature: 0.4,
                 system: "Summarize and answer questions using the transcript as the source of truth."
+            },
+            auth: {
+                enabled: false,
+                username: "airtype",
+                password: ""
             },
             llm_servers: [],
             default_llm_server_name: "default"
@@ -3662,6 +3687,10 @@
 
         function normalizeSettings(settings) {
             const whisper = { ...defaultSettings.whisper, ...(settings.whisper || {}) };
+            const auth = { ...defaultSettings.auth, ...(settings.auth || {}) };
+            auth.enabled = Boolean(auth.enabled);
+            auth.username = auth.username || "airtype";
+            auth.password = auth.password || "";
             let llm = normalizeLlmServer({ ...defaultSettings.llm, ...(settings.llm || {}) });
             let llmServers = Array.isArray(settings.llm_servers)
                 ? settings.llm_servers.map(server => normalizeLlmServer(server)).filter(server => server.name)
@@ -3679,6 +3708,7 @@
             
             return {
                 whisper,
+                auth,
                 llm,
                 llm_servers: llmServers,
                 default_llm_server_name: llm.name || defaultName
@@ -3811,6 +3841,10 @@
             document.getElementById("settingWhisperModelFilename").value = whisper.model_filename || "";
             document.getElementById("settingWhisperServerBin").value = whisper.server_bin || "";
             document.getElementById("settingWhisperLanguage").value = whisper.language || "zh-tw";
+            const auth = appSettings.auth || {};
+            document.getElementById("settingAuthEnabled").checked = Boolean(auth.enabled);
+            document.getElementById("settingAuthUsername").value = auth.username || "airtype";
+            document.getElementById("settingAuthPassword").value = auth.password || "";
             const llmNameSelect = document.getElementById("settingLlmName");
             const llmServers = Array.isArray(appSettings.llm_servers) && appSettings.llm_servers.length
                 ? appSettings.llm_servers
@@ -3866,6 +3900,11 @@
                 system: document.getElementById("settingLlmSystem").value
             };
             return {
+                auth: {
+                    enabled: document.getElementById("settingAuthEnabled").checked,
+                    username: document.getElementById("settingAuthUsername").value.trim() || "airtype",
+                    password: document.getElementById("settingAuthPassword").value
+                },
                 whisper: {
                     model_dir: document.getElementById("settingWhisperModelDir").value.trim(),
                     model_filename: document.getElementById("settingWhisperModelFilename").value.trim(),

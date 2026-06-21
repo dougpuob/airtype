@@ -37,6 +37,12 @@ move_lock = false
 [webui.storage]
 data_dir = "~/.airtype/data"
 
+[webui.auth]
+# Require HTTP Basic authentication for the Web UI and API.
+enabled = false
+username = "airtype"
+password = ""
+
 [webui.whisper-server]
 model_dir = "~/.airtype/models"
 model_filename = "ggml-large-v3-turbo-q5_0.bin"

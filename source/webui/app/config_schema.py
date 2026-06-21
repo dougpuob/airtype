@@ -34,6 +34,11 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "cookies": "",
         "cookies_from_browser": "",
     },
+    "auth": {
+        "enabled": False,
+        "username": "airtype",
+        "password": "",
+    },
 }
 DEFAULT_WEBUI_DATA_DIR = "~/.airtype/data"
 DEFAULT_CONFIG_SCHEMA_PATH = Path(__file__).resolve().parents[3] / "config.schema.json"
@@ -42,6 +47,7 @@ WEBUI_SECTION_ALIASES = {
     "whisper": ("whisper-server",),
     "llm": ("llm-server",),
     "ytdlp": ("yt-dlp", "ytdlp"),
+    "auth": ("auth",),
 }
 
 
@@ -239,10 +245,16 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         or ""
     )
 
+    auth = {**DEFAULT_APP_SETTINGS["auth"], **_dict_value(normalized.get("auth"))}
+    auth["enabled"] = bool(auth.get("enabled"))
+    auth["username"] = str(auth.get("username") or "airtype")
+    auth["password"] = str(auth.get("password") or "")
+
     return {
         "whisper": whisper,
         "llm": llm,
         "ytdlp": ytdlp,
+        "auth": auth,
     }
 
 
@@ -250,7 +262,7 @@ def remove_webui_sections(text: str) -> str:
     import re
 
     pattern = re.compile(
-        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:whisper-server|llm-server|yt-dlp|ytdlp)\]{1,2})\n.*?(?=^\[|\Z)"
+        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:auth|whisper-server|llm-server|yt-dlp|ytdlp)\]{1,2})\n.*?(?=^\[|\Z)"
     )
     text = pattern.sub("", text)
     header_pattern = re.compile(
@@ -264,6 +276,7 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
     whisper = normalized["whisper"]
     llm = normalized["llm"]
     ytdlp = normalized["ytdlp"]
+    auth = normalized["auth"]
     lines = [
         "#===============================================================================",
         "# Web UI Settings",
@@ -282,6 +295,11 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
         "[webui.yt-dlp]",
         f"cookies = {_toml_string(ytdlp.get('cookies', ''))}",
         f"cookies_from_browser = {_toml_string(ytdlp.get('cookies_from_browser', ''))}",
+        "",
+        "[webui.auth]",
+        f"enabled = {'true' if auth.get('enabled') else 'false'}",
+        f"username = {_toml_string(auth.get('username', 'airtype'))}",
+        f"password = {_toml_string(auth.get('password', ''))}",
         "",
         "[[webui.llm-server]]",
         f'name = {_toml_string(llm.get("name", "default"))}',
