@@ -1588,7 +1588,7 @@ def _download_threads_embed(
     with urllib.request.urlopen(request, timeout=30) as response:
         page = response.read(5 * 1024 * 1024).decode("utf-8", errors="replace")
 
-    match = re.search(r"<source\\b[^>]*\\bsrc=[\"']([^\"']+)[\"']", page, re.IGNORECASE)
+    match = re.search(r"<source\b[^>]*\bsrc=[\"']([^\"']+)[\"']", page, re.IGNORECASE)
     if not match:
         raise RuntimeError("The Threads post does not expose a public video source.")
 
