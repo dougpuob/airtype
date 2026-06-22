@@ -1610,7 +1610,7 @@ def _download_threads_embed(
 
     return {
         "download_method": "threads-embed",
-        "title": _title_from_url_response(url, {}),
+        "title": _threads_title_from_embed(page) or _title_from_url_response(url, {}),
         "content_type": "video/mp4",
         "url": url,
         "resolved_url": embed_url,
@@ -1634,6 +1634,20 @@ def _threads_media_url_from_embed(page: str) -> str:
         if candidate.startswith(("http://", "https://")):
             return candidate
     return ""
+
+
+def _threads_title_from_embed(page: str) -> str:
+    """Use the visible post text in Threads' public embed as the record title."""
+    match = re.search(
+        r'<span class="[^"]*TextContentContainer[^"]*"[^>]*>.*?'
+        r'<span class="BodyTextContainer"><span>(.*?)</span>',
+        page,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return ""
+    title = re.sub(r"<[^>]+>", "", match.group(1))
+    return " ".join(html.unescape(title).split())[:240]
 
 
 def _destination_with_media_extension(destination: str, media_path: str) -> str:
