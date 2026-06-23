@@ -1895,6 +1895,50 @@
             border-radius: 8px;
         }
 
+        #postWeaverPage {
+            display: grid;
+            grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.15fr);
+            gap: 18px;
+            min-height: 0;
+        }
+
+        .weaver-panel {
+            min-width: 0;
+            padding: 22px;
+            background: #ffffff;
+            border: 1px solid var(--panel-line);
+            border-radius: 8px;
+            box-shadow: var(--shadow-soft);
+        }
+
+        .weaver-panel h1,
+        .weaver-panel h2 { margin: 0; color: var(--text); }
+        .weaver-panel h1 { font-size: 24px; }
+        .weaver-panel h2 { font-size: 16px; }
+        .weaver-intro { margin: 8px 0 20px; color: var(--soft); line-height: 1.6; }
+        .weaver-field { display: grid; gap: 8px; margin-top: 16px; }
+        .weaver-field label { color: var(--soft); font-size: 12px; font-weight: 800; }
+        .weaver-field input,
+        .weaver-field textarea {
+            width: 100%; box-sizing: border-box; color: var(--text); background: #fbfcff;
+            border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; font: inherit;
+        }
+        .weaver-field textarea { min-height: 180px; resize: vertical; line-height: 1.55; }
+        .weaver-field input:focus, .weaver-field textarea:focus { outline: 0; border-color: rgba(236, 100, 117, .56); box-shadow: 0 0 0 4px rgba(236, 100, 117, .11); }
+        .weaver-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+        .weaver-hint { margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+        .weaver-posts { display: grid; gap: 10px; margin-top: 18px; }
+        .weaver-post { padding: 13px; background: #fbfcff; border: 1px solid var(--line); border-radius: 8px; }
+        .weaver-post header { display: flex; justify-content: space-between; gap: 10px; color: var(--soft); font-size: 12px; font-weight: 750; }
+        .weaver-post p { margin: 8px 0 0; color: var(--text); white-space: pre-wrap; line-height: 1.55; }
+        .weaver-remove { border: 0; color: var(--red); background: transparent; cursor: pointer; font: inherit; }
+        .weaver-empty { padding: 30px 12px; color: var(--muted); text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
+        .weaver-output { min-height: 440px !important; }
+
+        @media (max-width: 900px) {
+            #postWeaverPage { grid-template-columns: 1fr; }
+        }
+
         /* AirType blush dashboard refresh. */
         :root {
             --bg: #f5f6fb;
@@ -2649,6 +2693,10 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 9h8"/><path d="M8 13h5"/><path d="M15 13h1"/><path d="M8 17h8"/></svg>
                     <span>IME</span>
                 </div>
+                <div class="nav-item" data-panel="post-weaver">
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h8A2.5 2.5 0 0 1 17 5.5v8a2.5 2.5 0 0 1-2.5 2.5h-8A2.5 2.5 0 0 1 4 13.5z"/><path d="M8 7h5M8 10h5M8 13h3"/><path d="M17 8.5h.5A2.5 2.5 0 0 1 20 11v6.5a2.5 2.5 0 0 1-2.5 2.5h-8A2.5 2.5 0 0 1 7 17.5V16"/></svg>
+                    <span>Post Weaver</span>
+                </div>
             </nav>
 
             <div class="settings" id="settingsNav">
@@ -2693,7 +2741,7 @@
         </section>
 
         <main class="workspace">
-            <div class="actionbar">
+            <div class="actionbar" id="transcriptActionbar">
                 <span class="segment-count" id="segmentCount">44 segments</span>
                 <button class="link-btn" id="redoButton">↶ Redo Segmentation</button>
                 <span class="spacer"></span>
@@ -2705,7 +2753,7 @@
                 <button class="toolbar-btn primary" id="summarizeButton">☰ Summarize (3/3)</button>
             </div>
 
-            <div class="wavebar">
+            <div class="wavebar" id="transcriptWavebar">
                 <button class="play" id="playButton">▶</button>
                 <div class="current-time" id="currentTime">00:24</div>
                 <div class="waveform" id="waveform" aria-label="Audio waveform"></div>
@@ -2801,6 +2849,40 @@
                     <div class="transcript-segments-panel">
                         <div class="debug-panel" id="imeDebug" hidden></div>
                         <div id="imeSegments"></div>
+                    </div>
+                </section>
+            </div>
+            <div class="content view-hidden" id="postWeaverPage">
+                <section class="weaver-panel">
+                    <div class="drop-kicker">Social to article</div>
+                    <h1>Post Weaver</h1>
+                    <p class="weaver-intro">Collect a creator's Instagram, Threads, or Facebook posts, then weave them into one readable draft.</p>
+                    <div class="weaver-field">
+                        <label for="postWeaverUrl">Post URL (optional)</label>
+                        <input id="postWeaverUrl" type="url" placeholder="Paste one public post URL">
+                    </div>
+                    <div class="weaver-field">
+                        <label for="postWeaverText">Copied post text</label>
+                        <textarea id="postWeaverText" placeholder="Paste a post here. Add one post at a time to retain its order."></textarea>
+                    </div>
+                    <div class="weaver-actions">
+                        <button class="toolbar-btn" id="importPostButton" type="button">Import URL preview</button>
+                        <button class="toolbar-btn primary" id="addPostButton" type="button">Add post</button>
+                    </div>
+                    <p class="weaver-hint">Some social sites hide text behind login or anti-bot checks. In that case, copy the visible caption and paste it here—the result is more complete anyway.</p>
+                </section>
+                <section class="weaver-panel">
+                    <div class="drop-kicker">Article draft</div>
+                    <h2>Your collected posts</h2>
+                    <div class="weaver-posts" id="postWeaverPosts"></div>
+                    <div class="weaver-field">
+                        <label for="postWeaverOutput">Combined article</label>
+                        <textarea class="weaver-output" id="postWeaverOutput" placeholder="Your combined post thread will appear here."></textarea>
+                    </div>
+                    <div class="weaver-actions">
+                        <button class="toolbar-btn" id="combinePostsButton" type="button">Combine in order</button>
+                        <button class="toolbar-btn" id="polishPostsButton" type="button">Polish with AI</button>
+                        <button class="toolbar-btn" id="copyPostsButton" type="button">Copy article</button>
                     </div>
                 </section>
             </div>
@@ -3061,12 +3143,19 @@
         const playerStatus = document.getElementById("playerStatus");
         const copyArticleButton = document.getElementById("copyArticleButton");
         const transcriptPage = document.getElementById("transcriptPage");
+        const transcriptActionbar = document.getElementById("transcriptActionbar");
+        const transcriptWavebar = document.getElementById("transcriptWavebar");
         const imePage = document.getElementById("imePage");
+        const postWeaverPage = document.getElementById("postWeaverPage");
         const settingsPage = document.getElementById("settingsPage");
         const settingsNav = document.getElementById("settingsNav");
         const llmModelSelect = document.getElementById("settingLlmModelSelect");
         const llmPrompt = document.getElementById("llmPrompt");
         const llmResponse = document.getElementById("llmResponse");
+        const postWeaverUrl = document.getElementById("postWeaverUrl");
+        const postWeaverText = document.getElementById("postWeaverText");
+        const postWeaverPosts = document.getElementById("postWeaverPosts");
+        const postWeaverOutput = document.getElementById("postWeaverOutput");
 
         const defaultSettings = {
             whisper: {
@@ -3124,6 +3213,7 @@
         let localModels = [];
         let llmSessionApiKeys = {};
         let pendingLlmApiKeyDialog = null;
+        let wovenPosts = [];
         function showToast(message) {
             toast.textContent = message;
             toast.classList.add("show");
@@ -4227,6 +4317,120 @@
             return "";
         }
 
+        function renderWovenPosts() {
+            if (!wovenPosts.length) {
+                postWeaverPosts.innerHTML = '<div class="weaver-empty">No posts collected yet. Paste the first caption on the left.</div>';
+                return;
+            }
+            postWeaverPosts.innerHTML = wovenPosts.map((post, index) => `
+                <article class="weaver-post">
+                    <header><span>Post ${index + 1}${post.url ? ` · ${escapeHtml(postHost(post.url))}` : ""}</span><button class="weaver-remove" type="button" data-weaver-remove="${index}">Remove</button></header>
+                    <p>${escapeHtml(post.text)}</p>
+                </article>
+            `).join("");
+        }
+
+        function postHost(url) {
+            try {
+                return new URL(url).hostname || "source";
+            } catch {
+                return "source";
+            }
+        }
+
+        function combinedPostsText() {
+            return wovenPosts.map(post => post.text.trim()).filter(Boolean).join("\n\n");
+        }
+
+        function combineWovenPosts() {
+            if (!wovenPosts.length) {
+                showToast("Add at least one post first");
+                return;
+            }
+            postWeaverOutput.value = combinedPostsText();
+            showToast(`${wovenPosts.length} post${wovenPosts.length === 1 ? "" : "s"} combined`);
+        }
+
+        function addWovenPost() {
+            const text = postWeaverText.value.trim();
+            if (!text) {
+                showToast("Paste a post before adding it");
+                postWeaverText.focus();
+                return;
+            }
+            wovenPosts.push({ text, url: postWeaverUrl.value.trim() });
+            postWeaverText.value = "";
+            postWeaverUrl.value = "";
+            renderWovenPosts();
+            showToast("Post added");
+        }
+
+        async function importWovenPost() {
+            const url = postWeaverUrl.value.trim();
+            if (!url) {
+                showToast("Paste a public post URL first");
+                postWeaverUrl.focus();
+                return;
+            }
+            const button = document.getElementById("importPostButton");
+            button.disabled = true;
+            button.textContent = "Importing...";
+            try {
+                const response = await fetch("/api/post-weaver/import", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ url })
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(payload.detail || "Could not import this post");
+                postWeaverText.value = payload.text || "";
+                showToast("Public preview imported; review it before adding");
+            } catch (error) {
+                showToast(error.message || "Could not import this post");
+            } finally {
+                button.disabled = false;
+                button.textContent = "Import URL preview";
+            }
+        }
+
+        async function polishWovenPosts() {
+            const source = postWeaverOutput.value.trim() || combinedPostsText();
+            if (!source) {
+                showToast("Add posts before polishing");
+                return;
+            }
+            const button = document.getElementById("polishPostsButton");
+            button.disabled = true;
+            button.textContent = "Polishing...";
+            try {
+                const llm = appSettings.llm || {};
+                const apiKey = await ensureLlmApiKey(llm);
+                const response = await fetch("/api/local-llm/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        provider: llm.provider,
+                        endpoint: llm.endpoint,
+                        model: llm.model,
+                        api_key: apiKey,
+                        temperature: llm.temperature,
+                        context_length: llm.contextLength,
+                        system: "你是專業中文編輯。忠實保留原作者觀點與事實，不要加入新資訊。",
+                        prompt: `請把以下依時間排序的社群貼文串成一篇自然、連貫的繁體中文文章。移除重複的社群介面文字與 hashtag 雜訊；保留段落與原本語氣。只輸出文章內容。\n\n${source}`
+                    })
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(payload.detail || "AI polishing failed");
+                postWeaverOutput.value = payload.response || source;
+                showToast("Article polished");
+            } catch (error) {
+                showToast(error.message || "AI polishing failed");
+            } finally {
+                button.disabled = false;
+                button.textContent = "Polish with AI";
+            }
+        }
+
         function appendWhisperSettings(form) {
             const endpoint = activeWhisperEndpoint();
             form.append("whisper_endpoint", endpoint);
@@ -4239,8 +4443,12 @@
         function showPage(page) {
             const isSettings = page === "settings";
             const isIme = page === "ime";
-            transcriptPage.classList.toggle("view-hidden", isSettings || isIme);
+            const isPostWeaver = page === "post-weaver";
+            transcriptPage.classList.toggle("view-hidden", isSettings || isIme || isPostWeaver);
+            transcriptActionbar.classList.toggle("view-hidden", isSettings || isIme || isPostWeaver);
+            transcriptWavebar.classList.toggle("view-hidden", isSettings || isIme || isPostWeaver);
             imePage.classList.toggle("view-hidden", !isIme);
+            postWeaverPage.classList.toggle("view-hidden", !isPostWeaver);
             settingsPage.classList.toggle("view-hidden", !isSettings);
             settingsNav.classList.toggle("active", isSettings);
             document.querySelectorAll(".nav-item[data-panel]").forEach(node => {
@@ -4248,6 +4456,9 @@
             });
             if (isIme) {
                 loadImeRecords();
+            }
+            if (isPostWeaver) {
+                renderWovenPosts();
             }
             if (isSettings) {
                 loadServerSettings({ force: true });
@@ -5119,6 +5330,25 @@
                 showPage(item.dataset.panel);
                 showToast(`${item.dataset.panel} selected`);
             });
+        });
+        document.getElementById("addPostButton").addEventListener("click", addWovenPost);
+        document.getElementById("importPostButton").addEventListener("click", importWovenPost);
+        document.getElementById("combinePostsButton").addEventListener("click", combineWovenPosts);
+        document.getElementById("polishPostsButton").addEventListener("click", polishWovenPosts);
+        document.getElementById("copyPostsButton").addEventListener("click", async () => {
+            const text = postWeaverOutput.value.trim() || combinedPostsText();
+            if (!text) {
+                showToast("Nothing to copy yet");
+                return;
+            }
+            await copyText(text, "Article copied to clipboard");
+        });
+        postWeaverPosts.addEventListener("click", event => {
+            const button = event.target.closest("[data-weaver-remove]");
+            if (!button) return;
+            wovenPosts.splice(Number(button.dataset.weaverRemove), 1);
+            renderWovenPosts();
+            if (!wovenPosts.length) postWeaverOutput.value = "";
         });
 
         async function initializeApp() {

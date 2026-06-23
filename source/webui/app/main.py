@@ -255,6 +255,10 @@ class ArticleRequest(BaseModel):
     force: bool = False
 
 
+class PostImportRequest(BaseModel):
+    url: str
+
+
 class LocalModelsRequest(BaseModel):
     provider: str = "llama.cpp"
     endpoint: str = "http://127.0.0.1:8080"
@@ -1122,6 +1126,65 @@ async def transcribe_from_url(request: UrlTranscribeRequest):
     finally:
         if os.path.exists(temp_path):
             os.unlink(temp_path)
+
+
+@app.post("/api/post-weaver/import")
+async def import_social_post(request: PostImportRequest):
+    """Fetch the public preview text for a social post URL.
+
+    Social networks frequently require a signed-in browser, so this intentionally
+    imports only the page's public Open Graph/description preview. The UI also
+    supports pasting copied post text, which is the dependable path for private
+    or login-gated posts.
+    """
+    parsed = urllib.parse.urlparse(request.url.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="URL must start with http:// or https://")
+
+    try:
+        fetch_request = urllib.request.Request(
+            request.url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; AirType Post Weaver/1.0)",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+        )
+        with urllib.request.urlopen(fetch_request, timeout=15) as response:
+            raw_html = response.read(1_500_000)
+            content_type = response.headers.get_content_type()
+    except urllib.error.HTTPError as error:
+        raise HTTPException(status_code=error.code, detail=f"Could not open post: {error.reason}") from error
+    except urllib.error.URLError as error:
+        raise HTTPException(status_code=400, detail=f"Could not open post: {error.reason}") from error
+
+    if content_type not in {"text/html", "application/xhtml+xml"}:
+        raise HTTPException(status_code=400, detail="The URL did not return a web page")
+
+    page = raw_html.decode("utf-8", errors="replace")
+
+    def meta_value(*names: str) -> str:
+        for name in names:
+            match = re.search(
+                rf'<meta[^>]+(?:property|name)=["\']{re.escape(name)}["\'][^>]+content=["\']([^"\']+)',
+                page,
+                flags=re.IGNORECASE,
+            ) or re.search(
+                rf'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']{re.escape(name)}["\']',
+                page,
+                flags=re.IGNORECASE,
+            )
+            if match:
+                return html.unescape(match.group(1)).strip()
+        return ""
+
+    title = meta_value("og:title", "twitter:title")
+    text = meta_value("og:description", "twitter:description", "description")
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail="This site did not expose post text. Copy the post in your browser and paste it into Post Weaver instead.",
+        )
+    return {"url": request.url, "title": title, "text": text}
 
 
 def _is_supported_media(content_type: Optional[str], filename: Optional[str]) -> bool:
