@@ -17,8 +17,9 @@ from typing import Any
 
 _THREADS_HOSTS = {"threads.com", "www.threads.com", "threads.net", "www.threads.net"}
 _POST_PATH = re.compile(r"^/@(?P<author>[^/?#]+)/post/(?P<id>[A-Za-z0-9_-]+)", re.IGNORECASE)
-_POST_URL = re.compile(
-    r"https?://(?:www\.)?threads\.(?:com|net)/@[^/\"'<>\s]+/post/[A-Za-z0-9_-]+",
+_POST_LINK = re.compile(
+    r"(?:https?://(?:www\.)?threads\.(?:com|net))?"
+    r"(?P<path>/@(?P<author>[^/?#\"'<>\s]+)/post/[A-Za-z0-9_-]+)(?:[?#][^\"'<>\s]*)?",
     re.IGNORECASE,
 )
 
@@ -93,7 +94,22 @@ def _load_page_with_browser(url: str) -> str:
                     )
                 )
                 page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-                page.wait_for_timeout(1_500)
+                # Continuation posts are lazy-loaded.  A few short scrolls
+                # make the currently public portion of the chain part of the
+                # DOM without attempting to crawl an author's whole feed.
+                for _ in range(4):
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    page.wait_for_timeout(700)
+                    for button in page.locator("button").all():
+                        try:
+                            label = (button.inner_text(timeout=250) or "").strip().casefold()
+                            if label in {"view more replies", "show more replies", "view more"}:
+                                button.click(timeout=500)
+                        except Exception:
+                            # Buttons can disappear while Threads re-renders a
+                            # reply group; the next pass will see the new DOM.
+                            continue
+                page.wait_for_timeout(500)
                 return page.content()
             finally:
                 browser.close()
@@ -133,11 +149,9 @@ def _posts_from_page(page_html: str, author: str) -> list[dict[str, str]]:
 
 
 def _first_post_url(markup: str, author: str) -> str:
-    for raw_url in _POST_URL.findall(html.unescape(markup)):
-        parsed = urllib.parse.urlparse(raw_url)
-        match = _POST_PATH.match(parsed.path)
-        if match and match.group("author").casefold() == author.casefold():
-            return urllib.parse.urlunparse(("https", "www.threads.com", parsed.path, "", "", ""))
+    for match in _POST_LINK.finditer(html.unescape(markup).replace("\\/", "/")):
+        if match.group("author").casefold() == author.casefold():
+            return urllib.parse.urlunparse(("https", "www.threads.com", match.group("path"), "", "", ""))
     return ""
 
 
