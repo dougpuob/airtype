@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 import functools
+import asyncio
 import base64
 import html
 import os
@@ -43,6 +44,7 @@ from .config_schema import (
     whisper_model_path_from_settings,
 )
 from .whisper import WhisperCppNotConfigured, transcriber
+from .post_weaver import collect_threads_chain
 
 app = FastAPI(title="AirType API", description="Aircraft Cabin Configuration & Speech Recognition API")
 
@@ -1185,6 +1187,19 @@ async def import_social_post(request: PostImportRequest):
             detail="This site did not expose post text. Copy the post in your browser and paste it into Post Weaver instead.",
         )
     return {"url": request.url, "title": title, "text": text}
+
+
+@app.post("/api/post-weaver/threads-chain")
+async def import_threads_chain(request: PostImportRequest):
+    try:
+        return await asyncio.to_thread(collect_threads_chain, request.url)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        append_service_log("webui", f"Threads chain import failed: {error}")
+        raise HTTPException(status_code=502, detail=f"Could not collect the Threads chain: {error}") from error
 
 
 def _is_supported_media(content_type: Optional[str], filename: Optional[str]) -> bool:

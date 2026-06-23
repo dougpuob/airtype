@@ -2866,10 +2866,10 @@
                         <textarea id="postWeaverText" placeholder="Paste a post here. Add one post at a time to retain its order."></textarea>
                     </div>
                     <div class="weaver-actions">
-                        <button class="toolbar-btn" id="importPostButton" type="button">Import URL preview</button>
+                        <button class="toolbar-btn" id="importPostButton" type="button">Import URL / Threads chain</button>
                         <button class="toolbar-btn primary" id="addPostButton" type="button">Add post</button>
                     </div>
-                    <p class="weaver-hint">Some social sites hide text behind login or anti-bot checks. In that case, copy the visible caption and paste it here—the result is more complete anyway.</p>
+                    <p class="weaver-hint">Threads links are opened in a browser and all currently public continuation posts by the same author are collected automatically. Other social sites import their public preview; paste text when a site hides it behind login.</p>
                 </section>
                 <section class="weaver-panel">
                     <div class="drop-kicker">Article draft</div>
@@ -4376,20 +4376,33 @@
             button.disabled = true;
             button.textContent = "Importing...";
             try {
-                const response = await fetch("/api/post-weaver/import", {
+                const isThreadsUrl = /https?:\/\/(?:www\.)?threads\.(?:com|net)\//i.test(url);
+                const response = await fetch(isThreadsUrl ? "/api/post-weaver/threads-chain" : "/api/post-weaver/import", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ url })
                 });
                 const payload = await response.json().catch(() => ({}));
                 if (!response.ok) throw new Error(payload.detail || "Could not import this post");
+                if (isThreadsUrl) {
+                    const incomingPosts = Array.isArray(payload.posts) ? payload.posts : [];
+                    if (!incomingPosts.length) throw new Error("No public continuation posts were found");
+                    const knownUrls = new Set(wovenPosts.map(post => post.url));
+                    wovenPosts.push(...incomingPosts.filter(post => post.text && !knownUrls.has(post.url)));
+                    postWeaverText.value = "";
+                    postWeaverUrl.value = "";
+                    renderWovenPosts();
+                    combineWovenPosts();
+                    showToast(`Collected ${incomingPosts.length} post${incomingPosts.length === 1 ? "" : "s"} from @${payload.author || "author"}`);
+                    return;
+                }
                 postWeaverText.value = payload.text || "";
                 showToast("Public preview imported; review it before adding");
             } catch (error) {
                 showToast(error.message || "Could not import this post");
             } finally {
                 button.disabled = false;
-                button.textContent = "Import URL preview";
+                button.textContent = "Import URL / Threads chain";
             }
         }
 
