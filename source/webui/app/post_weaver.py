@@ -1,195 +1,215 @@
-"""Utilities for importing the public portion of a Threads post chain.
+"""Public Threads chain collection for the Post Weaver API.
 
-Threads does not provide a stable, unauthenticated API for reading a post and
-its continuation posts.  This module deliberately uses the public web page and
-returns only text the page exposes without signing in.
+Threads server-renders a JSON payload in ``script[data-sjs]`` on public post
+pages.  The payload already contains the visible thread tree, so this module
+uses that structured data rather than trying to infer posts from page text.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from html.parser import HTMLParser
 import html
+import json
 import re
-import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any
+from typing import Any, Iterable
 
 
 _THREADS_HOSTS = {"threads.com", "www.threads.com", "threads.net", "www.threads.net"}
-_POST_PATH = re.compile(r"^/@(?P<author>[^/?#]+)/post/(?P<id>[A-Za-z0-9_-]+)", re.IGNORECASE)
-_POST_LINK = re.compile(
-    r"(?:https?://(?:www\.)?threads\.(?:com|net))?"
-    r"(?P<path>/@(?P<author>[^/?#\"'<>\s]+)/post/[A-Za-z0-9_-]+)(?:[?#][^\"'<>\s]*)?",
-    re.IGNORECASE,
-)
+_POST_PATH = re.compile(r"^/@(?P<author>[^/?#]+)/post/(?P<code>[A-Za-z0-9_-]+)", re.IGNORECASE)
 
 
-def collect_threads_chain(url: str) -> dict[str, Any]:
-    """Collect publicly visible posts belonging to a Threads continuation.
+@dataclass(frozen=True)
+class ThreadsPost:
+    """The small, stable subset Post Weaver needs from a Threads post."""
 
-    The return value intentionally matches the shape consumed by the Post
-    Weaver page: ``{"author": str, "posts": [{"url": str, "text": str}]}``.
-    A browser is used when available because Threads commonly renders post text
-    client-side.  A small HTML metadata fallback keeps importing a single
-    public post useful on hosts where Playwright's browser is not installed.
+    id: str
+    url: str
+    author: str
+    text: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {"url": self.url, "text": self.text}
+
+
+class ThreadsChainCollector:
+    """Collect the public posts in one author's Threads continuation chain.
+
+    No account, cookie, browser, or private Threads endpoint is required. The
+    result is limited to what Threads includes in the public response; private
+    or dynamically hidden replies cannot be recovered by any client-side
+    parser without another request authorised by Threads.
     """
-    normalized_url, author = _validate_threads_url(url)
-    browser_error: RuntimeError | None = None
-    try:
-        page_html = _load_page_with_browser(normalized_url)
-    except RuntimeError as error:
-        # Playwright is an enhancement, not a hard dependency for the single
-        # post preview path.  It is especially useful on the first run, before
-        # `playwright install chromium` has been performed.
-        page_html = ""
-        browser_error = error
-    posts = _posts_from_page(page_html, author)
 
-    if not posts:
-        fallback = _public_preview(normalized_url)
-        if fallback:
-            posts = [{"url": normalized_url, "text": fallback}]
+    def __init__(self, *, max_posts: int = 100, timeout_seconds: int = 20) -> None:
+        self.max_posts = max(1, min(int(max_posts), 500))
+        self.timeout_seconds = timeout_seconds
 
-    if not posts:
-        if browser_error:
-            raise browser_error
-        raise RuntimeError(
-            "Threads did not expose any public post text. Open the post in a browser "
-            "and paste the visible text into Post Weaver instead."
-        )
+    def collect(self, url: str) -> dict[str, Any]:
+        canonical_url, author = self._normalize_url(url)
+        page = self._fetch(canonical_url)
+        payloads = _DataSjsParser.payloads(page)
+        posts = self._posts_from_payloads(payloads, author)
 
-    return {"author": author, "posts": posts}
+        if not posts:
+            preview = _meta_content(page, "og:description") or _meta_content(page, "description")
+            if preview:
+                posts = [ThreadsPost("", canonical_url, author, preview)]
 
+        if not posts:
+            raise RuntimeError(
+                "Threads did not expose public post data for this URL. The post may be private, "
+                "login-walled, deleted, or temporarily rate-limited."
+            )
+        return {"author": author, "posts": [post.as_dict() for post in posts]}
 
-def _validate_threads_url(url: str) -> tuple[str, str]:
-    candidate = str(url or "").strip()
-    parsed = urllib.parse.urlparse(candidate)
-    if parsed.scheme not in {"http", "https"} or parsed.hostname not in _THREADS_HOSTS:
-        raise ValueError("URL must be a public threads.com or threads.net post URL")
+    def _normalize_url(self, url: str) -> tuple[str, str]:
+        parsed = urllib.parse.urlparse(str(url or "").strip())
+        if parsed.scheme not in {"http", "https"} or parsed.hostname not in _THREADS_HOSTS:
+            raise ValueError("URL must be a public threads.com or threads.net post URL")
+        match = _POST_PATH.match(parsed.path)
+        if not match:
+            raise ValueError("URL must point to a Threads post, such as https://www.threads.com/@author/post/POST_ID")
+        path = f"/@{match.group('author')}/post/{match.group('code')}"
+        return urllib.parse.urlunparse(("https", "www.threads.com", path, "", "", "")), urllib.parse.unquote(match.group("author"))
 
-    match = _POST_PATH.match(parsed.path)
-    if not match:
-        raise ValueError("URL must point to a Threads post, for example https://www.threads.com/@author/post/POST_ID")
+    def _fetch(self, url: str) -> str:
+        """Fetch with Chrome TLS impersonation when curl-cffi is available."""
+        headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131 Safari/537.36"
+            ),
+        }
+        try:
+            from curl_cffi import requests as curl_requests
 
-    # Tracking parameters are not part of a post's identity and make de-duping
-    # in the browser UI unreliable.
-    normalized = urllib.parse.urlunparse(("https", "www.threads.com", parsed.path, "", "", ""))
-    return normalized, urllib.parse.unquote(match.group("author")).lstrip("@")
+            response = curl_requests.get(url, headers=headers, impersonate="chrome131", timeout=self.timeout_seconds)
+            response.raise_for_status()
+            return response.text
+        except ImportError:
+            request = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                return response.read(3_000_000).decode("utf-8", errors="replace")
+        except Exception as error:
+            raise RuntimeError(f"Could not open the public Threads post: {error}") from error
 
-
-def _load_page_with_browser(url: str) -> str:
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError as error:
-        raise RuntimeError("Threads import needs the optional Playwright dependency. Run ./scripts/start-webui.sh again.") from error
-
-    try:
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            try:
-                page = browser.new_page(
-                    user_agent=(
-                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131 Safari/537.36"
-                    )
-                )
-                page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-                # Continuation posts are lazy-loaded.  A few short scrolls
-                # make the currently public portion of the chain part of the
-                # DOM without attempting to crawl an author's whole feed.
-                for _ in range(4):
-                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    page.wait_for_timeout(700)
-                    for button in page.locator("button").all():
-                        try:
-                            label = (button.inner_text(timeout=250) or "").strip().casefold()
-                            if label in {"view more replies", "show more replies", "view more"}:
-                                button.click(timeout=500)
-                        except Exception:
-                            # Buttons can disappear while Threads re-renders a
-                            # reply group; the next pass will see the new DOM.
-                            continue
-                page.wait_for_timeout(500)
-                return page.content()
-            finally:
-                browser.close()
-    except Exception as error:
-        # The exception normally means that the browser binary has not been
-        # installed.  Do not silently return an empty chain: that produces a
-        # deceptively successful import in the UI.
-        raise RuntimeError(
-            "Could not open the public Threads page. If this is a new installation, "
-            "run '.venv/bin/python -m playwright install chromium'."
-        ) from error
+    def _posts_from_payloads(self, payloads: Iterable[Any], author: str) -> list[ThreadsPost]:
+        posts: list[ThreadsPost] = []
+        seen_ids: set[str] = set()
+        for payload in payloads:
+            for post in _walk_thread_items(payload):
+                if post.author.casefold() != author.casefold() or post.id in seen_ids:
+                    continue
+                seen_ids.add(post.id)
+                posts.append(post)
+                if len(posts) >= self.max_posts:
+                    return posts
+        return posts
 
 
-def _posts_from_page(page_html: str, author: str) -> list[dict[str, str]]:
-    """Extract visible article blocks without depending on Threads CSS classes."""
-    article_blocks = re.findall(r"<article\b[^>]*>(.*?)</article>", page_html, flags=re.IGNORECASE | re.DOTALL)
-    posts: list[dict[str, str]] = []
-    seen_urls: set[str] = set()
+class _DataSjsParser(HTMLParser):
+    """Extract JSON only from the structured public payload scripts."""
 
-    for block in article_blocks:
-        url = _first_post_url(block, author)
-        text = _visible_text(block)
-        if url and text and url not in seen_urls:
-            posts.append({"url": url, "text": text})
-            seen_urls.add(url)
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.payloads: list[Any] = []
+        self._inside_data_sjs = False
+        self._chunks: list[str] = []
 
-    # Server-rendered Threads pages occasionally omit article elements.  In
-    # that case their Open Graph description is still a faithful public preview
-    # of the initial post, and is preferable to returning nothing.
-    if not posts:
-        canonical = _first_post_url(page_html, author)
-        description = _meta_content(page_html, "og:description") or _meta_content(page_html, "description")
-        if canonical and description:
-            posts.append({"url": canonical, "text": description})
+    @classmethod
+    def payloads(cls, page: str) -> list[Any]:
+        parser = cls()
+        parser.feed(page)
+        parser.close()
+        return parser.payloads
 
-    return posts[:20]
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "script":
+            return
+        values = {name.lower(): value for name, value in attrs}
+        if values.get("type", "").lower() == "application/json" and "data-sjs" in values:
+            self._inside_data_sjs = True
+            self._chunks = []
+
+    def handle_data(self, data: str) -> None:
+        if self._inside_data_sjs:
+            self._chunks.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() != "script" or not self._inside_data_sjs:
+            return
+        self._inside_data_sjs = False
+        try:
+            self.payloads.append(json.loads("".join(self._chunks)))
+        except json.JSONDecodeError:
+            # Some unrelated data-sjs blocks are not standalone JSON. Ignore
+            # them and retain the parseable post payloads.
+            pass
+        self._chunks = []
 
 
-def _first_post_url(markup: str, author: str) -> str:
-    for match in _POST_LINK.finditer(html.unescape(markup).replace("\\/", "/")):
-        if match.group("author").casefold() == author.casefold():
-            return urllib.parse.urlunparse(("https", "www.threads.com", match.group("path"), "", "", ""))
-    return ""
+def _walk_thread_items(value: Any) -> Iterable[ThreadsPost]:
+    """Depth-first walk of Threads' nested ``thread_items`` response objects."""
+    if isinstance(value, dict):
+        items = value.get("thread_items")
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    post = _threads_post(item.get("post"))
+                    if post:
+                        yield post
+                    # A reply tree may be a sibling of the post inside this
+                    # item, so recurse after yielding to preserve page order.
+                    for key, child in item.items():
+                        if key != "post":
+                            yield from _walk_thread_items(child)
+        for key, child in value.items():
+            if key != "thread_items":
+                yield from _walk_thread_items(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_thread_items(child)
 
 
-def _visible_text(markup: str) -> str:
-    markup = re.sub(r"<(script|style|svg|noscript)\b[^>]*>.*?</\1>", " ", markup, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r"<[^>]+>", " ", markup)
-    text = html.unescape(text)
-    text = re.sub(r"\s+", " ", text).strip()
-    # Thread page chrome can be the entire extracted article if a post is not
-    # public; avoid adding such noise as a post.
-    return "" if len(text) < 2 or text.casefold() in {"threads", "log in", "sign up"} else text
+def _threads_post(value: Any) -> ThreadsPost | None:
+    if not isinstance(value, dict):
+        return None
+    user = value.get("user") if isinstance(value.get("user"), dict) else {}
+    author = str(user.get("username") or user.get("username_text") or "").strip()
+    post_id = str(value.get("pk") or value.get("id") or value.get("code") or "").strip()
+    code = str(value.get("code") or "").strip()
+    text = _caption_text(value.get("caption"))
+    if not author or not post_id or not text:
+        return None
+    url = f"https://www.threads.com/@{author}/post/{code}" if code else ""
+    return ThreadsPost(post_id, url, author, text)
 
 
-def _meta_content(page_html: str, name: str) -> str:
+def _caption_text(value: Any) -> str:
+    if isinstance(value, str):
+        text = value
+    elif isinstance(value, dict):
+        text = str(value.get("text") or "")
+    else:
+        return ""
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _meta_content(page: str, name: str) -> str:
     escaped = re.escape(name)
     match = re.search(
-        rf'<meta[^>]+(?:property|name)=["\']{escaped}["\'][^>]+content=["\']([^"\']+)',
-        page_html,
-        flags=re.IGNORECASE,
+        rf'<meta[^>]+(?:property|name)=["\']{escaped}["\'][^>]+content=["\']([^"\']+)', page, re.IGNORECASE
     ) or re.search(
-        rf'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']{escaped}["\']',
-        page_html,
-        flags=re.IGNORECASE,
+        rf'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']{escaped}["\']', page, re.IGNORECASE
     )
     return html.unescape(match.group(1)).strip() if match else ""
 
 
-def _public_preview(url: str) -> str:
-    request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (compatible; AirType Post Weaver/1.0)",
-            "Accept": "text/html,application/xhtml+xml",
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            page_html = response.read(1_500_000).decode("utf-8", errors="replace")
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
-        return ""
-    return _meta_content(page_html, "og:description") or _meta_content(page_html, "description")
+def collect_threads_chain(url: str) -> dict[str, Any]:
+    """Backward-compatible function used by the FastAPI route."""
+    return ThreadsChainCollector().collect(url)
