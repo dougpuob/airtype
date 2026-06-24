@@ -1916,10 +1916,11 @@
         .weaver-panel h1 { font-size: 18px; }
         .weaver-panel h2 { font-size: 15px; }
         .weaver-intro { margin: 6px 0 14px; color: var(--soft); font-size: 13px; line-height: 1.5; }
-        .weaver-capture-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(230px, .55fr); gap: 24px; align-items: start; }
+        .weaver-capture-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(230px, .55fr); gap: 24px; align-items: start; padding-top: 10px; }
         .weaver-field { display: grid; gap: 6px; margin-top: 12px; }
         .weaver-field label { color: var(--soft); font-size: 12px; font-weight: 800; }
         .weaver-field-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .weaver-capture-panel .weaver-field { margin-top: 0; }
         .weaver-field input,
         .weaver-field textarea {
             width: 100%; box-sizing: border-box; color: var(--text); background: #fbfcff;
@@ -1932,9 +1933,9 @@
         .weaver-hint { margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
         .weaver-progress { padding: 2px 0; }
         .weaver-progress-title { margin: 0 0 9px; color: var(--soft); font-size: 12px; font-weight: 800; }
-        .weaver-progress-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
-        .weaver-progress-step { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
-        .weaver-progress-step::before { content: ""; width: 7px; height: 7px; border: 1px solid #b8bec8; border-radius: 50%; background: transparent; }
+        .weaver-progress-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; counter-reset: weaver-step; }
+        .weaver-progress-step { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; counter-increment: weaver-step; }
+        .weaver-progress-step::before { content: counter(weaver-step); display: grid; place-items: center; width: 16px; height: 16px; box-sizing: border-box; border: 1px solid #b8bec8; border-radius: 50%; background: transparent; font-size: 10px; font-weight: 700; }
         .weaver-progress-step.active { color: var(--text); font-weight: 700; }
         .weaver-progress-step.active::before { border-color: #ec6475; background: #ec6475; box-shadow: 0 0 0 3px rgba(236, 100, 117, .14); }
         .weaver-progress-step.complete { color: var(--soft); }
@@ -2894,7 +2895,7 @@
                 <section class="weaver-panel weaver-capture-panel">
                     <div class="weaver-field">
                         <div class="weaver-field-heading">
-                            <label for="postWeaverUrl">URL</label>
+                            <label for="postWeaverUrl">Post URL</label>
                             <div class="weaver-actions">
                                 <button class="toolbar-btn primary" id="capturePostButton" type="button">Capture</button>
                             </div>
@@ -2904,9 +2905,10 @@
                     <aside class="weaver-progress" id="postWeaverProgress" aria-live="polite">
                         <p class="weaver-progress-title">Capture progress</p>
                         <ol class="weaver-progress-list">
-                            <li class="weaver-progress-step" data-weaver-step="capture">Capture post</li>
+                            <li class="weaver-progress-step" data-weaver-step="capture">Capture original post</li>
                             <li class="weaver-progress-step" data-weaver-step="polish">Create AI preview</li>
                             <li class="weaver-progress-step" data-weaver-step="title">Generate title</li>
+                            <li class="weaver-progress-step" data-weaver-step="obsidian">Create Obsidian review</li>
                         </ol>
                     </aside>
                 </section>
@@ -4476,7 +4478,7 @@ END`;
         }
 
         function setWeaverProgress(step = "", status = "idle") {
-            const steps = ["capture", "polish", "title"];
+            const steps = ["capture", "polish", "title", "obsidian"];
             const activeIndex = steps.indexOf(step);
             postWeaverProgress.querySelectorAll("[data-weaver-step]").forEach((item, index) => {
                 item.classList.remove("active", "complete", "error");
@@ -4539,10 +4541,12 @@ END`;
                 currentWeaverStep = "title";
                 setWeaverProgress(currentWeaverStep);
                 capturedPostTitle = await generateWovenPostTitle(polishedContent || combinedPostsText());
+                currentWeaverStep = "obsidian";
+                setWeaverProgress(currentWeaverStep);
                 renderObsidianPreview();
                 saveButton.disabled = false;
                 document.getElementById("weaverCopySection").open = true;
-                setWeaverProgress("title", "complete");
+                setWeaverProgress("obsidian", "complete");
             } catch (error) {
                 setWeaverProgress(currentWeaverStep, "error");
                 showToast(error.message || "Could not capture this post");
