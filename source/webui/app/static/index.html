@@ -1916,10 +1916,12 @@
         .weaver-panel h1 { font-size: 18px; }
         .weaver-panel h2 { font-size: 15px; }
         .weaver-intro { margin: 6px 0 14px; color: var(--soft); font-size: 13px; line-height: 1.5; }
-        .weaver-capture-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(230px, .55fr); gap: 24px; align-items: start; padding-top: 10px; }
+        .weaver-capture-panel { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: start; padding-top: 10px; }
         .weaver-field { display: grid; gap: 6px; margin-top: 12px; }
         .weaver-field label { color: var(--soft); font-size: 12px; font-weight: 800; }
         .weaver-field-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .weaver-url-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .weaver-url-row input { min-width: 0; flex: 1; }
         .weaver-capture-panel .weaver-field { margin-top: 0; }
         .weaver-field input,
         .weaver-field textarea {
@@ -1931,9 +1933,9 @@
         .weaver-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
         .weaver-field-heading .weaver-actions { margin-top: 0; }
         .weaver-hint { margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
-        .weaver-progress { padding: 2px 0; }
-        .weaver-progress-title { margin: 0 0 9px; color: var(--soft); font-size: 12px; font-weight: 800; }
-        .weaver-progress-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; counter-reset: weaver-step; }
+        .weaver-progress { justify-self: end; padding: 2px 0; }
+        .weaver-progress-title { margin: 0 0 9px; color: var(--soft); font-size: 12px; font-weight: 800; text-align: right; }
+        .weaver-progress-list { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, auto); grid-template-columns: repeat(2, max-content); justify-content: end; column-gap: 18px; row-gap: 7px; margin: 0; padding: 0; list-style: none; counter-reset: weaver-step; }
         .weaver-progress-step { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; counter-increment: weaver-step; }
         .weaver-progress-step::before { content: counter(weaver-step); display: grid; place-items: center; width: 16px; height: 16px; box-sizing: border-box; border: 1px solid #b8bec8; border-radius: 50%; background: transparent; font-size: 10px; font-weight: 700; }
         .weaver-progress-step.active { color: var(--text); font-weight: 700; }
@@ -1947,7 +1949,7 @@
         .weaver-post header { display: flex; justify-content: space-between; gap: 10px; color: var(--soft); font-size: 12px; font-weight: 750; }
         .weaver-post p { margin: 8px 0 0; color: var(--text); white-space: pre-wrap; font-size: 10px; line-height: 1.55; }
         .weaver-empty { padding: 30px 12px; color: var(--muted); text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
-        .weaver-output { min-height: 260px !important; font-size: 10px; }
+        .weaver-output { min-height: 260px !important; font-size: 10px !important; }
         .weaver-workspace { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; align-content: start; gap: 8px 18px; padding: 0; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
         .weaver-fold { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; background: #f4f5f7; overflow: hidden; }
         .weaver-fold summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; color: var(--text); cursor: pointer; font-size: 14px; font-weight: 800; list-style: none; }
@@ -1984,6 +1986,9 @@
 
         @media (max-width: 700px) {
             .weaver-capture-panel { grid-template-columns: 1fr; gap: 16px; }
+            .weaver-progress { justify-self: start; }
+            .weaver-progress-title { text-align: left; }
+            .weaver-progress-list { justify-content: start; }
             .weaver-workspace { grid-template-columns: 1fr; }
             #weaverCopySection { grid-column: auto; }
         }
@@ -2896,11 +2901,11 @@
                     <div class="weaver-field">
                         <div class="weaver-field-heading">
                             <label for="postWeaverUrl">Post URL</label>
-                            <div class="weaver-actions">
-                                <button class="toolbar-btn primary" id="capturePostButton" type="button">Capture</button>
-                            </div>
                         </div>
-                        <input id="postWeaverUrl" type="url" placeholder="Paste one public post URL">
+                        <div class="weaver-url-row">
+                            <input id="postWeaverUrl" type="url" placeholder="Paste one public post URL">
+                            <button class="toolbar-btn primary" id="capturePostButton" type="button">Capture</button>
+                        </div>
                     </div>
                     <aside class="weaver-progress" id="postWeaverProgress" aria-live="polite">
                         <p class="weaver-progress-title">Capture progress</p>
