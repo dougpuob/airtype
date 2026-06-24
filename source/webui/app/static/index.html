@@ -3242,8 +3242,9 @@
         let pendingLlmApiKeyDialog = null;
         let wovenPosts = [];
         let capturedPostUrl = "";
+        let capturedPostTitle = "";
         const OBSIDIAN_POST_TEMPLATE = `---
-title: TITLE
+title: {{DATE}} {{TITLE}}
 sources:
   - {{original_url}}
 datetime: {{DATETIME}}
@@ -3255,6 +3256,8 @@ tags:
 ---
 
 # Title
+
+{{TITLE}}
 
 ---
 
@@ -4401,6 +4404,14 @@ END`;
             return wovenPosts.map(post => post.text.trim()).filter(Boolean).join("\n\n");
         }
 
+        function titleFromPostText(text = "") {
+            const firstBlock = String(text)
+                .split(/\n\s*\n/)
+                .map(block => block.trim())
+                .find(Boolean) || "";
+            return firstBlock.replace(/\s+/g, " ").trim();
+        }
+
         async function captureWovenPost() {
             const url = postWeaverUrl.value.trim();
             if (!url) {
@@ -4426,12 +4437,14 @@ END`;
                     wovenPosts = incomingPosts
                         .filter(post => post?.text)
                         .map(post => ({ text: post.text, url: post.url || url }));
+                    capturedPostTitle = titleFromPostText(wovenPosts[0]?.text);
                     renderWovenPosts();
                     showToast(`Captured ${wovenPosts.length} post${wovenPosts.length === 1 ? "" : "s"} from @${payload.author || "author"}`);
                 } else {
                     const text = String(payload.text || "").trim();
                     if (!text) throw new Error("This site did not expose public post text");
                     wovenPosts = [{ text, url }];
+                    capturedPostTitle = String(payload.title || "").trim() || titleFromPostText(text);
                     renderWovenPosts();
                     showToast("Post captured");
                 }
@@ -4509,19 +4522,24 @@ END`;
                 .replace(/[\r\n]+/g, " ");
             const dateParts = localObsidianDateParts();
             const originalUrl = capturedPostUrl;
+            const articleTitle = capturedPostTitle || titleFromPostText(content) || "TITLE";
             const values = {
                 original_url: originalUrl,
                 DATETIME: dateParts.datetime,
                 DATE: dateParts.date,
+                TITLE: articleTitle,
                 content
             };
-            const note = OBSIDIAN_POST_TEMPLATE.replace(/{{(original_url|DATETIME|DATE|content)}}/g, (_, key) => values[key]);
-            const params = new URLSearchParams({ name: title, content: note });
+            const note = OBSIDIAN_POST_TEMPLATE.replace(/{{(original_url|DATETIME|DATE|TITLE|content)}}/g, (_, key) => values[key]);
             const vault = postWeaverObsidianVault.value.trim();
-            if (vault) params.set("vault", vault);
+            const query = [
+                ["name", title],
+                ["content", note],
+                ...(vault ? [["vault", vault]] : [])
+            ].map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&");
 
             postWeaverObsidianTitle.value = title;
-            window.location.href = `obsidian://new?${params.toString()}`;
+            window.location.href = `obsidian://new?${query}`;
             showToast("Opening Obsidian to create the note");
         }
 
