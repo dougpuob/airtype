@@ -179,6 +179,12 @@
                         <div class="transcript-scroll-panel" id="transcriptScrollPanel">
                             <div class="debug-panel" id="transcriptDebug" hidden></div>
                             <div id="segments"></div>
+                            <details class="weaver-fold transcript-obsidian-fold" id="transcriptObsidianSection" open>
+                                <summary><span>Obsidian Preview</span><button class="toolbar-btn weaver-save-button" id="saveTranscriptToObsidianButton" type="button" disabled>Save to Obsidian</button></summary>
+                                <div class="weaver-fold-body">
+                                    <div class="obsidian-note-preview" id="transcriptObsidianPreview" aria-live="polite"></div>
+                                </div>
+                            </details>
                         </div>
                     </div>
                 </section>
