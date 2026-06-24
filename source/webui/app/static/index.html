@@ -1897,7 +1897,7 @@
 
         #postWeaverPage {
             display: grid;
-            grid-template-columns: minmax(250px, 0.7fr) minmax(0, 1.3fr);
+            grid-template-columns: minmax(0, 1fr);
             gap: 14px;
             min-height: 0;
         }
@@ -1930,7 +1930,7 @@
         .weaver-posts { display: grid; gap: 8px; }
         .weaver-post { padding: 11px 12px; background: #fbfcff; border: 1px solid var(--line); border-radius: 8px; }
         .weaver-post header { display: flex; justify-content: space-between; gap: 10px; color: var(--soft); font-size: 12px; font-weight: 750; }
-        .weaver-post p { margin: 8px 0 0; color: var(--text); white-space: pre-wrap; line-height: 1.55; }
+        .weaver-post p { margin: 8px 0 0; color: var(--text); white-space: pre-wrap; font-size: 12px; line-height: 1.55; }
         .weaver-empty { padding: 30px 12px; color: var(--muted); text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
         .weaver-output { min-height: 260px !important; }
         .weaver-workspace { display: grid; align-content: start; gap: 8px; }
@@ -2868,7 +2868,6 @@
             </div>
             <div class="content view-hidden" id="postWeaverPage">
                 <section class="weaver-panel">
-                    <div class="drop-kicker">Social to article</div>
                     <h1>Post Weaver</h1>
                     <p class="weaver-intro">Capture one public post, keep its original text, and preview an optional AI polish before saving it to Obsidian.</p>
                     <div class="weaver-field">
@@ -2881,7 +2880,6 @@
                     <p class="weaver-hint">Threads continuation posts are captured together. Other sites use their public preview; posts hidden behind login cannot be captured.</p>
                 </section>
                 <section class="weaver-panel weaver-workspace">
-                    <div class="drop-kicker">Article draft</div>
                     <details class="weaver-fold" id="weaverSourceSection" open>
                         <summary>Original posts</summary>
                         <div class="weaver-fold-body">
