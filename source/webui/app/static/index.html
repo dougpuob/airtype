@@ -4422,11 +4422,12 @@ END`;
             return firstBlock.replace(/\s+/g, " ").trim();
         }
 
+        const ARTICLE_TITLE_MAX_LENGTH = 30;
+
         function fallbackArticleTitle(text = "") {
             const characters = Array.from(String(text).replace(/\s+/g, " ").trim());
             if (!characters.length) return "TITLE";
-            const opening = sanitizeObsidianTitle(characters.slice(0, 20).join(""));
-            return opening ? `${opening}...` : "TITLE";
+            return sanitizeObsidianTitle(characters.slice(0, ARTICLE_TITLE_MAX_LENGTH).join("")) || "TITLE";
         }
 
         function sanitizeObsidianTitle(text = "") {
@@ -4443,7 +4444,7 @@ END`;
                 .replace(/^#+\s*/, "")
                 .replace(/[「」『』"“”]/g, "")
                 .trim();
-            return sanitizeObsidianTitle(Array.from(normalized).slice(0, 20).join(""));
+            return sanitizeObsidianTitle(Array.from(normalized).slice(0, ARTICLE_TITLE_MAX_LENGTH).join(""));
         }
 
         async function captureWovenPost() {
