@@ -1,0 +1,9 @@
+{
+  "input_url": "https://www.threads.com/@largitdata/post/DZ7jXhqj-rV?xmt=AQG0_w1C-MoakGwaKx5nOFd49R7E6azXpN5OHoQdYnJNYg",
+  "page": "<script type=\"application/json\" data-sjs>{\"thread_items\":[{\"post\":{\"pk\":\"3925887048506927829\",\"code\":\"DZ7jXhqj-rV\",\"user\":{\"username\":\"largitdata\"},\"caption\":{\"text\":\"有沒有一種方法，能讓 OCR 無限轉錄下去? 現在的 OCR 模型只要讀的東西一長，就越跑越慢、越吃記憶體。原因出在 KV cache 會隨著生成內容不斷累積，到後面就拖垮速度。所以目前的模型沒辦法一口氣讀完十幾頁，只能一頁一頁處理，每翻一頁還得清空記憶重來。 但人抄書不是這樣。你抄一整本書速度不會越來越慢，因為你只盯著三個地方：原本的書、剛寫下的那幾個字、還有正要寫的下一個字，前面抄完的根本不會一直回頭重看。 百度發表的 Unlimited OCR 就把這概念搬進 AI，做出核心技術 R-SWA：讓模型對原始圖片永遠看得清楚，但對自己寫過的字只回頭看最近 128 個。這樣短期記憶被固定住、不再膨脹，記憶體和速度從頭到尾都很穩。再配上能把整頁壓成 256 個小單位的圖片處理器，它就能一次讀進好幾十頁、從頭順順讀到尾。 成績也漂亮：在 OmniDocBench 上拿到 93 分左右，比 DeepSeek-OCR 2 高 4 分多，文字、公式、表格全都更準；就算一次塞 40 頁以上，準確度依然很穩；輸出越長優勢越明顯，到 6000 字時比舊模型快約三成。\"}}},{\"post\":{\"pk\":\"3925888519281531266\",\"code\":\"DZ7js7bj1mC\",\"user\":{\"username\":\"largitdata\"},\"caption\":{\"text\":\"專案位置 https://huggingface.co/baidu/Unlimited-OCR\"},\"text_post_app_info\":{\"is_reply\":true,\"reply_to_author\":{\"username\":\"largitdata\"}}}}],\"recommendation\":{\"thread_items\":[{\"post\":{\"pk\":\"3906345139333737829\",\"code\":\"DY2IDUgD61l\",\"user\":{\"username\":\"largitdata\"},\"caption\":{\"text\":\"不屬於這一串的貼文\"},\"text_post_app_info\":{\"is_reply\":false}}}]}}</script>",
+  "expected_post_count": 2,
+  "expected_post_texts": [
+    "有沒有一種方法，能讓 OCR 無限轉錄下去? 現在的 OCR 模型只要讀的東西一長，就越跑越慢、越吃記憶體。原因出在 KV cache 會隨著生成內容不斷累積，到後面就拖垮速度。所以目前的模型沒辦法一口氣讀完十幾頁，只能一頁一頁處理，每翻一頁還得清空記憶重來。 但人抄書不是這樣。你抄一整本書速度不會越來越慢，因為你只盯著三個地方：原本的書、剛寫下的那幾個字、還有正要寫的下一個字，前面抄完的根本不會一直回頭重看。 百度發表的 Unlimited OCR 就把這概念搬進 AI，做出核心技術 R-SWA：讓模型對原始圖片永遠看得清楚，但對自己寫過的字只回頭看最近 128 個。這樣短期記憶被固定住、不再膨脹，記憶體和速度從頭到尾都很穩。再配上能把整頁壓成 256 個小單位的圖片處理器，它就能一次讀進好幾十頁、從頭順順讀到尾。 成績也漂亮：在 OmniDocBench 上拿到 93 分左右，比 DeepSeek-OCR 2 高 4 分多，文字、公式、表格全都更準；就算一次塞 40 頁以上，準確度依然很穩；輸出越長優勢越明顯，到 6000 字時比舊模型快約三成。",
+    "專案位置 https://huggingface.co/baidu/Unlimited-OCR"
+  ]
+}
