@@ -1,0 +1,10 @@
+/*
+ * Stylesheet entry point.
+ *
+ * Keep imports ordered: the latter files deliberately refine the shared
+ * foundation for the current workspace visual language.
+ */
+@import url("./foundation.css");
+@import url("./transcript-layout.css");
+@import url("./workspace-layout.css");
+@import url("./dashboard-layout.css");
