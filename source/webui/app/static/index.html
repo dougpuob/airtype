@@ -4409,6 +4409,21 @@ END`;
             return wovenPosts.map(post => post.text.trim()).filter(Boolean).join("\n\n");
         }
 
+        function uniquePostBlocks(text = "") {
+            const seen = new Set();
+            return String(text)
+                .split(/\n\s*\n/)
+                .map(block => block.trim())
+                .filter(block => {
+                    if (!block) return false;
+                    const key = block.replace(/\s+/g, " ").trim();
+                    if (seen.has(key)) return false;
+                    seen.add(key);
+                    return true;
+                })
+                .join("\n\n");
+        }
+
         function titleFromPostText(text = "") {
             const firstBlock = String(text)
                 .split(/\n\s*\n/)
@@ -4498,7 +4513,7 @@ END`;
         }
 
         async function polishWovenPosts() {
-            const source = combinedPostsText();
+            const source = uniquePostBlocks(combinedPostsText());
             if (!source) {
                 return false;
             }
@@ -4515,8 +4530,8 @@ END`;
                         api_key: apiKey,
                         temperature: llm.temperature,
                         context_length: llm.contextLength,
-                        system: "你是專業中文編輯。忠實保留原作者觀點與事實，不要加入新資訊。",
-                        prompt: `請把以下依時間排序的社群貼文串成一篇自然、連貫的繁體中文文章。移除重複的社群介面文字與 hashtag 雜訊；保留段落與原本語氣。只輸出文章內容。\n\n${source}`
+                        system: "你是嚴謹、克制的繁體中文編輯。忠實保留原文的觀點、時間線與事實，不得加入新資訊、評論、推測、俏皮語氣、誇張修辭或宣傳式文字。",
+                        prompt: `請將以下社群貼文整理成一篇通順、簡潔、語氣中性的繁體中文文章。\n\n要求：\n1. 移除重複段落、重複敘述、社群介面文字與 hashtag 雜訊；同一事實只保留一次。\n2. 只做必要的語句銜接與錯字修正，不要改寫成花俏、幽默或煽動性的文風。\n3. 保留原本段落與事實順序；不新增標題、標籤、摘要或任何說明。\n4. 只輸出完成後的文章正文。\n\n原始貼文：\n${source}`
                     })
                 });
                 const payload = await response.json().catch(() => ({}));
