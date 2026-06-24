@@ -1897,43 +1897,53 @@
 
         #postWeaverPage {
             display: grid;
-            grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.15fr);
-            gap: 18px;
+            grid-template-columns: minmax(250px, 0.7fr) minmax(0, 1.3fr);
+            gap: 14px;
             min-height: 0;
         }
 
         .weaver-panel {
             min-width: 0;
-            padding: 22px;
+            padding: 16px;
             background: #ffffff;
-            border: 1px solid var(--panel-line);
+            border: 1px solid var(--line);
             border-radius: 8px;
-            box-shadow: var(--shadow-soft);
+            box-shadow: 0 1px 2px rgba(35, 45, 66, 0.04);
         }
 
         .weaver-panel h1,
         .weaver-panel h2 { margin: 0; color: var(--text); }
-        .weaver-panel h1 { font-size: 24px; }
-        .weaver-panel h2 { font-size: 16px; }
-        .weaver-intro { margin: 8px 0 20px; color: var(--soft); line-height: 1.6; }
-        .weaver-field { display: grid; gap: 8px; margin-top: 16px; }
+        .weaver-panel h1 { font-size: 18px; }
+        .weaver-panel h2 { font-size: 15px; }
+        .weaver-intro { margin: 6px 0 14px; color: var(--soft); font-size: 13px; line-height: 1.5; }
+        .weaver-field { display: grid; gap: 6px; margin-top: 12px; }
         .weaver-field label { color: var(--soft); font-size: 12px; font-weight: 800; }
         .weaver-field input,
         .weaver-field textarea {
             width: 100%; box-sizing: border-box; color: var(--text); background: #fbfcff;
             border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; font: inherit;
         }
-        .weaver-field textarea { min-height: 180px; resize: vertical; line-height: 1.55; }
+        .weaver-field textarea { min-height: 140px; resize: vertical; line-height: 1.55; }
         .weaver-field input:focus, .weaver-field textarea:focus { outline: 0; border-color: rgba(236, 100, 117, .56); box-shadow: 0 0 0 4px rgba(236, 100, 117, .11); }
-        .weaver-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+        .weaver-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
         .weaver-hint { margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
-        .weaver-posts { display: grid; gap: 10px; margin-top: 18px; }
-        .weaver-post { padding: 13px; background: #fbfcff; border: 1px solid var(--line); border-radius: 8px; }
+        .weaver-posts { display: grid; gap: 8px; }
+        .weaver-post { padding: 11px 12px; background: #fbfcff; border: 1px solid var(--line); border-radius: 8px; }
         .weaver-post header { display: flex; justify-content: space-between; gap: 10px; color: var(--soft); font-size: 12px; font-weight: 750; }
         .weaver-post p { margin: 8px 0 0; color: var(--text); white-space: pre-wrap; line-height: 1.55; }
         .weaver-remove { border: 0; color: var(--red); background: transparent; cursor: pointer; font: inherit; }
         .weaver-empty { padding: 30px 12px; color: var(--muted); text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
-        .weaver-output { min-height: 440px !important; }
+        .weaver-output { min-height: 260px !important; }
+        .weaver-workspace { display: grid; align-content: start; gap: 8px; }
+        .weaver-fold { border: 1px solid var(--line); border-radius: 8px; background: #ffffff; overflow: hidden; }
+        .weaver-fold summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; color: var(--text); cursor: pointer; font-size: 14px; font-weight: 800; list-style: none; }
+        .weaver-fold summary::-webkit-details-marker { display: none; }
+        .weaver-fold summary::after { content: "+"; color: var(--soft); font-size: 18px; font-weight: 400; line-height: 1; }
+        .weaver-fold[open] summary { border-bottom: 1px solid var(--line); background: #fbfcff; }
+        .weaver-fold[open] summary::after { content: "−"; }
+        .weaver-fold-body { padding: 12px 14px 14px; }
+        .weaver-fold-body .weaver-field:first-child { margin-top: 0; }
+        .weaver-fold-note { margin: 0; color: var(--soft); font-size: 12px; line-height: 1.5; }
 
         @media (max-width: 900px) {
             #postWeaverPage { grid-template-columns: 1fr; }
@@ -2871,19 +2881,38 @@
                     </div>
                     <p class="weaver-hint">Threads links are opened in a browser and all currently public continuation posts by the same author are collected automatically. Other social sites import their public preview; paste text when a site hides it behind login.</p>
                 </section>
-                <section class="weaver-panel">
+                <section class="weaver-panel weaver-workspace">
                     <div class="drop-kicker">Article draft</div>
-                    <h2>Your collected posts</h2>
-                    <div class="weaver-posts" id="postWeaverPosts"></div>
-                    <div class="weaver-field">
-                        <label for="postWeaverOutput">Combined article</label>
-                        <textarea class="weaver-output" id="postWeaverOutput" placeholder="Your combined post thread will appear here."></textarea>
-                    </div>
-                    <div class="weaver-actions">
-                        <button class="toolbar-btn" id="combinePostsButton" type="button">Combine in order</button>
-                        <button class="toolbar-btn" id="polishPostsButton" type="button">Polish with AI</button>
-                        <button class="toolbar-btn" id="copyPostsButton" type="button">Copy article</button>
-                    </div>
+                    <details class="weaver-fold" id="weaverSourceSection" open>
+                        <summary>Original posts</summary>
+                        <div class="weaver-fold-body">
+                            <div class="weaver-posts" id="postWeaverPosts"></div>
+                            <div class="weaver-actions">
+                                <button class="toolbar-btn" id="combinePostsButton" type="button">Combine in order</button>
+                            </div>
+                        </div>
+                    </details>
+                    <details class="weaver-fold" id="weaverPolishSection">
+                        <summary>Polish with AI</summary>
+                        <div class="weaver-fold-body">
+                            <div class="weaver-field">
+                                <label for="postWeaverOutput">Combined article</label>
+                                <textarea class="weaver-output" id="postWeaverOutput" placeholder="Combine the original posts, then polish the article here."></textarea>
+                            </div>
+                            <div class="weaver-actions">
+                                <button class="toolbar-btn primary" id="polishPostsButton" type="button">Polish with AI</button>
+                            </div>
+                        </div>
+                    </details>
+                    <details class="weaver-fold" id="weaverCopySection">
+                        <summary>Copy article</summary>
+                        <div class="weaver-fold-body">
+                            <p class="weaver-fold-note">Copy the combined or AI-polished article to your clipboard.</p>
+                            <div class="weaver-actions">
+                                <button class="toolbar-btn" id="copyPostsButton" type="button">Copy article</button>
+                            </div>
+                        </div>
+                    </details>
                 </section>
             </div>
             <div class="settings-page view-hidden" id="settingsPage">
@@ -4348,6 +4377,7 @@
                 return;
             }
             postWeaverOutput.value = combinedPostsText();
+            document.getElementById("weaverPolishSection").open = true;
             showToast(`${wovenPosts.length} post${wovenPosts.length === 1 ? "" : "s"} combined`);
         }
 
@@ -4435,6 +4465,7 @@
                 const payload = await response.json().catch(() => ({}));
                 if (!response.ok) throw new Error(payload.detail || "AI polishing failed");
                 postWeaverOutput.value = payload.response || source;
+                document.getElementById("weaverCopySection").open = true;
                 showToast("Article polished");
             } catch (error) {
                 showToast(error.message || "AI polishing failed");
