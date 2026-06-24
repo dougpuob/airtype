@@ -1898,8 +1898,10 @@
         #postWeaverPage {
             display: grid;
             grid-template-columns: minmax(0, 1fr);
+            grid-template-rows: auto minmax(0, 1fr);
             gap: 14px;
             min-height: 0;
+            overflow: hidden;
         }
 
         .weaver-panel {
@@ -1921,7 +1923,7 @@
         .weaver-field label { color: var(--soft); font-size: 12px; font-weight: 800; }
         .weaver-field-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
         .weaver-url-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-        .weaver-url-row input { min-width: 0; flex: 1; }
+        .weaver-url-row input { min-width: 0; flex: 1; font-size: 12px; }
         .weaver-capture-panel .weaver-field { margin-top: 0; }
         .weaver-field input,
         .weaver-field textarea {
@@ -1950,7 +1952,7 @@
         .weaver-post p { margin: 8px 0 0; color: var(--text); white-space: pre-wrap; font-size: 10px; line-height: 1.55; }
         .weaver-empty { padding: 30px 12px; color: var(--muted); text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
         .weaver-output { min-height: 260px !important; font-size: 10px !important; }
-        .weaver-workspace { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; align-content: start; gap: 8px 18px; padding: 0; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+        .weaver-workspace { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: minmax(0, 1fr) auto; min-height: 0; overflow: hidden; align-items: stretch; gap: 8px 18px; padding: 0; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
         .weaver-fold { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; background: #f4f5f7; overflow: hidden; }
         .weaver-fold summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; color: var(--text); cursor: pointer; font-size: 14px; font-weight: 800; list-style: none; }
         .weaver-fold summary::-webkit-details-marker { display: none; }
@@ -1961,6 +1963,8 @@
         #weaverPolishSection .weaver-fold-body,
         #weaverPolishSection .weaver-field { display: flex; flex: 1; flex-direction: column; }
         #weaverPolishSection .weaver-output { flex: 1; }
+        #weaverSourceSection { min-height: 0; }
+        #weaverSourceSection .weaver-fold-body { min-height: 0; overflow: auto; }
         .weaver-fold-body .weaver-field:first-child { margin-top: 0; }
         .weaver-fold-note { margin: 0; color: var(--soft); font-size: 12px; line-height: 1.5; }
         .weaver-save-button { margin-left: auto; }
