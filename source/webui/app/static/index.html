@@ -2765,7 +2765,6 @@
                 <button class="toolbar-btn" id="exportButton">⇧ Export⌄</button>
                 <button class="toolbar-btn optional">✦ Ask AI <span class="pro">PRO</span></button>
                 <button class="toolbar-btn optional" disabled>◎ Translate <span class="pro">PRO</span></button>
-                <button class="toolbar-btn primary" id="summarizeButton">☰ Summarize (3/3)</button>
             </div>
 
             <div class="wavebar" id="transcriptWavebar">
@@ -5365,7 +5364,6 @@ END`;
             showToast(`Cut ${removed.length} segment`);
         });
         document.getElementById("exportButton").addEventListener("click", exportTranscript);
-        document.getElementById("summarizeButton").addEventListener("click", summarize);
         document.getElementById("redoButton").addEventListener("click", redoSegmentation);
         document.getElementById("playButton").addEventListener("click", () => showToast("Playback preview"));
         [mediaViewer, audioViewer].forEach(element => {
