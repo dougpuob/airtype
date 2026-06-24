@@ -1164,20 +1164,26 @@ async def import_social_post(request: PostImportRequest):
 
     page = raw_html.decode("utf-8", errors="replace")
 
-    def meta_value(*names: str) -> str:
+    def meta_values(*names: str) -> list[str]:
+        values: list[str] = []
         for name in names:
-            match = re.search(
+            matches = re.findall(
                 rf'<meta[^>]+(?:property|name)=["\']{re.escape(name)}["\'][^>]+content=["\']([^"\']+)',
                 page,
                 flags=re.IGNORECASE,
-            ) or re.search(
+            ) + re.findall(
                 rf'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']{re.escape(name)}["\']',
                 page,
                 flags=re.IGNORECASE,
             )
-            if match:
-                return html.unescape(match.group(1)).strip()
-        return ""
+            for match in matches:
+                value = html.unescape(match).strip()
+                if value and value not in values:
+                    values.append(value)
+        return values
+
+    def meta_value(*names: str) -> str:
+        return next(iter(meta_values(*names)), "")
 
     title = meta_value("og:title", "twitter:title")
     text = meta_value("og:description", "twitter:description", "description")
@@ -1186,7 +1192,11 @@ async def import_social_post(request: PostImportRequest):
             status_code=422,
             detail="This site did not expose post text. Copy the post in your browser and paste it into Post Weaver instead.",
         )
-    return {"url": request.url, "title": title, "text": text}
+    media_urls = meta_values(
+        "og:image", "og:image:url", "og:image:secure_url", "og:video", "og:video:url",
+        "og:video:secure_url", "twitter:image", "twitter:player:stream",
+    )
+    return {"url": request.url, "title": title, "text": text, "media_urls": media_urls}
 
 
 @app.post("/api/post-weaver/threads-chain")

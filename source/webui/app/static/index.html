@@ -3239,7 +3239,7 @@
         const OBSIDIAN_POST_TEMPLATE = `---
 title: {{DATE}} {{TITLE}}
 sources:
-  - {{original_url}}
+{{sources}}
 datetime: {{DATETIME}}
 tags:
   - {{DATE}}
@@ -4475,14 +4475,14 @@ END`;
                     if (!incomingPosts.length) throw new Error("No public continuation posts were found");
                     wovenPosts = incomingPosts
                         .filter(post => post?.text)
-                        .map(post => ({ text: post.text, url: post.url || url }));
+                        .map(post => ({ text: post.text, url: post.url || url, mediaUrls: Array.isArray(post.media_urls) ? post.media_urls : [] }));
                     capturedPostTitle = titleFromPostText(wovenPosts[0]?.text);
                     renderWovenPosts();
                     showToast(`Captured ${wovenPosts.length} post${wovenPosts.length === 1 ? "" : "s"} from @${payload.author || "author"}`);
                 } else {
                     const text = String(payload.text || "").trim();
                     if (!text) throw new Error("This site did not expose public post text");
-                    wovenPosts = [{ text, url }];
+                    wovenPosts = [{ text, url, mediaUrls: Array.isArray(payload.media_urls) ? payload.media_urls : [] }];
                     capturedPostTitle = String(payload.title || "").trim() || titleFromPostText(text);
                     renderWovenPosts();
                     showToast("Post captured");
@@ -4584,24 +4584,48 @@ END`;
             return `${date} ${title}`;
         }
 
+        function sourceUrls() {
+            const candidates = [capturedPostUrl, ...wovenPosts.flatMap(post => Array.isArray(post.mediaUrls) ? post.mediaUrls : [])];
+            const seen = new Set();
+            return candidates.filter(value => {
+                const url = String(value || "").trim();
+                if (!url || seen.has(url)) return false;
+                seen.add(url);
+                return true;
+            });
+        }
+
+        function legacyYamlSourceList(urls) {
+            return urls.map(url => `  - "${url.replace(/\\\\/g, "\\\\\\\\").replace(/"/g, '\\\\"')}"`).join("\n");
+        }
+
+        function yamlSourceList(urls) {
+            return urls.map(url => {
+                const escaped = String(url).split("\\").join("\\\\").split('"').join('\\"');
+                return '  - "' + escaped + '"';
+            }).join("\n");
+        }
+
         function buildObsidianNote() {
             const content = combinedPostsText();
             if (!content) return null;
             const dateParts = localObsidianDateParts();
             const originalUrl = capturedPostUrl;
+            const sources = sourceUrls();
             const polishedContent = postWeaverOutput.value.trim();
             const articleTitle = sanitizeObsidianTitle(
                 capturedPostTitle || fallbackArticleTitle(polishedContent || content)
             ) || "TITLE";
             const values = {
                 original_url: originalUrl,
+                sources: yamlSourceList(sources),
                 DATETIME: dateParts.datetime,
                 DATE: dateParts.date,
                 TITLE: articleTitle,
                 polished_content: polishedContent,
                 content
             };
-            const note = OBSIDIAN_POST_TEMPLATE.replace(/{{(original_url|DATETIME|DATE|TITLE|polished_content|content)}}/g, (_, key) => values[key]);
+            const note = OBSIDIAN_POST_TEMPLATE.replace(/{{(sources|DATETIME|DATE|TITLE|polished_content|content)}}/g, (_, key) => values[key]);
             return {
                 articleTitle,
                 content,
@@ -4609,6 +4633,7 @@ END`;
                 note,
                 noteTitle: defaultObsidianNoteTitle(),
                 originalUrl,
+                sources,
                 polishedContent
             };
         }
@@ -4620,7 +4645,7 @@ END`;
                 postWeaverObsidianPreview.textContent = "Capture a public post to preview the note.";
                 return;
             }
-            const source = draft.originalUrl || "—";
+            const source = draft.sources.length ? draft.sources.join("\n") : "—";
             const polished = draft.polishedContent || "AI publishing was unavailable for this capture.";
             postWeaverObsidianPreview.className = "obsidian-note-preview";
             postWeaverObsidianPreview.innerHTML = `
