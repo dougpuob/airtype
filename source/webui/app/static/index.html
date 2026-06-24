@@ -1916,8 +1916,10 @@
         .weaver-panel h1 { font-size: 18px; }
         .weaver-panel h2 { font-size: 15px; }
         .weaver-intro { margin: 6px 0 14px; color: var(--soft); font-size: 13px; line-height: 1.5; }
+        .weaver-capture-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(230px, .55fr); gap: 24px; align-items: start; }
         .weaver-field { display: grid; gap: 6px; margin-top: 12px; }
         .weaver-field label { color: var(--soft); font-size: 12px; font-weight: 800; }
+        .weaver-field-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
         .weaver-field input,
         .weaver-field textarea {
             width: 100%; box-sizing: border-box; color: var(--text); background: #fbfcff;
@@ -1926,21 +1928,36 @@
         .weaver-field textarea { min-height: 140px; resize: vertical; line-height: 1.55; }
         .weaver-field input:focus, .weaver-field textarea:focus { outline: 0; border-color: rgba(236, 100, 117, .56); box-shadow: 0 0 0 4px rgba(236, 100, 117, .11); }
         .weaver-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+        .weaver-field-heading .weaver-actions { margin-top: 0; }
         .weaver-hint { margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+        .weaver-progress { padding: 2px 0; }
+        .weaver-progress-title { margin: 0 0 9px; color: var(--soft); font-size: 12px; font-weight: 800; }
+        .weaver-progress-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+        .weaver-progress-step { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+        .weaver-progress-step::before { content: ""; width: 7px; height: 7px; border: 1px solid #b8bec8; border-radius: 50%; background: transparent; }
+        .weaver-progress-step.active { color: var(--text); font-weight: 700; }
+        .weaver-progress-step.active::before { border-color: #ec6475; background: #ec6475; box-shadow: 0 0 0 3px rgba(236, 100, 117, .14); }
+        .weaver-progress-step.complete { color: var(--soft); }
+        .weaver-progress-step.complete::before { border-color: #6aa585; background: #6aa585; }
+        .weaver-progress-step.error { color: #c84357; }
+        .weaver-progress-step.error::before { border-color: #c84357; background: #c84357; }
         .weaver-posts { display: grid; gap: 8px; }
         .weaver-post { padding: 11px 12px; background: #fbfcff; border: 1px solid var(--line); border-radius: 8px; }
         .weaver-post header { display: flex; justify-content: space-between; gap: 10px; color: var(--soft); font-size: 12px; font-weight: 750; }
-        .weaver-post p { margin: 8px 0 0; color: var(--text); white-space: pre-wrap; font-size: 12px; line-height: 1.55; }
+        .weaver-post p { margin: 8px 0 0; color: var(--text); white-space: pre-wrap; font-size: 10px; line-height: 1.55; }
         .weaver-empty { padding: 30px 12px; color: var(--muted); text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
-        .weaver-output { min-height: 260px !important; font-size: 12px; }
-        .weaver-workspace { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 8px 18px; padding: 0; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
-        .weaver-fold { border: 1px solid var(--line); border-radius: 8px; background: #f4f5f7; overflow: hidden; }
+        .weaver-output { min-height: 260px !important; font-size: 10px; }
+        .weaver-workspace { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; align-content: start; gap: 8px 18px; padding: 0; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+        .weaver-fold { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; background: #f4f5f7; overflow: hidden; }
         .weaver-fold summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; color: var(--text); cursor: pointer; font-size: 14px; font-weight: 800; list-style: none; }
         .weaver-fold summary::-webkit-details-marker { display: none; }
         .weaver-fold summary::after { content: "+"; color: var(--soft); font-size: 18px; font-weight: 400; line-height: 1; }
         .weaver-fold[open] summary { border-bottom: 1px solid var(--line); background: #eceff3; }
         .weaver-fold[open] summary::after { content: "−"; }
         .weaver-fold-body { padding: 12px 14px 14px; }
+        #weaverPolishSection .weaver-fold-body,
+        #weaverPolishSection .weaver-field { display: flex; flex: 1; flex-direction: column; }
+        #weaverPolishSection .weaver-output { flex: 1; }
         .weaver-fold-body .weaver-field:first-child { margin-top: 0; }
         .weaver-fold-note { margin: 0; color: var(--soft); font-size: 12px; line-height: 1.5; }
         .weaver-save-button { margin-left: auto; }
@@ -1965,6 +1982,7 @@
         }
 
         @media (max-width: 700px) {
+            .weaver-capture-panel { grid-template-columns: 1fr; gap: 16px; }
             .weaver-workspace { grid-template-columns: 1fr; }
             #weaverCopySection { grid-column: auto; }
         }
@@ -2873,14 +2891,24 @@
                 </section>
             </div>
             <div class="content view-hidden" id="postWeaverPage">
-                <section class="weaver-panel">
-                    <div class="weaver-actions">
-                        <button class="toolbar-btn primary" id="capturePostButton" type="button">Capture</button>
-                    </div>
+                <section class="weaver-panel weaver-capture-panel">
                     <div class="weaver-field">
-                        <label for="postWeaverUrl">Target post URL</label>
+                        <div class="weaver-field-heading">
+                            <label for="postWeaverUrl">URL</label>
+                            <div class="weaver-actions">
+                                <button class="toolbar-btn primary" id="capturePostButton" type="button">Capture</button>
+                            </div>
+                        </div>
                         <input id="postWeaverUrl" type="url" placeholder="Paste one public post URL">
                     </div>
+                    <aside class="weaver-progress" id="postWeaverProgress" aria-live="polite">
+                        <p class="weaver-progress-title">Capture progress</p>
+                        <ol class="weaver-progress-list">
+                            <li class="weaver-progress-step" data-weaver-step="capture">Capture post</li>
+                            <li class="weaver-progress-step" data-weaver-step="polish">Create AI preview</li>
+                            <li class="weaver-progress-step" data-weaver-step="title">Generate title</li>
+                        </ol>
+                    </aside>
                 </section>
                 <section class="weaver-panel weaver-workspace">
                     <details class="weaver-fold" id="weaverSourceSection" open>
@@ -3175,6 +3203,7 @@
         const postWeaverPosts = document.getElementById("postWeaverPosts");
         const postWeaverOutput = document.getElementById("postWeaverOutput");
         const postWeaverObsidianPreview = document.getElementById("postWeaverObsidianPreview");
+        const postWeaverProgress = document.getElementById("postWeaverProgress");
 
         const defaultSettings = {
             whisper: {
@@ -4446,6 +4475,19 @@ END`;
             return sanitizeObsidianTitle(Array.from(normalized).slice(0, ARTICLE_TITLE_MAX_LENGTH).join(""));
         }
 
+        function setWeaverProgress(step = "", status = "idle") {
+            const steps = ["capture", "polish", "title"];
+            const activeIndex = steps.indexOf(step);
+            postWeaverProgress.querySelectorAll("[data-weaver-step]").forEach((item, index) => {
+                item.classList.remove("active", "complete", "error");
+                if (status === "complete" || (activeIndex > index && status !== "error")) {
+                    item.classList.add("complete");
+                } else if (index === activeIndex) {
+                    item.classList.add(status === "error" ? "error" : "active");
+                }
+            });
+        }
+
         async function captureWovenPost() {
             const url = postWeaverUrl.value.trim();
             if (!url) {
@@ -4459,6 +4501,8 @@ END`;
             button.textContent = "Capturing...";
             saveButton.disabled = true;
             capturedPostTitle = "";
+            let currentWeaverStep = "capture";
+            setWeaverProgress(currentWeaverStep);
             renderObsidianPreview();
             try {
                 const isThreadsUrl = /https?:\/\/(?:www\.)?threads\.(?:com|net)\//i.test(url);
@@ -4489,12 +4533,18 @@ END`;
                 capturedPostUrl = url;
                 postWeaverOutput.value = "";
                 document.getElementById("weaverPolishSection").open = true;
+                currentWeaverStep = "polish";
+                setWeaverProgress(currentWeaverStep);
                 const polishedContent = await polishWovenPosts();
+                currentWeaverStep = "title";
+                setWeaverProgress(currentWeaverStep);
                 capturedPostTitle = await generateWovenPostTitle(polishedContent || combinedPostsText());
                 renderObsidianPreview();
                 saveButton.disabled = false;
                 document.getElementById("weaverCopySection").open = true;
+                setWeaverProgress("title", "complete");
             } catch (error) {
+                setWeaverProgress(currentWeaverStep, "error");
                 showToast(error.message || "Could not capture this post");
             } finally {
                 button.disabled = false;
