@@ -2874,16 +2874,13 @@
             </div>
             <div class="content view-hidden" id="postWeaverPage">
                 <section class="weaver-panel">
-                    <h1>Post Weaver</h1>
-                    <p class="weaver-intro">Capture one public post, keep its original text, and preview an optional AI polish before saving it to Obsidian.</p>
+                    <div class="weaver-actions">
+                        <button class="toolbar-btn primary" id="capturePostButton" type="button">Capture</button>
+                    </div>
                     <div class="weaver-field">
                         <label for="postWeaverUrl">Target post URL</label>
                         <input id="postWeaverUrl" type="url" placeholder="Paste one public post URL">
                     </div>
-                    <div class="weaver-actions">
-                        <button class="toolbar-btn primary" id="capturePostButton" type="button">Capture</button>
-                    </div>
-                    <p class="weaver-hint">Threads continuation posts are captured together. Other sites use their public preview; posts hidden behind login cannot be captured.</p>
                 </section>
                 <section class="weaver-panel weaver-workspace">
                     <details class="weaver-fold" id="weaverSourceSection" open>
@@ -2896,7 +2893,6 @@
                         <summary>AI Polished Preview</summary>
                         <div class="weaver-fold-body">
                             <div class="weaver-field">
-                                <label for="postWeaverOutput">Generated preview</label>
                                 <textarea class="weaver-output" id="postWeaverOutput" placeholder="Capture a post to generate an AI polished preview." readonly></textarea>
                             </div>
                         </div>
@@ -2904,7 +2900,6 @@
                     <details class="weaver-fold" id="weaverCopySection">
                         <summary><span>Obsidian Preview</span><button class="toolbar-btn weaver-save-button" id="savePostsToObsidianButton" type="button" disabled>Save to Obsidian</button></summary>
                         <div class="weaver-fold-body">
-                            <p class="weaver-fold-note">Preview of the note that will open in your active Obsidian vault.</p>
                             <div class="obsidian-note-preview" id="postWeaverObsidianPreview" aria-live="polite"></div>
                         </div>
                     </details>
