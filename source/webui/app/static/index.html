@@ -1932,13 +1932,13 @@
         .weaver-post header { display: flex; justify-content: space-between; gap: 10px; color: var(--soft); font-size: 12px; font-weight: 750; }
         .weaver-post p { margin: 8px 0 0; color: var(--text); white-space: pre-wrap; font-size: 12px; line-height: 1.55; }
         .weaver-empty { padding: 30px 12px; color: var(--muted); text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
-        .weaver-output { min-height: 260px !important; }
+        .weaver-output { min-height: 260px !important; font-size: 12px; }
         .weaver-workspace { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 8px 18px; padding: 0; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
-        .weaver-fold { border: 1px solid var(--line); border-radius: 8px; background: #ffffff; overflow: hidden; }
+        .weaver-fold { border: 1px solid var(--line); border-radius: 8px; background: #f4f5f7; overflow: hidden; }
         .weaver-fold summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; color: var(--text); cursor: pointer; font-size: 14px; font-weight: 800; list-style: none; }
         .weaver-fold summary::-webkit-details-marker { display: none; }
         .weaver-fold summary::after { content: "+"; color: var(--soft); font-size: 18px; font-weight: 400; line-height: 1; }
-        .weaver-fold[open] summary { border-bottom: 1px solid var(--line); background: #fbfcff; }
+        .weaver-fold[open] summary { border-bottom: 1px solid var(--line); background: #eceff3; }
         .weaver-fold[open] summary::after { content: "−"; }
         .weaver-fold-body { padding: 12px 14px 14px; }
         .weaver-fold-body .weaver-field:first-child { margin-top: 0; }
@@ -2887,13 +2887,13 @@
                 </section>
                 <section class="weaver-panel weaver-workspace">
                     <details class="weaver-fold" id="weaverSourceSection" open>
-                        <summary>ObsidianPost.com</summary>
+                        <summary>Original Post</summary>
                         <div class="weaver-fold-body">
                             <div class="weaver-posts" id="postWeaverPosts"></div>
                         </div>
                     </details>
                     <details class="weaver-fold" id="weaverPolishSection" open>
-                        <summary>AI Polished preview</summary>
+                        <summary>AI Polished Preview</summary>
                         <div class="weaver-fold-body">
                             <div class="weaver-field">
                                 <label for="postWeaverOutput">Generated preview</label>
@@ -2902,7 +2902,7 @@
                         </div>
                     </details>
                     <details class="weaver-fold" id="weaverCopySection">
-                        <summary><span>Save to Obsidian</span><button class="toolbar-btn weaver-save-button" id="savePostsToObsidianButton" type="button" disabled>Save to Obsidian</button></summary>
+                        <summary><span>Obsidian Preview</span><button class="toolbar-btn weaver-save-button" id="savePostsToObsidianButton" type="button" disabled>Save to Obsidian</button></summary>
                         <div class="weaver-fold-body">
                             <p class="weaver-fold-note">Preview of the note that will open in your active Obsidian vault.</p>
                             <div class="obsidian-note-preview" id="postWeaverObsidianPreview" aria-live="polite"></div>
