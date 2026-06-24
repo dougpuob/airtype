@@ -2904,7 +2904,7 @@
                                 <label for="postWeaverObsidianTitle">Note title / path</label>
                                 <input id="postWeaverObsidianTitle" type="text" placeholder="Post Weaver - 2026-06-24">
                             </div>
-                            <p class="weaver-fold-note">The Obsidian template is built into AirType. It stores the original captured text and leaves title, tags, and AI polished fields ready for you to fill in Obsidian.</p>
+                            <p class="weaver-fold-note">The Obsidian template is built into AirType. It stores the original captured text and keeps the Title, AI Generated Tags, and AI Polished Article sections ready for Obsidian.</p>
                             <div class="weaver-actions">
                                 <button class="toolbar-btn" id="savePostsToObsidianButton" type="button">Save to Obsidian</button>
                             </div>
@@ -3243,7 +3243,7 @@
         let wovenPosts = [];
         let capturedPostUrl = "";
         const OBSIDIAN_POST_TEMPLATE = `---
-title: {{property_title}}
+title: TITLE
 sources:
   - {{original_url}}
 datetime: {{DATETIME}}
@@ -3256,23 +3256,17 @@ tags:
 
 # Title
 
-{{title}}
+---
+
+# AI Generated Tags
 
 ---
 
-# Tags
-
-{{tags}}
+# AI Polished Article
 
 ---
 
-# AI Polished
-
-{{ai_polished}}
-
----
-
-# Content
+# Original Content
 
 {{content}}
 
