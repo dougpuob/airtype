@@ -2906,7 +2906,7 @@
                             </div>
                             <p class="weaver-fold-note">The Obsidian template is built into AirType. It stores the original captured text and keeps the Title, AI Generated Tags, and AI Polished Article sections ready for Obsidian.</p>
                             <div class="weaver-actions">
-                                <button class="toolbar-btn" id="savePostsToObsidianButton" type="button">Save to Obsidian</button>
+                                <button class="toolbar-btn" id="savePostsToObsidianButton" type="button" disabled>Save to Obsidian</button>
                             </div>
                         </div>
                     </details>
@@ -4446,8 +4446,12 @@ END`;
                 return;
             }
             const button = document.getElementById("capturePostButton");
+            const saveButton = document.getElementById("savePostsToObsidianButton");
             button.disabled = true;
             button.textContent = "Capturing...";
+            saveButton.disabled = true;
+            capturedPostTitle = "";
+            postWeaverObsidianTitle.value = "";
             try {
                 const isThreadsUrl = /https?:\/\/(?:www\.)?threads\.(?:com|net)\//i.test(url);
                 const response = await fetch(isThreadsUrl ? "/api/post-weaver/threads-chain" : "/api/post-weaver/import", {
@@ -4479,6 +4483,8 @@ END`;
                 document.getElementById("weaverPolishSection").open = true;
                 const polishedContent = await polishWovenPosts();
                 capturedPostTitle = await generateWovenPostTitle(polishedContent || combinedPostsText());
+                postWeaverObsidianTitle.value = defaultObsidianNoteTitle();
+                saveButton.disabled = false;
                 document.getElementById("weaverCopySection").open = true;
             } catch (error) {
                 showToast(error.message || "Could not capture this post");
@@ -4565,7 +4571,7 @@ END`;
 
         function defaultObsidianNoteTitle() {
             const date = localObsidianDateParts().date;
-            const title = capturedPostTitle || fallbackArticleTitle(combinedPostsText());
+            const title = sanitizeObsidianTitle(capturedPostTitle || fallbackArticleTitle(combinedPostsText()));
             return `${date} ${title}`;
         }
 
@@ -4581,7 +4587,9 @@ END`;
             const dateParts = localObsidianDateParts();
             const originalUrl = capturedPostUrl;
             const polishedContent = postWeaverOutput.value.trim();
-            const articleTitle = capturedPostTitle || fallbackArticleTitle(polishedContent || content);
+            const articleTitle = sanitizeObsidianTitle(
+                capturedPostTitle || fallbackArticleTitle(polishedContent || content)
+            ) || "TITLE";
             const values = {
                 original_url: originalUrl,
                 DATETIME: dateParts.datetime,
