@@ -1698,7 +1698,7 @@ function transcriptObsidianSources() {
 }
 
 function buildTranscriptObsidianNote() {
-    const content = transcriptPlainText();
+    const content = transcriptObsidianOriginalText();
     if (!content || !currentTranscriptRecord) return null;
     const dateParts = localObsidianDateParts();
     const title = sanitizeObsidianTitle(
@@ -2068,6 +2068,14 @@ function transcriptPlainText() {
         .map(segment => (segment.text || "").trim())
         .filter(Boolean)
         .join("\n");
+}
+
+function transcriptObsidianOriginalText() {
+    return segments
+        .map(segment => (segment.text || "").trim().replace(/\r\n?/g, "\n"))
+        .filter(Boolean)
+        .map(text => `${text}\n`)
+        .join("");
 }
 
 function copyTranscriptPlainText() {
