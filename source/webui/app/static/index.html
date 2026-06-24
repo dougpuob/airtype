@@ -2709,10 +2709,6 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>
                     <span>Speech to Text</span>
                 </div>
-                <div class="nav-item" data-panel="dictate">
-                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
-                    <span>Dictate</span>
-                </div>
                 <div class="nav-item" data-panel="ime">
                     <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 9h8"/><path d="M8 13h5"/><path d="M15 13h1"/><path d="M8 17h8"/></svg>
                     <span>AirType IME</span>
@@ -2738,11 +2734,6 @@
                 <label class="check">
                     <input type="checkbox" id="micToggle">
                     <span>Mic</span>
-                </label>
-                <label class="check">
-                    <input type="checkbox" checked id="summaryToggle">
-                    <span>Auto Summary</span>
-                    <span class="pro">PRO</span>
                 </label>
                 <div class="select-wrap">
                     <span>Auto Detect Language (Mi...</span>
@@ -4563,7 +4554,7 @@ END`;
                         temperature: llm.temperature,
                         context_length: llm.contextLength,
                         system: "",
-                        prompt: `找出重點給我20個字左右的標題，不該有冒號，不要給選擇直接回應。\n\n${publishedContent}`
+                        prompt: `找出重點給我30個字左右的標題，不該有冒號，不要給選擇直接回應。\n\n${publishedContent}`
                     })
                 });
                 const payload = await response.json().catch(() => ({}));
@@ -5001,12 +4992,6 @@ END`;
             anchor.click();
             URL.revokeObjectURL(url);
             showToast("Transcript exported");
-        }
-
-        function summarize() {
-            const summary = "摘要：這段內容以 AI 對白領與中產工作的衝擊為主軸，透過 1915 年馬匹被汽車取代的比喻，提醒使用者理解技術替代與資產配置風險。";
-            copyText(summary);
-            showToast("Summary copied");
         }
 
         function redoSegmentation() {
