@@ -48,10 +48,10 @@ class ThreadsChainCollector:
         self.timeout_seconds = timeout_seconds
 
     def collect(self, url: str) -> dict[str, Any]:
-        canonical_url, author = self._normalize_url(url)
+        canonical_url, author, target_code = self._normalize_url(url)
         page = self._fetch(canonical_url)
         payloads = _DataSjsParser.payloads(page)
-        posts = self._posts_from_payloads(payloads, author)
+        posts = self._posts_from_payloads(payloads, author, target_code)
 
         if not posts:
             preview = _meta_content(page, "og:description") or _meta_content(page, "description")
@@ -65,7 +65,7 @@ class ThreadsChainCollector:
             )
         return {"author": author, "posts": [post.as_dict() for post in posts]}
 
-    def _normalize_url(self, url: str) -> tuple[str, str]:
+    def _normalize_url(self, url: str) -> tuple[str, str, str]:
         parsed = urllib.parse.urlparse(str(url or "").strip())
         if parsed.scheme not in {"http", "https"} or parsed.hostname not in _THREADS_HOSTS:
             raise ValueError("URL must be a public threads.com or threads.net post URL")
@@ -73,7 +73,11 @@ class ThreadsChainCollector:
         if not match:
             raise ValueError("URL must point to a Threads post, such as https://www.threads.com/@author/post/POST_ID")
         path = f"/@{match.group('author')}/post/{match.group('code')}"
-        return urllib.parse.urlunparse(("https", "www.threads.com", path, "", "", "")), urllib.parse.unquote(match.group("author"))
+        return (
+            urllib.parse.urlunparse(("https", "www.threads.com", path, "", "", "")),
+            urllib.parse.unquote(match.group("author")),
+            match.group("code"),
+        )
 
     def _fetch(self, url: str) -> str:
         """Fetch with Chrome TLS impersonation when curl-cffi is available."""
@@ -98,18 +102,42 @@ class ThreadsChainCollector:
         except Exception as error:
             raise RuntimeError(f"Could not open the public Threads post: {error}") from error
 
-    def _posts_from_payloads(self, payloads: Iterable[Any], author: str) -> list[ThreadsPost]:
-        posts: list[ThreadsPost] = []
-        seen_ids: set[str] = set()
+    def _posts_from_payloads(
+        self,
+        payloads: Iterable[Any],
+        author: str,
+        target_code: str,
+    ) -> list[ThreadsPost]:
+        """Return only the thread-items group that contains the requested post.
+
+        A Threads page contains several independent ``thread_items`` groups,
+        including profile previews and recommendations.  Filtering every group
+        by author accidentally imports those unrelated posts.  The URL's post
+        code is the stable anchor for selecting the one visible conversation.
+        """
         for payload in payloads:
-            for post in _walk_thread_items(payload):
-                if post.author.casefold() != author.casefold() or post.id in seen_ids:
+            for items in _thread_item_groups(payload):
+                direct_posts = [
+                    post
+                    for item in items
+                    if isinstance(item, dict)
+                    for post in [_threads_post(item.get("post"))]
+                    if post
+                ]
+                if not any(post.url.rstrip("/").endswith(f"/post/{target_code}") for post in direct_posts):
                     continue
-                seen_ids.add(post.id)
-                posts.append(post)
-                if len(posts) >= self.max_posts:
-                    return posts
-        return posts
+
+                posts: list[ThreadsPost] = []
+                seen_ids: set[str] = set()
+                for post in direct_posts:
+                    if post.author.casefold() != author.casefold() or post.id in seen_ids:
+                        continue
+                    seen_ids.add(post.id)
+                    posts.append(post)
+                    if len(posts) >= self.max_posts:
+                        return posts
+                return posts
+        return []
 
 
 class _DataSjsParser(HTMLParser):
@@ -174,6 +202,20 @@ def _walk_thread_items(value: Any) -> Iterable[ThreadsPost]:
     elif isinstance(value, list):
         for child in value:
             yield from _walk_thread_items(child)
+
+
+def _thread_item_groups(value: Any) -> Iterable[list[Any]]:
+    """Yield each distinct, direct ``thread_items`` group in page order."""
+    if isinstance(value, dict):
+        items = value.get("thread_items")
+        if isinstance(items, list):
+            yield items
+        for key, child in value.items():
+            if key != "thread_items":
+                yield from _thread_item_groups(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _thread_item_groups(child)
 
 
 def _threads_post(value: Any) -> ThreadsPost | None:
