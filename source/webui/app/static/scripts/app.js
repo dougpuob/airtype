@@ -88,6 +88,8 @@ const postWeaverPosts = document.getElementById("postWeaverPosts");
 const postWeaverOutput = document.getElementById("postWeaverOutput");
 const postWeaverObsidianPreview = document.getElementById("postWeaverObsidianPreview");
 const postWeaverProgress = document.getElementById("postWeaverProgress");
+const transcriptObsidianPreview = document.getElementById("transcriptObsidianPreview");
+const saveTranscriptToObsidianButton = document.getElementById("saveTranscriptToObsidianButton");
 
 const defaultSettings = {
     whisper: {
@@ -133,6 +135,7 @@ let stopRequested = false;
 let selectedRecordId = null;
 let transcriptRecords = [];
 let currentArticleText = "";
+let currentTranscriptRecord = null;
 let selectedImeRecordId = null;
 let contextRecord = null;
 let contextRecordType = "transcript";
@@ -154,8 +157,7 @@ sources:
 {{sources}}
 datetime: {{DATETIME}}
 tags:
-  - {{DATE}}
-  - airtype
+{{tags}}
 ---
 
 ---
@@ -183,6 +185,33 @@ tags:
 ---
 
 END`;
+const OBSIDIAN_TRANSCRIPT_TEMPLATE = `---
+title: {{DATE}} {{TITLE}}
+sources:
+{{sources}}
+datetime: {{DATETIME}}
+tags:
+{{tags}}
+---
+
+---
+
+# Title
+
+{{TITLE}}
+
+---
+
+# AI Polished Article
+
+{{polished_content}}
+
+---
+
+# Original Transcript
+
+{{content}}
+`;
 function showToast(message) {
     toast.textContent = message;
     toast.classList.add("show");
@@ -267,6 +296,7 @@ async function ensureLlmApiKey(llm = appSettings.llm || {}) {
 function setCurrentArticleText(text = "") {
     currentArticleText = text || "";
     updateCopyArticleButtonState();
+    renderTranscriptObsidianPreview();
 }
 
 function updateCopyArticleButtonState() {
@@ -288,6 +318,7 @@ function renderSegments() {
             ? "Transcription has started. Results will appear here as soon as whisper.cpp emits segments."
             : "Transcript results will appear here.";
         segmentsEl.appendChild(empty);
+        renderTranscriptObsidianPreview();
         return;
     }
 
@@ -316,6 +347,7 @@ function renderSegments() {
             });
             segmentsEl.appendChild(item);
         });
+    renderTranscriptObsidianPreview();
 }
 
 async function loadTranscriptRecords() {
@@ -603,6 +635,7 @@ async function submitRenameDialog() {
         throw new Error(error.detail || "Could not rename transcript");
     }
     if (selectedRecordId === renamedRecordId) {
+        currentTranscriptRecord = { ...(currentTranscriptRecord || {}), title };
         setTranscriptTitle(title);
         fileName.textContent = title;
     }
@@ -629,6 +662,7 @@ async function deleteRecord(record, recordType = "transcript") {
     }
     if (recordType === "transcript" && selectedRecordId === record.job_id) {
         selectedRecordId = null;
+        currentTranscriptRecord = null;
         setCurrentArticleText("");
         segments = [];
         selectedIndex = 0;
@@ -663,6 +697,7 @@ async function loadTranscriptRecord(jobId) {
         const payload = await response.json();
         const record = payload.record;
         selectedRecordId = record.job_id;
+        currentTranscriptRecord = record;
         setCurrentArticleText(record.article?.text || "");
         const title = record.title || record.source?.name || "Transcript";
         setTranscriptTitle(title);
@@ -1557,6 +1592,30 @@ function yamlSourceList(urls) {
     }).join("\n");
 }
 
+function sourceDomainTags(urls) {
+    const tags = new Set();
+    urls.forEach(value => {
+        try {
+            const url = new URL(String(value || "").trim());
+            if (!/^https?:$/.test(url.protocol) || !url.hostname) return;
+            const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+            const serviceName = hostname.split(".")[0];
+            if (serviceName) tags.add(serviceName);
+        } catch {
+            // Local files and non-URL sources do not need a domain tag.
+        }
+    });
+    return [...tags];
+}
+
+function yamlTagList(tags) {
+    return tags.map(tag => `  - ${tag}`).join("\n");
+}
+
+function renderObsidianTags(tags) {
+    return tags.map(tag => `<i class="obsidian-tag">${escapeHtml(tag)}</i>`).join("");
+}
+
 function buildObsidianNote() {
     const content = combinedPostsText();
     if (!content) return null;
@@ -1564,6 +1623,7 @@ function buildObsidianNote() {
     const originalUrl = capturedPostUrl;
     const sources = sourceUrls();
     const polishedContent = postWeaverOutput.value.trim();
+    const tags = [dateParts.date, "airtype", ...sourceDomainTags(sources)];
     const articleTitle = sanitizeObsidianTitle(
         capturedPostTitle || fallbackArticleTitle(polishedContent || content)
     ) || "TITLE";
@@ -1572,11 +1632,12 @@ function buildObsidianNote() {
         sources: yamlSourceList(sources),
         DATETIME: dateParts.datetime,
         DATE: dateParts.date,
+        tags: yamlTagList(tags),
         TITLE: articleTitle,
         polished_content: polishedContent,
         content
     };
-    const note = OBSIDIAN_POST_TEMPLATE.replace(/{{(sources|DATETIME|DATE|TITLE|polished_content|content)}}/g, (_, key) => values[key]);
+    const note = OBSIDIAN_POST_TEMPLATE.replace(/{{(sources|DATETIME|DATE|TITLE|tags|polished_content|content)}}/g, (_, key) => values[key]);
     return {
         articleTitle,
         content,
@@ -1585,6 +1646,7 @@ function buildObsidianNote() {
         noteTitle: defaultObsidianNoteTitle(),
         originalUrl,
         sources,
+        tags,
         polishedContent
     };
 }
@@ -1606,7 +1668,7 @@ function renderObsidianPreview() {
             <div class="obsidian-property"><span>title</span><span>${escapeHtml(`${draft.dateParts.date} ${draft.articleTitle}`)}</span></div>
             <div class="obsidian-property"><span>sources</span><span>${escapeHtml(source)}</span></div>
             <div class="obsidian-property"><span>datetime</span><span>${escapeHtml(draft.dateParts.datetime)}</span></div>
-            <div class="obsidian-property"><span>tags</span><span><i class="obsidian-tag">${escapeHtml(draft.dateParts.date)}</i><i class="obsidian-tag">airtype</i></span></div>
+            <div class="obsidian-property"><span>tags</span><span>${renderObsidianTags(draft.tags)}</span></div>
         </section>
         <section class="obsidian-preview-section"><h4>Title</h4><div class="obsidian-preview-content">${escapeHtml(draft.articleTitle)}</div></section>
         <section class="obsidian-preview-section"><h4>AI Generated Tags</h4></section>
@@ -1626,6 +1688,82 @@ function saveWovenPostsToObsidian() {
         ["content", draft.note]
     ].map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&");
 
+    window.location.href = `obsidian://new?${query}`;
+    showToast("Opening Obsidian to create the note");
+}
+
+function transcriptObsidianSources() {
+    const source = sourceUrlFromRecord(currentTranscriptRecord) || sourceUrl.value.trim();
+    return source ? [source] : [];
+}
+
+function buildTranscriptObsidianNote() {
+    const content = transcriptPlainText();
+    if (!content || !currentTranscriptRecord) return null;
+    const dateParts = localObsidianDateParts();
+    const title = sanitizeObsidianTitle(
+        currentTranscriptRecord?.title || currentTranscriptRecord?.source?.name || transcriptTitle.textContent || fileName.textContent
+    ) || "Untitled transcript";
+    const sources = transcriptObsidianSources();
+    const tags = [dateParts.date, "airtype", "speech-to-text", ...sourceDomainTags(sources)];
+    const values = {
+        sources: yamlSourceList(sources),
+        DATETIME: dateParts.datetime,
+        DATE: dateParts.date,
+        tags: yamlTagList(tags),
+        TITLE: title,
+        polished_content: currentArticleText.trim(),
+        content
+    };
+    const note = OBSIDIAN_TRANSCRIPT_TEMPLATE.replace(/{{(sources|DATETIME|DATE|TITLE|tags|polished_content|content)}}/g, (_, key) => values[key]);
+    return {
+        title,
+        content,
+        dateParts,
+        note,
+        noteTitle: `${dateParts.date} ${title}`,
+        polishedContent: currentArticleText.trim(),
+        sources,
+        tags
+    };
+}
+
+function renderTranscriptObsidianPreview() {
+    const draft = buildTranscriptObsidianNote();
+    saveTranscriptToObsidianButton.disabled = !draft;
+    if (!draft) {
+        transcriptObsidianPreview.className = "obsidian-note-preview empty";
+        transcriptObsidianPreview.textContent = "Complete or select a transcript to preview the note.";
+        return;
+    }
+    const source = draft.sources.length ? draft.sources.join("\n") : "—";
+    const polished = draft.polishedContent || "AI article is not available for this transcript.";
+    transcriptObsidianPreview.className = "obsidian-note-preview";
+    transcriptObsidianPreview.innerHTML = `
+        <h3>${escapeHtml(draft.noteTitle)}</h3>
+        <section class="obsidian-properties" aria-label="Obsidian properties">
+            <strong>Properties</strong>
+            <div class="obsidian-property"><span>title</span><span>${escapeHtml(draft.noteTitle)}</span></div>
+            <div class="obsidian-property"><span>sources</span><span>${escapeHtml(source)}</span></div>
+            <div class="obsidian-property"><span>datetime</span><span>${escapeHtml(draft.dateParts.datetime)}</span></div>
+            <div class="obsidian-property"><span>tags</span><span>${renderObsidianTags(draft.tags)}</span></div>
+        </section>
+        <section class="obsidian-preview-section"><h4>Title</h4><div class="obsidian-preview-content">${escapeHtml(draft.title)}</div></section>
+        <section class="obsidian-preview-section"><h4>AI Polished Article</h4><div class="obsidian-preview-content">${escapeHtml(polished)}</div></section>
+        <section class="obsidian-preview-section"><h4>Original Transcript</h4><div class="obsidian-preview-content">${escapeHtml(draft.content)}</div></section>
+    `;
+}
+
+function saveTranscriptToObsidian() {
+    const draft = buildTranscriptObsidianNote();
+    if (!draft) {
+        showToast("Complete or select a transcript before saving");
+        return;
+    }
+    const query = [
+        ["name", draft.noteTitle],
+        ["content", draft.note]
+    ].map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&");
     window.location.href = `obsidian://new?${query}`;
     showToast("Opening Obsidian to create the note");
 }
@@ -1752,6 +1890,7 @@ function formatJobProgressMessage(job) {
 function setTranscriptTitle(title) {
     if (!transcriptTitle) return;
     transcriptTitle.textContent = title || "Transcript";
+    renderTranscriptObsidianPreview();
 }
 
 function setPlayerStatus(message) {
@@ -1990,6 +2129,7 @@ function fileSourceLabel(file, fallback) {
 
 async function transcribeBlob(blob, filename = "recording.webm", sourceLabel = "Selected from device") {
     selectedRecordId = null;
+    currentTranscriptRecord = null;
     setCurrentArticleText("");
     setTranscriptTitle(filename);
     setSourceInfo(filename, blob.size, blob.type || "media", sourceLabel);
@@ -2014,6 +2154,7 @@ async function transcribeUrl() {
     }
 
     selectedRecordId = null;
+    currentTranscriptRecord = null;
     setCurrentArticleText("");
     const urlTitle = url.split("/").pop() || url;
     setTranscriptTitle(urlTitle);
@@ -2529,6 +2670,11 @@ document.getElementById("savePostsToObsidianButton").addEventListener("click", e
     event.stopPropagation();
     saveWovenPostsToObsidian();
 });
+saveTranscriptToObsidianButton.addEventListener("click", event => {
+    event.preventDefault();
+    event.stopPropagation();
+    saveTranscriptToObsidian();
+});
 
 async function initializeApp() {
     await loadServerSettings({ force: true });
@@ -2540,6 +2686,7 @@ async function initializeApp() {
     showPage("transcript");
     renderSegments();
     renderObsidianPreview();
+    renderTranscriptObsidianPreview();
     loadTranscriptRecords();
     pollServiceHealth();
     setInterval(pollServiceHealth, 5000);

@@ -496,6 +496,8 @@ body {
 .weaver-save-button { margin-left: auto; }
 #weaverCopySection { grid-column: 1 / -1; }
 #weaverCopySection summary::after { display: none; }
+.transcript-obsidian-fold { margin: 14px 0 8px; }
+.transcript-obsidian-fold summary::after { display: none; }
 .obsidian-note-preview { display: grid; gap: 16px; max-height: 620px; overflow: auto; padding: 18px; color: #d7d8e4; background: #1e1f2a; border: 1px solid #34364a; border-radius: 8px; box-shadow: inset 0 1px 0 rgba(255,255,255,.04); }
 .obsidian-note-preview.empty { display: block; color: #9699af; }
 .obsidian-note-preview h3, .obsidian-note-preview h4 { margin: 0; color: #ff879a; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
@@ -522,4 +524,3 @@ body {
     .weaver-workspace { grid-template-columns: 1fr; }
     #weaverCopySection { grid-column: auto; }
 }
-
