@@ -29,9 +29,10 @@ class ThreadsPost:
     url: str
     author: str
     text: str
+    media_urls: tuple[str, ...] = ()
 
-    def as_dict(self) -> dict[str, str]:
-        return {"url": self.url, "text": self.text}
+    def as_dict(self) -> dict[str, Any]:
+        return {"url": self.url, "text": self.text, "media_urls": list(self.media_urls)}
 
 
 class ThreadsChainCollector:
@@ -256,7 +257,55 @@ def _threads_post(value: Any) -> ThreadsPost | None:
     if not author or not post_id or not text:
         return None
     url = f"https://www.threads.com/@{author}/post/{code}" if code else ""
-    return ThreadsPost(post_id, url, author, text)
+    return ThreadsPost(post_id, url, author, text, tuple(_media_urls(value)))
+
+
+def _media_urls(post: dict[str, Any]) -> list[str]:
+    """Return the image/video URLs attached to one Threads post, in order.
+
+    Threads uses the same media objects for a single attachment and carousel
+    items.  The field names below deliberately stay narrow so image URLs from
+    profiles, recommendations, or reply authors are never mistaken for post
+    attachments.
+    """
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    def add(candidate: Any) -> None:
+        url = str(candidate or "").strip()
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or url in seen:
+            return
+        seen.add(url)
+        urls.append(url)
+
+    def collect(media: Any) -> None:
+        if not isinstance(media, dict):
+            return
+        image_versions = media.get("image_versions2")
+        if isinstance(image_versions, dict):
+            candidates = image_versions.get("candidates")
+            if isinstance(candidates, list):
+                # The first candidate is the highest-quality rendition.
+                for candidate in candidates:
+                    if isinstance(candidate, dict):
+                        add(candidate.get("url"))
+                        break
+        video_versions = media.get("video_versions")
+        if isinstance(video_versions, list):
+            for version in video_versions:
+                if isinstance(version, dict):
+                    add(version.get("url"))
+                    break
+        for key in ("image_url", "video_url", "thumbnail_url"):
+            add(media.get(key))
+        carousel = media.get("carousel_media")
+        if isinstance(carousel, list):
+            for item in carousel:
+                collect(item)
+
+    collect(post)
+    return urls
 
 
 def _caption_text(value: Any) -> str:
