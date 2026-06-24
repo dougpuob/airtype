@@ -4585,7 +4585,16 @@ END`;
         }
 
         function sourceUrls() {
-            const candidates = [capturedPostUrl, ...wovenPosts.flatMap(post => Array.isArray(post.mediaUrls) ? post.mediaUrls : [])];
+            // A Threads continuation is made of distinct posts. Keep every
+            // canonical post URL, not only the URL initially pasted by the
+            // user, before adding that post's attached image/video URLs.
+            const candidates = [
+                capturedPostUrl,
+                ...wovenPosts.flatMap(post => [
+                    post.url,
+                    ...(Array.isArray(post.mediaUrls) ? post.mediaUrls : [])
+                ])
+            ];
             const seen = new Set();
             return candidates.filter(value => {
                 const url = String(value || "").trim();
