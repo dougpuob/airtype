@@ -2905,11 +2905,31 @@
                         </div>
                     </details>
                     <details class="weaver-fold" id="weaverCopySection">
-                        <summary>Copy article</summary>
+                        <summary>Save to Obsidian</summary>
                         <div class="weaver-fold-body">
-                            <p class="weaver-fold-note">Copy the combined or AI-polished article to your clipboard.</p>
+                            <p class="weaver-fold-note">Creates a note through Obsidian URI. Leave Vault blank to use Obsidian's currently active vault.</p>
+                            <div class="weaver-field">
+                                <label for="postWeaverObsidianVault">Vault (optional)</label>
+                                <input id="postWeaverObsidianVault" type="text" placeholder="My Obsidian Vault">
+                            </div>
+                            <div class="weaver-field">
+                                <label for="postWeaverObsidianTitle">Note title / path</label>
+                                <input id="postWeaverObsidianTitle" type="text" placeholder="Post Weaver - 2026-06-24">
+                            </div>
+                            <div class="weaver-field">
+                                <label for="postWeaverObsidianTemplate">Markdown template</label>
+                                <textarea id="postWeaverObsidianTemplate" class="weaver-output" spellcheck="false">---
+title: {{title}}
+date: {{date}}
+sources:
+{{source_urls}}
+---
+
+{{content}}</textarea>
+                            </div>
+                            <p class="weaver-fold-note">Available placeholders: <code>{{title}}</code>, <code>{{content}}</code>, <code>{{date}}</code>, <code>{{source_urls}}</code>.</p>
                             <div class="weaver-actions">
-                                <button class="toolbar-btn" id="copyPostsButton" type="button">Copy article</button>
+                                <button class="toolbar-btn" id="savePostsToObsidianButton" type="button">Save to Obsidian</button>
                             </div>
                         </div>
                     </details>
@@ -3185,6 +3205,9 @@
         const postWeaverText = document.getElementById("postWeaverText");
         const postWeaverPosts = document.getElementById("postWeaverPosts");
         const postWeaverOutput = document.getElementById("postWeaverOutput");
+        const postWeaverObsidianVault = document.getElementById("postWeaverObsidianVault");
+        const postWeaverObsidianTitle = document.getElementById("postWeaverObsidianTitle");
+        const postWeaverObsidianTemplate = document.getElementById("postWeaverObsidianTemplate");
 
         const defaultSettings = {
             whisper: {
@@ -4475,6 +4498,45 @@
             }
         }
 
+        function defaultObsidianNoteTitle() {
+            const date = new Date().toISOString().slice(0, 10);
+            const firstSource = wovenPosts.find(post => post.url)?.url;
+            const host = firstSource ? postHost(firstSource).replace(/^www\./i, "") : "Post Weaver";
+            return `${host} - ${date}`;
+        }
+
+        function obsidianSourceUrls() {
+            const urls = [...new Set(wovenPosts.map(post => post.url.trim()).filter(Boolean))];
+            return urls.length ? urls.map(url => `  - ${url}`).join("\n") : "  -";
+        }
+
+        function saveWovenPostsToObsidian() {
+            const article = postWeaverOutput.value.trim() || combinedPostsText();
+            if (!article) {
+                showToast("Add or combine posts before saving");
+                return;
+            }
+
+            const title = (postWeaverObsidianTitle.value.trim() || defaultObsidianNoteTitle())
+                .replace(/[\r\n]+/g, " ");
+            const template = postWeaverObsidianTemplate.value || "{{content}}";
+            const today = new Date().toISOString().slice(0, 10);
+            const values = {
+                title,
+                content: article,
+                date: today,
+                source_urls: obsidianSourceUrls()
+            };
+            const note = template.replace(/{{(title|content|date|source_urls)}}/g, (_, key) => values[key]);
+            const params = new URLSearchParams({ name: title, content: note });
+            const vault = postWeaverObsidianVault.value.trim();
+            if (vault) params.set("vault", vault);
+
+            postWeaverObsidianTitle.value = title;
+            window.location.href = `obsidian://new?${params.toString()}`;
+            showToast("Opening Obsidian to create the note");
+        }
+
         function appendWhisperSettings(form) {
             const endpoint = activeWhisperEndpoint();
             form.append("whisper_endpoint", endpoint);
@@ -5379,14 +5441,7 @@
         document.getElementById("importPostButton").addEventListener("click", importWovenPost);
         document.getElementById("combinePostsButton").addEventListener("click", combineWovenPosts);
         document.getElementById("polishPostsButton").addEventListener("click", polishWovenPosts);
-        document.getElementById("copyPostsButton").addEventListener("click", async () => {
-            const text = postWeaverOutput.value.trim() || combinedPostsText();
-            if (!text) {
-                showToast("Nothing to copy yet");
-                return;
-            }
-            await copyText(text, "Article copied to clipboard");
-        });
+        document.getElementById("savePostsToObsidianButton").addEventListener("click", saveWovenPostsToObsidian);
         postWeaverPosts.addEventListener("click", event => {
             const button = event.target.closest("[data-weaver-remove]");
             if (!button) return;
