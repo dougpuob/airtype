@@ -4592,6 +4592,7 @@ END`;
                 capturedPostUrl,
                 ...wovenPosts.flatMap(post => [
                     post.url,
+                    ...urlsInPostText(post.text),
                     ...(Array.isArray(post.mediaUrls) ? post.mediaUrls : [])
                 ])
             ];
@@ -4602,6 +4603,12 @@ END`;
                 seen.add(url);
                 return true;
             });
+        }
+
+        function urlsInPostText(text = "") {
+            return (String(text).match(/https?:\/\/\S+/gi) || [])
+                .map(url => url.replace(/[\])}>，。！？；：、】【、.,;:!?]+$/g, ""))
+                .filter(Boolean);
         }
 
         function legacyYamlSourceList(urls) {
