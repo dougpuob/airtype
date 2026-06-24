@@ -4406,7 +4406,7 @@ END`;
         }
 
         function combinedPostsText() {
-            return wovenPosts.map(post => post.text.trim()).filter(Boolean).join("\n\n");
+            return uniquePostBlocks(wovenPosts.map(post => post.text.trim()).filter(Boolean).join("\n\n"));
         }
 
         function uniquePostBlocks(text = "") {
@@ -4416,7 +4416,7 @@ END`;
                 .map(block => block.trim())
                 .filter(block => {
                     if (!block) return false;
-                    const key = block.replace(/\s+/g, " ").trim();
+                    const key = block.replace(/[\s\u200B-\u200D\uFEFF]+/g, " ").trim();
                     if (seen.has(key)) return false;
                     seen.add(key);
                     return true;
@@ -4562,8 +4562,8 @@ END`;
                         api_key: apiKey,
                         temperature: llm.temperature,
                         context_length: llm.contextLength,
-                        system: "你是專業中文編輯。請只輸出一個繁體中文文章標題，不要引號、標籤、句號或任何說明；標題最多 20 個字。",
-                        prompt: `請根據以下已潤飾文章，產生一個最多 20 個字的精確標題。\n\n${publishedContent}`
+                        system: "找出重點給我20個字左右的標題",
+                        prompt: `不該有冒號。\n\n${publishedContent}`
                     })
                 });
                 const payload = await response.json().catch(() => ({}));
