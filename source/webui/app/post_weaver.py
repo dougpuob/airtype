@@ -48,8 +48,17 @@ class ThreadsChainCollector:
         self.timeout_seconds = timeout_seconds
 
     def collect(self, url: str) -> dict[str, Any]:
-        canonical_url, author, target_code = self._normalize_url(url)
+        canonical_url, _, _ = self._normalize_url(url)
         page = self._fetch(canonical_url)
+        return self.collect_page(url, page)
+
+    def collect_page(self, url: str, page: str) -> dict[str, Any]:
+        """Collect a chain from an already fetched public Threads page.
+
+        Keeping parsing separate from fetching makes the same production
+        collector usable with recorded page fixtures in regression tests.
+        """
+        canonical_url, author, target_code = self._normalize_url(url)
         payloads = _DataSjsParser.payloads(page)
         posts = self._posts_from_payloads(payloads, author, target_code)
 
@@ -115,29 +124,28 @@ class ThreadsChainCollector:
         by author accidentally imports those unrelated posts.  The URL's post
         code is the stable anchor for selecting the one visible conversation.
         """
-        for payload in payloads:
-            for items in _thread_item_groups(payload):
-                direct_posts = [
-                    post
-                    for item in items
-                    if isinstance(item, dict)
-                    for post in [_threads_post(item.get("post"))]
-                    if post
-                ]
-                if not any(post.url.rstrip("/").endswith(f"/post/{target_code}") for post in direct_posts):
-                    continue
+        entries = list(_thread_item_entries(payloads))
+        target_index = next(
+            (
+                index
+                for index, (post, _) in enumerate(entries)
+                if post.url.rstrip("/").endswith(f"/post/{target_code}")
+            ),
+            None,
+        )
+        if target_index is None:
+            return []
 
-                posts: list[ThreadsPost] = []
-                seen_ids: set[str] = set()
-                for post in direct_posts:
-                    if post.author.casefold() != author.casefold() or post.id in seen_ids:
-                        continue
-                    seen_ids.add(post.id)
-                    posts.append(post)
-                    if len(posts) >= self.max_posts:
-                        return posts
-                return posts
-        return []
+        posts = [entries[target_index][0]]
+        for post, raw_post in entries[target_index + 1:]:
+            if post.author.casefold() != author.casefold():
+                continue
+            if not _is_self_reply(raw_post, author):
+                break
+            posts.append(post)
+            if len(posts) >= self.max_posts:
+                break
+        return posts
 
 
 class _DataSjsParser(HTMLParser):
@@ -216,6 +224,25 @@ def _thread_item_groups(value: Any) -> Iterable[list[Any]]:
     elif isinstance(value, list):
         for child in value:
             yield from _thread_item_groups(child)
+
+
+def _thread_item_entries(value: Any) -> Iterable[tuple[ThreadsPost, dict[str, Any]]]:
+    """Yield direct thread posts and their raw metadata in page order."""
+    for items in _thread_item_groups(value):
+        for item in items:
+            if not isinstance(item, dict) or not isinstance(item.get("post"), dict):
+                continue
+            raw_post = item["post"]
+            post = _threads_post(raw_post)
+            if post:
+                yield post, raw_post
+
+
+def _is_self_reply(post: dict[str, Any], author: str) -> bool:
+    info = post.get("text_post_app_info")
+    reply_to_author = info.get("reply_to_author") if isinstance(info, dict) else None
+    parent_author = reply_to_author.get("username") if isinstance(reply_to_author, dict) else ""
+    return bool(isinstance(info, dict) and info.get("is_reply") and str(parent_author).casefold() == author.casefold())
 
 
 def _threads_post(value: Any) -> ThreadsPost | None:
