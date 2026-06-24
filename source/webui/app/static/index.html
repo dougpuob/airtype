@@ -4562,8 +4562,8 @@ END`;
                         api_key: apiKey,
                         temperature: llm.temperature,
                         context_length: llm.contextLength,
-                        system: "找出重點給我20個字左右的標題",
-                        prompt: `不該有冒號。\n\n${publishedContent}`
+                        system: "",
+                        prompt: `找出重點給我20個字左右的標題，不該有冒號。\n\n${publishedContent}`
                     })
                 });
                 const payload = await response.json().catch(() => ({}));
