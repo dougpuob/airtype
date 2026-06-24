@@ -1931,7 +1931,6 @@
         .weaver-post { padding: 11px 12px; background: #fbfcff; border: 1px solid var(--line); border-radius: 8px; }
         .weaver-post header { display: flex; justify-content: space-between; gap: 10px; color: var(--soft); font-size: 12px; font-weight: 750; }
         .weaver-post p { margin: 8px 0 0; color: var(--text); white-space: pre-wrap; line-height: 1.55; }
-        .weaver-remove { border: 0; color: var(--red); background: transparent; cursor: pointer; font: inherit; }
         .weaver-empty { padding: 30px 12px; color: var(--muted); text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
         .weaver-output { min-height: 260px !important; }
         .weaver-workspace { display: grid; align-content: start; gap: 8px; }
@@ -2866,20 +2865,15 @@
                 <section class="weaver-panel">
                     <div class="drop-kicker">Social to article</div>
                     <h1>Post Weaver</h1>
-                    <p class="weaver-intro">Collect a creator's Instagram, Threads, or Facebook posts, then weave them into one readable draft.</p>
+                    <p class="weaver-intro">Capture one public post, keep its original text, and preview an optional AI polish before saving it to Obsidian.</p>
                     <div class="weaver-field">
-                        <label for="postWeaverUrl">Post URL (optional)</label>
+                        <label for="postWeaverUrl">Target post URL</label>
                         <input id="postWeaverUrl" type="url" placeholder="Paste one public post URL">
                     </div>
-                    <div class="weaver-field">
-                        <label for="postWeaverText">Copied post text</label>
-                        <textarea id="postWeaverText" placeholder="Paste a post here. Add one post at a time to retain its order."></textarea>
-                    </div>
                     <div class="weaver-actions">
-                        <button class="toolbar-btn" id="importPostButton" type="button">Import URL / Threads chain</button>
-                        <button class="toolbar-btn primary" id="addPostButton" type="button">Add post</button>
+                        <button class="toolbar-btn primary" id="capturePostButton" type="button">Capture</button>
                     </div>
-                    <p class="weaver-hint">Threads links are opened in a browser and all currently public continuation posts by the same author are collected automatically. Other social sites import their public preview; paste text when a site hides it behind login.</p>
+                    <p class="weaver-hint">Threads continuation posts are captured together. Other sites use their public preview; posts hidden behind login cannot be captured.</p>
                 </section>
                 <section class="weaver-panel weaver-workspace">
                     <div class="drop-kicker">Article draft</div>
@@ -2887,20 +2881,14 @@
                         <summary>Original posts</summary>
                         <div class="weaver-fold-body">
                             <div class="weaver-posts" id="postWeaverPosts"></div>
-                            <div class="weaver-actions">
-                                <button class="toolbar-btn" id="combinePostsButton" type="button">Combine in order</button>
-                            </div>
                         </div>
                     </details>
-                    <details class="weaver-fold" id="weaverPolishSection">
-                        <summary>Polish with AI</summary>
+                    <details class="weaver-fold" id="weaverPolishSection" open>
+                        <summary>AI Polished preview</summary>
                         <div class="weaver-fold-body">
                             <div class="weaver-field">
-                                <label for="postWeaverOutput">Combined article</label>
-                                <textarea class="weaver-output" id="postWeaverOutput" placeholder="Combine the original posts, then polish the article here."></textarea>
-                            </div>
-                            <div class="weaver-actions">
-                                <button class="toolbar-btn primary" id="polishPostsButton" type="button">Polish with AI</button>
+                                <label for="postWeaverOutput">Generated preview</label>
+                                <textarea class="weaver-output" id="postWeaverOutput" placeholder="Capture a post to generate an AI polished preview." readonly></textarea>
                             </div>
                         </div>
                     </details>
@@ -2916,18 +2904,7 @@
                                 <label for="postWeaverObsidianTitle">Note title / path</label>
                                 <input id="postWeaverObsidianTitle" type="text" placeholder="Post Weaver - 2026-06-24">
                             </div>
-                            <div class="weaver-field">
-                                <label for="postWeaverObsidianTemplate">Markdown template</label>
-                                <textarea id="postWeaverObsidianTemplate" class="weaver-output" spellcheck="false">---
-title: {{title}}
-date: {{date}}
-sources:
-{{source_urls}}
----
-
-{{content}}</textarea>
-                            </div>
-                            <p class="weaver-fold-note">Available placeholders: <code>{{title}}</code>, <code>{{content}}</code>, <code>{{date}}</code>, <code>{{source_urls}}</code>.</p>
+                            <p class="weaver-fold-note">The Obsidian template is built into AirType. It stores the original captured text and leaves title, tags, and AI polished fields ready for you to fill in Obsidian.</p>
                             <div class="weaver-actions">
                                 <button class="toolbar-btn" id="savePostsToObsidianButton" type="button">Save to Obsidian</button>
                             </div>
@@ -3202,12 +3179,10 @@ sources:
         const llmPrompt = document.getElementById("llmPrompt");
         const llmResponse = document.getElementById("llmResponse");
         const postWeaverUrl = document.getElementById("postWeaverUrl");
-        const postWeaverText = document.getElementById("postWeaverText");
         const postWeaverPosts = document.getElementById("postWeaverPosts");
         const postWeaverOutput = document.getElementById("postWeaverOutput");
         const postWeaverObsidianVault = document.getElementById("postWeaverObsidianVault");
         const postWeaverObsidianTitle = document.getElementById("postWeaverObsidianTitle");
-        const postWeaverObsidianTemplate = document.getElementById("postWeaverObsidianTemplate");
 
         const defaultSettings = {
             whisper: {
@@ -3266,6 +3241,44 @@ sources:
         let llmSessionApiKeys = {};
         let pendingLlmApiKeyDialog = null;
         let wovenPosts = [];
+        let capturedPostUrl = "";
+        const OBSIDIAN_POST_TEMPLATE = `---
+title: {{property_title}}
+sources:
+  - {{original_url}}
+datetime: {{DATETIME}}
+tags:
+  - {{DATE}}
+  - airtype
+---
+
+---
+
+# Title
+
+{{title}}
+
+---
+
+# Tags
+
+{{tags}}
+
+---
+
+# AI Polished
+
+{{ai_polished}}
+
+---
+
+# Content
+
+{{content}}
+
+---
+
+END`;
         function showToast(message) {
             toast.textContent = message;
             toast.classList.add("show");
@@ -4371,12 +4384,12 @@ sources:
 
         function renderWovenPosts() {
             if (!wovenPosts.length) {
-                postWeaverPosts.innerHTML = '<div class="weaver-empty">No posts collected yet. Paste the first caption on the left.</div>';
+                postWeaverPosts.innerHTML = '<div class="weaver-empty">No post captured yet. Add a public post URL, then select Capture.</div>';
                 return;
             }
             postWeaverPosts.innerHTML = wovenPosts.map((post, index) => `
                 <article class="weaver-post">
-                    <header><span>Post ${index + 1}${post.url ? ` · ${escapeHtml(postHost(post.url))}` : ""}</span><button class="weaver-remove" type="button" data-weaver-remove="${index}">Remove</button></header>
+                    <header><span>Post ${index + 1}${post.url ? ` · ${escapeHtml(postHost(post.url))}` : ""}</span></header>
                     <p>${escapeHtml(post.text)}</p>
                 </article>
             `).join("");
@@ -4394,40 +4407,16 @@ sources:
             return wovenPosts.map(post => post.text.trim()).filter(Boolean).join("\n\n");
         }
 
-        function combineWovenPosts() {
-            if (!wovenPosts.length) {
-                showToast("Add at least one post first");
-                return;
-            }
-            postWeaverOutput.value = combinedPostsText();
-            document.getElementById("weaverPolishSection").open = true;
-            showToast(`${wovenPosts.length} post${wovenPosts.length === 1 ? "" : "s"} combined`);
-        }
-
-        function addWovenPost() {
-            const text = postWeaverText.value.trim();
-            if (!text) {
-                showToast("Paste a post before adding it");
-                postWeaverText.focus();
-                return;
-            }
-            wovenPosts.push({ text, url: postWeaverUrl.value.trim() });
-            postWeaverText.value = "";
-            postWeaverUrl.value = "";
-            renderWovenPosts();
-            showToast("Post added");
-        }
-
-        async function importWovenPost() {
+        async function captureWovenPost() {
             const url = postWeaverUrl.value.trim();
             if (!url) {
                 showToast("Paste a public post URL first");
                 postWeaverUrl.focus();
                 return;
             }
-            const button = document.getElementById("importPostButton");
+            const button = document.getElementById("capturePostButton");
             button.disabled = true;
-            button.textContent = "Importing...";
+            button.textContent = "Capturing...";
             try {
                 const isThreadsUrl = /https?:\/\/(?:www\.)?threads\.(?:com|net)\//i.test(url);
                 const response = await fetch(isThreadsUrl ? "/api/post-weaver/threads-chain" : "/api/post-weaver/import", {
@@ -4440,34 +4429,36 @@ sources:
                 if (isThreadsUrl) {
                     const incomingPosts = Array.isArray(payload.posts) ? payload.posts : [];
                     if (!incomingPosts.length) throw new Error("No public continuation posts were found");
-                    const knownUrls = new Set(wovenPosts.map(post => post.url));
-                    wovenPosts.push(...incomingPosts.filter(post => post.text && !knownUrls.has(post.url)));
-                    postWeaverText.value = "";
-                    postWeaverUrl.value = "";
+                    wovenPosts = incomingPosts
+                        .filter(post => post?.text)
+                        .map(post => ({ text: post.text, url: post.url || url }));
                     renderWovenPosts();
-                    combineWovenPosts();
-                    showToast(`Collected ${incomingPosts.length} post${incomingPosts.length === 1 ? "" : "s"} from @${payload.author || "author"}`);
-                    return;
+                    showToast(`Captured ${wovenPosts.length} post${wovenPosts.length === 1 ? "" : "s"} from @${payload.author || "author"}`);
+                } else {
+                    const text = String(payload.text || "").trim();
+                    if (!text) throw new Error("This site did not expose public post text");
+                    wovenPosts = [{ text, url }];
+                    renderWovenPosts();
+                    showToast("Post captured");
                 }
-                postWeaverText.value = payload.text || "";
-                showToast("Public preview imported; review it before adding");
+                capturedPostUrl = url;
+                postWeaverOutput.value = "";
+                document.getElementById("weaverPolishSection").open = true;
+                await polishWovenPosts();
+                document.getElementById("weaverCopySection").open = true;
             } catch (error) {
-                showToast(error.message || "Could not import this post");
+                showToast(error.message || "Could not capture this post");
             } finally {
                 button.disabled = false;
-                button.textContent = "Import URL / Threads chain";
+                button.textContent = "Capture";
             }
         }
 
         async function polishWovenPosts() {
-            const source = postWeaverOutput.value.trim() || combinedPostsText();
+            const source = combinedPostsText();
             if (!source) {
-                showToast("Add posts before polishing");
-                return;
+                return false;
             }
-            const button = document.getElementById("polishPostsButton");
-            button.disabled = true;
-            button.textContent = "Polishing...";
             try {
                 const llm = appSettings.llm || {};
                 const apiKey = await ensureLlmApiKey(llm);
@@ -4488,46 +4479,49 @@ sources:
                 const payload = await response.json().catch(() => ({}));
                 if (!response.ok) throw new Error(payload.detail || "AI polishing failed");
                 postWeaverOutput.value = payload.response || source;
-                document.getElementById("weaverCopySection").open = true;
-                showToast("Article polished");
+                showToast("AI polished preview updated");
+                return true;
             } catch (error) {
+                postWeaverOutput.value = "";
                 showToast(error.message || "AI polishing failed");
-            } finally {
-                button.disabled = false;
-                button.textContent = "Polish with AI";
+                return false;
             }
         }
 
+        function localObsidianDateParts(date = new Date()) {
+            const pad = value => String(value).padStart(2, "0");
+            const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+            return {
+                date: day,
+                datetime: `${day} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+            };
+        }
+
         function defaultObsidianNoteTitle() {
-            const date = new Date().toISOString().slice(0, 10);
-            const firstSource = wovenPosts.find(post => post.url)?.url;
+            const date = localObsidianDateParts().date;
+            const firstSource = capturedPostUrl || wovenPosts.find(post => post.url)?.url;
             const host = firstSource ? postHost(firstSource).replace(/^www\./i, "") : "Post Weaver";
             return `${host} - ${date}`;
         }
 
-        function obsidianSourceUrls() {
-            const urls = [...new Set(wovenPosts.map(post => post.url.trim()).filter(Boolean))];
-            return urls.length ? urls.map(url => `  - ${url}`).join("\n") : "  -";
-        }
-
         function saveWovenPostsToObsidian() {
-            const article = postWeaverOutput.value.trim() || combinedPostsText();
-            if (!article) {
-                showToast("Add or combine posts before saving");
+            const content = combinedPostsText();
+            if (!content) {
+                showToast("Capture a post before saving");
                 return;
             }
 
             const title = (postWeaverObsidianTitle.value.trim() || defaultObsidianNoteTitle())
                 .replace(/[\r\n]+/g, " ");
-            const template = postWeaverObsidianTemplate.value || "{{content}}";
-            const today = new Date().toISOString().slice(0, 10);
+            const dateParts = localObsidianDateParts();
+            const originalUrl = capturedPostUrl;
             const values = {
-                title,
-                content: article,
-                date: today,
-                source_urls: obsidianSourceUrls()
+                original_url: originalUrl,
+                DATETIME: dateParts.datetime,
+                DATE: dateParts.date,
+                content
             };
-            const note = template.replace(/{{(title|content|date|source_urls)}}/g, (_, key) => values[key]);
+            const note = OBSIDIAN_POST_TEMPLATE.replace(/{{(original_url|DATETIME|DATE|content)}}/g, (_, key) => values[key]);
             const params = new URLSearchParams({ name: title, content: note });
             const vault = postWeaverObsidianVault.value.trim();
             if (vault) params.set("vault", vault);
@@ -5437,18 +5431,8 @@ sources:
                 showToast(`${item.dataset.panel} selected`);
             });
         });
-        document.getElementById("addPostButton").addEventListener("click", addWovenPost);
-        document.getElementById("importPostButton").addEventListener("click", importWovenPost);
-        document.getElementById("combinePostsButton").addEventListener("click", combineWovenPosts);
-        document.getElementById("polishPostsButton").addEventListener("click", polishWovenPosts);
+        document.getElementById("capturePostButton").addEventListener("click", captureWovenPost);
         document.getElementById("savePostsToObsidianButton").addEventListener("click", saveWovenPostsToObsidian);
-        postWeaverPosts.addEventListener("click", event => {
-            const button = event.target.closest("[data-weaver-remove]");
-            if (!button) return;
-            wovenPosts.splice(Number(button.dataset.weaverRemove), 1);
-            renderWovenPosts();
-            if (!wovenPosts.length) postWeaverOutput.value = "";
-        });
 
         async function initializeApp() {
             await loadServerSettings({ force: true });
