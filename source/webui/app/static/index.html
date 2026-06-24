@@ -3267,6 +3267,8 @@ tags:
 
 # AI Polished Article
 
+{{polished_content}}
+
 ---
 
 # Original Content
@@ -4412,6 +4414,30 @@ END`;
             return firstBlock.replace(/\s+/g, " ").trim();
         }
 
+        function fallbackArticleTitle(text = "") {
+            const characters = Array.from(String(text).replace(/\s+/g, " ").trim());
+            if (!characters.length) return "TITLE";
+            const opening = sanitizeObsidianTitle(characters.slice(0, 20).join(""));
+            return opening ? `${opening}...` : "TITLE";
+        }
+
+        function sanitizeObsidianTitle(text = "") {
+            return String(text)
+                .replace(/[\\/:*?"<>|\u0000-\u001F]/g, " ")
+                .replace(/\s+/g, " ")
+                .trim();
+        }
+
+        function normalizeGeneratedTitle(text = "") {
+            const firstLine = String(text).split(/\r?\n/).find(line => line.trim()) || "";
+            const normalized = firstLine
+                .replace(/^\s*(?:標題|title)\s*[:：]\s*/i, "")
+                .replace(/^#+\s*/, "")
+                .replace(/[「」『』"“”]/g, "")
+                .trim();
+            return sanitizeObsidianTitle(Array.from(normalized).slice(0, 20).join(""));
+        }
+
         async function captureWovenPost() {
             const url = postWeaverUrl.value.trim();
             if (!url) {
@@ -4451,7 +4477,8 @@ END`;
                 capturedPostUrl = url;
                 postWeaverOutput.value = "";
                 document.getElementById("weaverPolishSection").open = true;
-                await polishWovenPosts();
+                const polishedContent = await polishWovenPosts();
+                capturedPostTitle = await generateWovenPostTitle(polishedContent || combinedPostsText());
                 document.getElementById("weaverCopySection").open = true;
             } catch (error) {
                 showToast(error.message || "Could not capture this post");
@@ -4487,11 +4514,43 @@ END`;
                 if (!response.ok) throw new Error(payload.detail || "AI polishing failed");
                 postWeaverOutput.value = payload.response || source;
                 showToast("AI polished preview updated");
-                return true;
+                return postWeaverOutput.value;
             } catch (error) {
                 postWeaverOutput.value = "";
                 showToast(error.message || "AI polishing failed");
-                return false;
+                return "";
+            }
+        }
+
+        async function generateWovenPostTitle(publishedContent) {
+            const fallback = fallbackArticleTitle(publishedContent);
+            if (!publishedContent.trim()) return fallback;
+            try {
+                const llm = appSettings.llm || {};
+                const apiKey = await ensureLlmApiKey(llm);
+                const response = await fetch("/api/local-llm/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        provider: llm.provider,
+                        endpoint: llm.endpoint,
+                        model: llm.model,
+                        api_key: apiKey,
+                        temperature: llm.temperature,
+                        context_length: llm.contextLength,
+                        system: "你是專業中文編輯。請只輸出一個繁體中文文章標題，不要引號、標籤、句號或任何說明；標題最多 20 個字。",
+                        prompt: `請根據以下已潤飾文章，產生一個最多 20 個字的精確標題。\n\n${publishedContent}`
+                    })
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(payload.detail || "AI title generation failed");
+                const title = normalizeGeneratedTitle(payload.response);
+                if (!title) throw new Error("AI title generation returned an empty title");
+                showToast("AI title generated");
+                return title;
+            } catch (error) {
+                showToast("AI title unavailable; using the article opening");
+                return fallback;
             }
         }
 
@@ -4506,9 +4565,8 @@ END`;
 
         function defaultObsidianNoteTitle() {
             const date = localObsidianDateParts().date;
-            const firstSource = capturedPostUrl || wovenPosts.find(post => post.url)?.url;
-            const host = firstSource ? postHost(firstSource).replace(/^www\./i, "") : "Post Weaver";
-            return `${host} - ${date}`;
+            const title = capturedPostTitle || fallbackArticleTitle(combinedPostsText());
+            return `${date} ${title}`;
         }
 
         function saveWovenPostsToObsidian() {
@@ -4522,15 +4580,17 @@ END`;
                 .replace(/[\r\n]+/g, " ");
             const dateParts = localObsidianDateParts();
             const originalUrl = capturedPostUrl;
-            const articleTitle = capturedPostTitle || titleFromPostText(content) || "TITLE";
+            const polishedContent = postWeaverOutput.value.trim();
+            const articleTitle = capturedPostTitle || fallbackArticleTitle(polishedContent || content);
             const values = {
                 original_url: originalUrl,
                 DATETIME: dateParts.datetime,
                 DATE: dateParts.date,
                 TITLE: articleTitle,
+                polished_content: polishedContent,
                 content
             };
-            const note = OBSIDIAN_POST_TEMPLATE.replace(/{{(original_url|DATETIME|DATE|TITLE|content)}}/g, (_, key) => values[key]);
+            const note = OBSIDIAN_POST_TEMPLATE.replace(/{{(original_url|DATETIME|DATE|TITLE|polished_content|content)}}/g, (_, key) => values[key]);
             const vault = postWeaverObsidianVault.value.trim();
             const query = [
                 ["name", title],
