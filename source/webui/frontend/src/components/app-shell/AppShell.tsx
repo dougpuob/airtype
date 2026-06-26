@@ -11,10 +11,11 @@ export function AppShell({ children }: PropsWithChildren) {
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: `${sidebarWidth}px minmax(0, 1fr)`,
-        gridTemplateRows: `${topBarHeight}px minmax(0, 1fr)`,
+        gridTemplateColumns: { xs: "minmax(0, 1fr)", md: `${sidebarWidth}px minmax(0, 1fr)` },
+        gridTemplateRows: { xs: `${topBarHeight}px minmax(0, 1fr) 72px`, md: `${topBarHeight}px minmax(0, 1fr)` },
         height: "100vh",
         minWidth: 0,
+        overflow: "hidden",
         bgcolor: "background.default"
       }}
     >
@@ -23,12 +24,13 @@ export function AppShell({ children }: PropsWithChildren) {
       <Box
         component="main"
         sx={{
-          gridColumn: 2,
+          gridColumn: { xs: 1, md: 2 },
           gridRow: 2,
           minWidth: 0,
           minHeight: 0,
           overflow: "auto",
-          p: 3
+          p: { xs: 1.5, md: 3 },
+          pb: { xs: 2, md: 3 }
         }}
       >
         {children}

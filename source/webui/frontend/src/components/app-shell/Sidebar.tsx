@@ -23,22 +23,27 @@ export function Sidebar({ topBarHeight }: SidebarProps) {
     <Box
       component="aside"
       sx={{
-        gridColumn: 1,
-        gridRow: 2,
+        gridColumn: { xs: 1, md: 1 },
+        gridRow: { xs: 3, md: 2 },
         minHeight: 0,
         display: "flex",
-        flexDirection: "column",
-        borderRight: 1,
+        flexDirection: { xs: "row", md: "column" },
+        alignItems: { xs: "center", md: "stretch" },
+        borderRight: { xs: 0, md: 1 },
+        borderTop: { xs: 1, md: 0 },
         borderColor: "divider",
         bgcolor: "background.paper",
-        px: 1.5,
-        py: 2,
-        mt: 0
+        px: { xs: 0.75, md: 1.5 },
+        py: { xs: 0.75, md: 2 },
+        mt: 0,
+        overflowX: { xs: "auto", md: "visible" },
+        overflowY: "hidden"
       }}
     >
       <Typography
         variant="overline"
         sx={{
+          display: { xs: "none", md: "block" },
           color: "text.secondary",
           fontSize: 11,
           fontWeight: 800,
@@ -49,7 +54,16 @@ export function Sidebar({ topBarHeight }: SidebarProps) {
       >
         Workspace
       </Typography>
-      <List dense disablePadding sx={{ display: "grid", gap: 0.5 }}>
+      <List
+        dense
+        disablePadding
+        sx={{
+          display: { xs: "flex", md: "grid" },
+          gap: { xs: 0.5, md: 0.5 },
+          width: "100%",
+          minWidth: { xs: "max-content", md: 0 }
+        }}
+      >
         {navItems.map((item) => (
           <ListItemButton
             key={item.path}
@@ -58,6 +72,12 @@ export function Sidebar({ topBarHeight }: SidebarProps) {
             end={item.path === "/"}
             sx={{
               color: "text.secondary",
+              flexDirection: { xs: "column", md: "row" },
+              justifyContent: "center",
+              minWidth: { xs: 72, md: 0 },
+              minHeight: { xs: 56, md: 42 },
+              px: { xs: 1, md: 2 },
+              py: { xs: 0.5, md: 1 },
               "&.active": {
                 bgcolor: "primary.light",
                 color: "primary.dark",
@@ -67,22 +87,32 @@ export function Sidebar({ topBarHeight }: SidebarProps) {
               }
             }}
           >
-            <ListItemIcon sx={{ minWidth: 36, color: "text.secondary" }}>{item.icon}</ListItemIcon>
+            <ListItemIcon
+              sx={{
+                minWidth: { xs: 0, md: 36 },
+                color: "text.secondary",
+                mb: { xs: 0.25, md: 0 }
+              }}
+            >
+              {item.icon}
+            </ListItemIcon>
             <ListItemText
               primary={item.label}
               primaryTypographyProps={{
-                fontSize: 13,
-                fontWeight: 750
+                fontSize: { xs: 10, md: 13 },
+                fontWeight: 750,
+                textAlign: { xs: "center", md: "left" },
+                noWrap: true
               }}
             />
           </ListItemButton>
         ))}
       </List>
-      <Box sx={{ flex: 1 }} />
-      <Typography variant="caption" sx={{ color: "text.secondary", px: 1.5 }}>
+      <Box sx={{ flex: 1, display: { xs: "none", md: "block" } }} />
+      <Typography variant="caption" sx={{ display: { xs: "none", md: "block" }, color: "text.secondary", px: 1.5 }}>
         Local workspace
       </Typography>
-      <Box sx={{ height: topBarHeight * 0 }} />
+      <Box sx={{ display: "none", height: topBarHeight * 0 }} />
     </Box>
   );
 }
