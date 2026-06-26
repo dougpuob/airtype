@@ -1,17 +1,16 @@
-import ArticleOutlinedIcon from "@mui/icons-material/ArticleOutlined";
-import AutoFixHighOutlinedIcon from "@mui/icons-material/AutoFixHighOutlined";
 import LinkOutlinedIcon from "@mui/icons-material/LinkOutlined";
 import {
   Alert,
   Box,
   Button,
-  Chip,
   Divider,
-  Grid,
   LinearProgress,
   Paper,
   Snackbar,
   Stack,
+  Step,
+  StepLabel,
+  Stepper,
   TextField,
   Typography
 } from "@mui/material";
@@ -142,9 +141,9 @@ export function CapturePostPage() {
   }
 
   return (
-    <PageScaffold title="Capture Post" eyebrow="Post workflow">
+    <PageScaffold>
       <WorkspacePanel>
-        <Stack spacing={2}>
+        <Stack spacing={2.25}>
           <WorkflowSteps step={step} />
           <Divider />
           <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
@@ -167,39 +166,15 @@ export function CapturePostPage() {
         </Stack>
       </WorkspacePanel>
 
-      <Grid container spacing={2}>
-        <Grid size={{ xs: 12, lg: 6 }}>
-          <WorkspacePanel>
-            <Stack spacing={1.5} sx={{ minHeight: 360 }}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center">
-                <Typography variant="h3">Original Post</Typography>
-                <Chip size="small" label={`${posts.length} posts`} variant="outlined" />
-              </Stack>
-              <Divider />
-              <PostList posts={posts} />
-            </Stack>
-          </WorkspacePanel>
-        </Grid>
-        <Grid size={{ xs: 12, lg: 6 }}>
-          <WorkspacePanel>
-            <Stack spacing={1.5} sx={{ minHeight: 360 }}>
-              <Stack direction="row" spacing={1} alignItems="center">
-                <AutoFixHighOutlinedIcon color="primary" fontSize="small" />
-                <Typography variant="h3">AI Polished Preview</Typography>
-              </Stack>
-              <Divider />
-              <Typography sx={{ whiteSpace: "pre-wrap", lineHeight: 1.75 }} color={polishedContent ? "text.primary" : "text.secondary"}>
-                {polishedContent || "Polished content will appear here."}
-              </Typography>
-            </Stack>
-          </WorkspacePanel>
-        </Grid>
-      </Grid>
-
       <WorkspacePanel>
         <Stack spacing={1.5}>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Typography variant="h3">Obsidian Preview</Typography>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="h3">Obsidian Preview</Typography>
+              <Typography variant="body2" color="text.secondary" noWrap>
+                {capturedTitle || "Capture a public post to generate a note preview."}
+              </Typography>
+            </Box>
             <Button variant="contained" disabled={!draft} onClick={saveToObsidian}>
               Save to Obsidian
             </Button>
@@ -228,65 +203,21 @@ export function CapturePostPage() {
 }
 
 function WorkflowSteps({ step }: { step: CaptureStep }) {
-  const activeIndex = stepToIndex(step);
   return (
-    <Stack direction="row" spacing={1} sx={{ overflowX: "auto", pb: 0.5 }}>
+    <Stepper activeStep={stepToIndex(step)} alternativeLabel>
       {steps.map((label, index) => (
-        <Stack key={label} direction="row" alignItems="center" spacing={1} sx={{ minWidth: 150, flex: 1 }}>
-          <Typography
-            sx={{
-              display: "grid",
-              placeItems: "center",
-              width: 28,
-              height: 28,
-              borderRadius: "50%",
-              bgcolor: index <= activeIndex ? "primary.light" : "background.default",
-              color: index <= activeIndex ? "primary.dark" : "text.secondary",
-              border: 1,
-              borderColor: index <= activeIndex ? "primary.main" : "divider",
-              fontWeight: 800
-            }}
-          >
-            {index + 1}
-          </Typography>
-          <Typography color={index <= activeIndex ? "text.primary" : "text.secondary"} fontWeight={700}>
-            {label}
-          </Typography>
-        </Stack>
+        <Step key={label} completed={isStepCompleted(index, step)}>
+          <StepLabel>{label}</StepLabel>
+        </Step>
       ))}
-    </Stack>
-  );
-}
-
-function PostList({ posts }: { posts: WovenPost[] }) {
-  if (!posts.length) {
-    return (
-      <Stack alignItems="center" justifyContent="center" spacing={1} sx={{ minHeight: 260, color: "text.secondary" }}>
-        <ArticleOutlinedIcon />
-        <Typography>No post captured yet.</Typography>
-      </Stack>
-    );
-  }
-
-  return (
-    <Stack spacing={1} sx={{ maxHeight: 460, overflow: "auto", pr: 0.5 }}>
-      {posts.map((post, index) => (
-        <Paper key={`${post.url || "post"}-${index}`} variant="outlined" sx={{ p: 1.5 }}>
-          <Typography variant="body2" color="text.secondary" fontWeight={800} gutterBottom>
-            Post {index + 1}
-            {post.url ? ` · ${postHost(post.url)}` : ""}
-          </Typography>
-          <Typography sx={{ whiteSpace: "pre-wrap", lineHeight: 1.7 }}>{post.text}</Typography>
-        </Paper>
-      ))}
-    </Stack>
+    </Stepper>
   );
 }
 
 function PostObsidianPreview({ draft }: { draft: ReturnType<typeof buildPostObsidianDraft> }) {
   if (!draft) {
     return (
-      <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 260, color: "text.secondary" }}>
+      <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 520, color: "text.secondary" }}>
         <Typography>Capture a public post to preview the note.</Typography>
       </Stack>
     );
@@ -299,7 +230,8 @@ function PostObsidianPreview({ draft }: { draft: ReturnType<typeof buildPostObsi
         bgcolor: "#1F2330",
         color: "#F1F4FA",
         borderColor: "#343A4A",
-        maxHeight: 520,
+        minHeight: 520,
+        maxHeight: 720,
         overflow: "auto"
       }}
     >
@@ -361,12 +293,9 @@ function stepToIndex(step: CaptureStep) {
   return 0;
 }
 
-function postHost(url: string) {
-  try {
-    return new URL(url).hostname || "source";
-  } catch {
-    return "source";
-  }
+function isStepCompleted(index: number, step: CaptureStep) {
+  if (step === "complete") return true;
+  return index < stepToIndex(step);
 }
 
 function uniquePostBlocks(text = "") {

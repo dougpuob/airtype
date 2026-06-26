@@ -1,6 +1,4 @@
 import LinkOutlinedIcon from "@mui/icons-material/LinkOutlined";
-import StopCircleOutlinedIcon from "@mui/icons-material/StopCircleOutlined";
-import UploadFileOutlinedIcon from "@mui/icons-material/UploadFileOutlined";
 import {
   Alert,
   Box,
@@ -124,7 +122,7 @@ export function VToTextPage() {
   }
 
   return (
-    <PageScaffold title="V to Text" eyebrow="Transcription workflow">
+    <PageScaffold>
       <WorkspacePanel>
         <Stack spacing={2.25}>
           <WorkflowStepper status={activeJob?.status || selectedRecord?.status} />
@@ -140,12 +138,16 @@ export function VToTextPage() {
                 startAdornment: <LinkOutlinedIcon color="disabled" fontSize="small" sx={{ mr: 1 }} />
               }}
             />
-            <Button variant="contained" disabled={isWorking} onClick={startUrlJob}>
-              Transcribe
+            <Button
+              variant="contained"
+              color={isWorking ? "error" : "primary"}
+              disabled={createUrlJob.isPending || uploadJob.isPending || cancelJob.isPending}
+              onClick={isWorking ? stopActiveJob : startUrlJob}
+            >
+              {isWorking ? "Stop" : "Transcribe"}
             </Button>
             <Button
               variant="outlined"
-              startIcon={<UploadFileOutlinedIcon />}
               component="label"
               disabled={isWorking}
             >
@@ -161,15 +163,6 @@ export function VToTextPage() {
                   event.target.value = "";
                 }}
               />
-            </Button>
-            <Button
-              variant="outlined"
-              color="error"
-              startIcon={<StopCircleOutlinedIcon />}
-              disabled={!activeJobId || cancelJob.isPending}
-              onClick={stopActiveJob}
-            >
-              Stop
             </Button>
           </Stack>
           <Stack spacing={1}>
