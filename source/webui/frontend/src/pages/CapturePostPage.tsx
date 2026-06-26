@@ -144,10 +144,12 @@ export function CapturePostPage() {
   return (
     <PageScaffold>
       <WorkspacePanel>
-        <Stack spacing={2.25}>
-          <WorkflowSteps step={step} />
+        <Stack spacing={2.25} sx={{ minWidth: 0 }}>
+          <Box sx={{ minWidth: 0, overflowX: "auto", pb: 0.5 }}>
+            <WorkflowSteps step={step} />
+          </Box>
           <Divider />
-          <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ minWidth: 0 }}>
             <TextField
               fullWidth
               size="small"
@@ -175,9 +177,9 @@ export function CapturePostPage() {
 
       <WorkspacePanel>
         <Stack spacing={1.5}>
-          <Stack direction="row" justifyContent="space-between" alignItems="center">
+          <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1}>
             <Typography variant="h3">Obsidian Preview</Typography>
-            <Button variant="contained" disabled={!draft} onClick={saveToObsidian}>
+            <Button variant="contained" disabled={!draft} onClick={saveToObsidian} sx={{ whiteSpace: "nowrap" }}>
               Save to Obsidian
             </Button>
           </Stack>

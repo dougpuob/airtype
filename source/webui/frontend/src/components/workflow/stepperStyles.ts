@@ -1,4 +1,5 @@
 export const compactStepperSx = {
+  minWidth: { xs: 520, md: 0 },
   px: { xs: 0, md: 8 },
   py: 0.5,
   "& .MuiStepConnector-line": {

@@ -1,5 +1,5 @@
 import CircleIcon from "@mui/icons-material/Circle";
-import { AppBar, Box, Chip, Stack, Toolbar, Typography } from "@mui/material";
+import { AppBar, Box, Chip, Stack, Toolbar, Typography, useMediaQuery, useTheme } from "@mui/material";
 import { useSettingsQuery } from "../../api/settings";
 import { useLocalLlmHealthQuery, useWhisperServerStatusQuery } from "../../api/serviceStatus";
 
@@ -8,6 +8,8 @@ type TopAppBarProps = {
 };
 
 export function TopAppBar({ sidebarWidth }: TopAppBarProps) {
+  const theme = useTheme();
+  const compact = useMediaQuery(theme.breakpoints.down("sm"));
   const settingsQuery = useSettingsQuery();
   const whisperStatus = useWhisperServerStatusQuery();
   const llmHealth = useLocalLlmHealthQuery(settingsQuery.data);
@@ -37,12 +39,12 @@ export function TopAppBar({ sidebarWidth }: TopAppBarProps) {
         backdropFilter: "blur(16px)"
       }}
     >
-      <Toolbar sx={{ minHeight: "58px !important", px: 2.5 }}>
+      <Toolbar sx={{ minHeight: "58px !important", px: { xs: 1.25, md: 2.5 }, gap: 1 }}>
         <Stack
           direction="row"
           alignItems="center"
           spacing={1.25}
-          sx={{ width: sidebarWidth - 20, flexShrink: 0 }}
+          sx={{ width: { xs: "auto", md: sidebarWidth - 20 }, flexShrink: 0, minWidth: 0 }}
         >
           <Box
             component="img"
@@ -63,9 +65,9 @@ export function TopAppBar({ sidebarWidth }: TopAppBarProps) {
           </Typography>
         </Stack>
         <Box sx={{ flex: 1 }} />
-        <Stack direction="row" spacing={1} alignItems="center">
-          <ServiceChip label="ASR Server" state={asr} />
-          <ServiceChip label="LLM Server" state={llm} />
+        <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0, overflow: "hidden" }}>
+          <ServiceChip label={compact ? "ASR" : "ASR Server"} state={asr} />
+          <ServiceChip label={compact ? "LLM" : "LLM Server"} state={llm} />
         </Stack>
       </Toolbar>
     </AppBar>
@@ -85,6 +87,14 @@ function ServiceChip({ label, state }: { label: string; state: ChipState }) {
       label={`${label}: ${state.label}`}
       variant="outlined"
       color={state.color}
+      sx={{
+        maxWidth: { xs: 96, sm: "none" },
+        "& .MuiChip-label": {
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap"
+        }
+      }}
     />
   );
 }
