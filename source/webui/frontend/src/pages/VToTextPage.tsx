@@ -126,8 +126,29 @@ export function VToTextPage() {
     <PageScaffold>
       <WorkspacePanel>
         <Stack spacing={2.25} sx={{ minWidth: 0 }}>
-          <Box sx={{ minWidth: 0, overflowX: "auto", pb: 0.5 }}>
-            <WorkflowStepper status={activeJob?.status || selectedRecord?.status} />
+          <Box
+            sx={{
+              alignItems: "center",
+              display: "grid",
+              gap: { xs: 1.5, md: 3 },
+              gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) minmax(0, 1fr)" },
+              minWidth: 0
+            }}
+          >
+            <Box sx={{ minWidth: 0, overflowX: "auto", pb: 0.5 }}>
+              <WorkflowStepper status={activeJob?.status || selectedRecord?.status} />
+            </Box>
+            <Stack spacing={1} sx={{ minWidth: 0 }}>
+              <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+                <Typography variant="body2" color="text.secondary" fontWeight={700} noWrap>
+                  {activeMessage}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" fontWeight={700} sx={{ flexShrink: 0 }}>
+                  {Math.round(activeProgress)}%
+                </Typography>
+              </Stack>
+              <LinearProgress value={Math.min(100, activeProgress)} variant="determinate" />
+            </Stack>
           </Box>
           <Divider />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ minWidth: 0 }}>
@@ -170,17 +191,6 @@ export function VToTextPage() {
                 }}
               />
             </Button>
-          </Stack>
-          <Stack spacing={1}>
-            <Stack direction="row" justifyContent="space-between" alignItems="center">
-              <Typography variant="body2" color="text.secondary" fontWeight={700}>
-                {activeMessage}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" fontWeight={700}>
-                {Math.round(activeProgress)}%
-              </Typography>
-            </Stack>
-            <LinearProgress value={Math.min(100, activeProgress)} variant="determinate" />
           </Stack>
           {createUrlJob.isError || uploadJob.isError || jobQuery.isError || recordQuery.isError ? (
             <Alert severity="error">
