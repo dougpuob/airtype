@@ -19,12 +19,13 @@ import { chatWithLocalLlm } from "../api/localLlm";
 import { useImportPostMutation } from "../api/postWeaver";
 import { useSettingsQuery } from "../api/settings";
 import { LlmApiKeyDialog } from "../components/llm/LlmApiKeyDialog";
+import { compactStepperSx } from "../components/workflow/stepperStyles";
 import { useLlmApiKey } from "../hooks/useLlmApiKey";
 import type { ThreadsChainResponse, WovenPost } from "../types/postWeaver";
 import { buildPostObsidianDraft, openObsidianDraft } from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
-const steps = ["capturing", "polishing", "titled", "done"];
+const steps = ["Capturing", "Polishing", "Titled", "Done"];
 
 type CaptureStep = "idle" | "capture" | "polish" | "title" | "obsidian" | "complete" | "error";
 
@@ -150,6 +151,7 @@ export function CapturePostPage() {
             <TextField
               fullWidth
               size="small"
+              sx={{ "& .MuiOutlinedInput-root": { height: 40 } }}
               value={postUrl}
               onChange={(event) => setPostUrl(event.target.value)}
               placeholder="Paste post URL, Threads, ..."
@@ -157,7 +159,12 @@ export function CapturePostPage() {
                 startAdornment: <LinkOutlinedIcon color="disabled" fontSize="small" sx={{ mr: 1 }} />
               }}
             />
-            <Button variant="contained" disabled={isWorking} onClick={capturePost}>
+            <Button
+              variant="contained"
+              disabled={isWorking}
+              onClick={capturePost}
+              sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
+            >
               Capture
             </Button>
           </Stack>
@@ -169,12 +176,7 @@ export function CapturePostPage() {
       <WorkspacePanel>
         <Stack spacing={1.5}>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Box sx={{ minWidth: 0 }}>
-              <Typography variant="h3">Obsidian Preview</Typography>
-              <Typography variant="body2" color="text.secondary" noWrap>
-                {capturedTitle || "Capture a public post to generate a note preview."}
-              </Typography>
-            </Box>
+            <Typography variant="h3">Obsidian Preview</Typography>
             <Button variant="contained" disabled={!draft} onClick={saveToObsidian}>
               Save to Obsidian
             </Button>
@@ -204,7 +206,7 @@ export function CapturePostPage() {
 
 function WorkflowSteps({ step }: { step: CaptureStep }) {
   return (
-    <Stepper activeStep={stepToIndex(step)} alternativeLabel>
+    <Stepper activeStep={stepToIndex(step)} alternativeLabel sx={compactStepperSx}>
       {steps.map((label, index) => (
         <Step key={label} completed={isStepCompleted(index, step)}>
           <StepLabel>{label}</StepLabel>
@@ -236,7 +238,7 @@ function PostObsidianPreview({ draft }: { draft: ReturnType<typeof buildPostObsi
       }}
     >
       <Stack spacing={2}>
-        <Typography variant="h2" sx={{ color: "#C8D2FF" }}>
+        <Typography sx={{ color: "#C8D2FF", fontSize: 18, fontWeight: 850, lineHeight: 1.35 }}>
           {draft.noteTitle}
         </Typography>
         <PreviewSection title="Properties">
@@ -257,10 +259,10 @@ function PostObsidianPreview({ draft }: { draft: ReturnType<typeof buildPostObsi
 function PreviewSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <Box sx={{ pt: 1.5, borderTop: 1, borderColor: "#343A4A" }}>
-      <Typography variant="h3" sx={{ color: "#C8D2FF", mb: 1 }}>
+      <Typography sx={{ color: "#C8D2FF", mb: 1, fontSize: 13, fontWeight: 850 }}>
         {title}
       </Typography>
-      <Typography component="div" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.7 }}>
+      <Typography component="div" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.75, fontSize: 14 }}>
         {children}
       </Typography>
     </Box>

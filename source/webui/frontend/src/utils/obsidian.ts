@@ -178,7 +178,7 @@ function transcriptOriginalText(segments?: TranscriptSegment[], fallbackText?: s
   return segments
     .map((segment) => (segment.text || "").trim().replace(/\r\n?/g, "\n"))
     .filter(Boolean)
-    .map((text) => `${text}\n`)
+    .map((text) => `${text}    \n`)
     .join("");
 }
 
