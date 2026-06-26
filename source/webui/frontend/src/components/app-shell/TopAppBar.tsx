@@ -1,11 +1,28 @@
 import CircleIcon from "@mui/icons-material/Circle";
 import { AppBar, Box, Chip, Stack, Toolbar, Typography } from "@mui/material";
+import { useSettingsQuery } from "../../api/settings";
+import { useLocalLlmHealthQuery, useWhisperServerStatusQuery } from "../../api/serviceStatus";
 
 type TopAppBarProps = {
   sidebarWidth: number;
 };
 
 export function TopAppBar({ sidebarWidth }: TopAppBarProps) {
+  const settingsQuery = useSettingsQuery();
+  const whisperStatus = useWhisperServerStatusQuery();
+  const llmHealth = useLocalLlmHealthQuery(settingsQuery.data);
+  const asr = serviceChipState({
+    isLoading: whisperStatus.isLoading,
+    isError: whisperStatus.isError,
+    online: whisperStatus.data?.running === true || Boolean(whisperStatus.data?.endpoint)
+  });
+  const llm = serviceChipState({
+    isLoading: settingsQuery.isLoading || llmHealth.isLoading,
+    isError: settingsQuery.isError || llmHealth.isError,
+    online: llmHealth.data?.ok === true,
+    disabled: !settingsQuery.data?.llm?.provider || !settingsQuery.data?.llm?.endpoint
+  });
+
   return (
     <AppBar
       position="static"
@@ -47,21 +64,38 @@ export function TopAppBar({ sidebarWidth }: TopAppBarProps) {
         </Stack>
         <Box sx={{ flex: 1 }} />
         <Stack direction="row" spacing={1} alignItems="center">
-          <Chip
-            size="small"
-            icon={<CircleIcon sx={{ fontSize: "10px !important" }} />}
-            label="ASR Server"
-            variant="outlined"
-            color="default"
-          />
-          <Chip
-            size="small"
-            icon={<CircleIcon sx={{ fontSize: "10px !important" }} />}
-            label="LLM Server"
-            variant="outlined"
-          />
+          <ServiceChip label="ASR Server" state={asr} />
+          <ServiceChip label="LLM Server" state={llm} />
         </Stack>
       </Toolbar>
     </AppBar>
   );
+}
+
+type ChipState = {
+  label: "Checking" | "Ready" | "Offline";
+  color: "default" | "success" | "error";
+};
+
+function ServiceChip({ label, state }: { label: string; state: ChipState }) {
+  return (
+    <Chip
+      size="small"
+      icon={<CircleIcon sx={{ fontSize: "10px !important" }} />}
+      label={`${label}: ${state.label}`}
+      variant="outlined"
+      color={state.color}
+    />
+  );
+}
+
+function serviceChipState(input: {
+  isLoading: boolean;
+  isError: boolean;
+  online: boolean;
+  disabled?: boolean;
+}): ChipState {
+  if (input.isLoading) return { label: "Checking", color: "default" };
+  if (input.disabled || input.isError || !input.online) return { label: "Offline", color: "error" };
+  return { label: "Ready", color: "success" };
 }
