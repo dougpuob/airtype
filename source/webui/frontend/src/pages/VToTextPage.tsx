@@ -1,5 +1,3 @@
-import AudioFileOutlinedIcon from "@mui/icons-material/AudioFileOutlined";
-import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import LinkOutlinedIcon from "@mui/icons-material/LinkOutlined";
 import StopCircleOutlinedIcon from "@mui/icons-material/StopCircleOutlined";
 import UploadFileOutlinedIcon from "@mui/icons-material/UploadFileOutlined";
@@ -7,15 +5,14 @@ import {
   Alert,
   Box,
   Button,
-  Chip,
   Divider,
   LinearProgress,
-  List,
-  ListItemButton,
-  ListItemText,
   Paper,
   Snackbar,
   Stack,
+  Step,
+  StepLabel,
+  Stepper,
   TextField,
   Typography
 } from "@mui/material";
@@ -27,11 +24,9 @@ import {
   useCreateUrlTranscriptionJobMutation,
   useTranscriptionJobQuery,
   useTranscriptionRecordQuery,
-  useTranscriptionRecordsQuery,
   useUploadTranscriptionJobMutation
 } from "../api/transcription";
-import type { TranscriptionJob, TranscriptionRecordSummary, TranscriptSegment } from "../types/transcription";
-import { formatBytes, formatDateTime, formatSeconds } from "../utils/format";
+import type { TranscriptionJob } from "../types/transcription";
 import { buildTranscriptObsidianDraft, openObsidianDraft } from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
@@ -47,7 +42,6 @@ export function VToTextPage() {
   const [toast, setToast] = useState("");
 
   const settingsQuery = useSettingsQuery();
-  const recordsQuery = useTranscriptionRecordsQuery();
   const jobQuery = useTranscriptionJobQuery(activeJobId, Boolean(activeJobId));
   const recordQuery = useTranscriptionRecordQuery(selectedRecordId);
   const createUrlJob = useCreateUrlTranscriptionJobMutation();
@@ -57,12 +51,9 @@ export function VToTextPage() {
   const whisper = settingsQuery.data?.whisper || {};
   const activeJob = jobQuery.data;
   const selectedRecord = recordQuery.data;
-  const activeProgress = uploadProgress ?? activeJob?.progress ?? 0;
-  const activeMessage = jobProgressMessage(activeJob) || (uploadProgress ? "Uploading media..." : "Ready");
+  const activeProgress = uploadProgress ?? activeJob?.progress ?? selectedRecord?.progress ?? 0;
+  const activeMessage = jobProgressMessage(activeJob) || selectedRecord?.message || (uploadProgress ? "Uploading media..." : "Ready");
   const isWorking = Boolean(activeJobId) || createUrlJob.isPending || uploadJob.isPending;
-  const displayedSegments = normalizeSegments(
-    activeJob?.partial_segments?.length ? activeJob.partial_segments : selectedRecord?.transcript?.segments
-  );
   const obsidianDraft = useMemo(() => buildTranscriptObsidianDraft(selectedRecord), [selectedRecord]);
 
   useEffect(() => {
@@ -72,20 +63,17 @@ export function VToTextPage() {
       setActiveJobId(null);
       setUploadProgress(null);
       setToast("Transcript ready");
-      queryClient.invalidateQueries({ queryKey: ["transcription-records"] });
       queryClient.invalidateQueries({ queryKey: ["transcription-record", activeJob.job_id] });
     }
     if (activeJob.status === "failed") {
       setActiveJobId(null);
       setUploadProgress(null);
       setToast(activeJob.error || "Transcription failed");
-      queryClient.invalidateQueries({ queryKey: ["transcription-records"] });
     }
     if (activeJob.status === "cancelled") {
       setActiveJobId(null);
       setUploadProgress(null);
       setToast("Transcription stopped");
-      queryClient.invalidateQueries({ queryKey: ["transcription-records"] });
     }
   }, [activeJob, queryClient]);
 
@@ -96,26 +84,26 @@ export function VToTextPage() {
       return;
     }
 
+    setSelectedRecordId(null);
     setUploadProgress(null);
     const job = await createUrlJob.mutateAsync({
       url,
       language: whisper.language || null,
       whisperEndpoint: whisper.remote_endpoint || null
     });
-    setSelectedRecordId(job.job_id);
     setActiveJobId(job.job_id);
     setToast("URL job started");
   }
 
   async function startFileJob(file: File) {
     setSourceUrl("");
+    setSelectedRecordId(null);
     const job = await uploadJob.mutateAsync({
       file,
       language: whisper.language || null,
       whisperEndpoint: whisper.remote_endpoint || null,
       onProgress: setUploadProgress
     });
-    setSelectedRecordId(job.job_id);
     setActiveJobId(job.job_id);
     setToast("Upload complete; transcription queued");
   }
@@ -126,19 +114,9 @@ export function VToTextPage() {
     setToast("Stop requested");
   }
 
-  async function copyTranscript() {
-    const text = selectedRecord?.transcript?.text || displayedSegments.map((segment) => segment.text).join("\n");
-    if (!text.trim()) {
-      setToast("No transcript text to copy");
-      return;
-    }
-    await navigator.clipboard.writeText(text);
-    setToast("Transcript copied");
-  }
-
   function saveToObsidian() {
     if (!obsidianDraft) {
-      setToast("Complete or select a transcript before saving");
+      setToast("Complete a transcript before saving");
       return;
     }
     openObsidianDraft(obsidianDraft);
@@ -148,8 +126,8 @@ export function VToTextPage() {
   return (
     <PageScaffold title="V to Text" eyebrow="Transcription workflow">
       <WorkspacePanel>
-        <Stack spacing={2}>
-          <WorkflowSteps status={activeJob?.status} />
+        <Stack spacing={2.25}>
+          <WorkflowStepper status={activeJob?.status || selectedRecord?.status} />
           <Divider />
           <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
             <TextField
@@ -203,56 +181,25 @@ export function VToTextPage() {
                 {Math.round(activeProgress)}%
               </Typography>
             </Stack>
-            <LinearProgress variant={isWorking ? "determinate" : "determinate"} value={Math.min(100, activeProgress)} />
+            <LinearProgress value={Math.min(100, activeProgress)} variant="determinate" />
           </Stack>
-          {createUrlJob.isError || uploadJob.isError || jobQuery.isError ? (
-            <Alert severity="error">{errorMessage(createUrlJob.error || uploadJob.error || jobQuery.error)}</Alert>
+          {createUrlJob.isError || uploadJob.isError || jobQuery.isError || recordQuery.isError ? (
+            <Alert severity="error">
+              {errorMessage(createUrlJob.error || uploadJob.error || jobQuery.error || recordQuery.error)}
+            </Alert>
           ) : null}
         </Stack>
       </WorkspacePanel>
 
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", lg: "320px minmax(0, 1fr)" },
-          gap: 2,
-          minHeight: 0
-        }}
-      >
-        <HistoryPanel
-          records={recordsQuery.data || []}
-          selectedRecordId={selectedRecordId}
-          onSelect={(recordId) => {
-            setSelectedRecordId(recordId);
-            setActiveJobId(null);
-            setUploadProgress(null);
-          }}
-        />
-        <WorkspacePanel>
-          <Stack spacing={2}>
-            <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
-              <Box sx={{ minWidth: 0 }}>
-                <Typography variant="h3" noWrap>
-                  {activeJob?.title || selectedRecord?.title || "Transcript"}
-                </Typography>
-                <Typography variant="body2" color="text.secondary" noWrap>
-                  {sourceSummary(activeJob, selectedRecord)}
-                </Typography>
-              </Box>
-              <Button variant="outlined" startIcon={<ContentCopyOutlinedIcon />} onClick={copyTranscript}>
-                Copy Text
-              </Button>
-            </Stack>
-            <Divider />
-            <SegmentsPanel segments={displayedSegments} />
-          </Stack>
-        </WorkspacePanel>
-      </Box>
-
       <WorkspacePanel>
         <Stack spacing={1.5}>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Typography variant="h3">Obsidian Preview</Typography>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="h3">Obsidian Preview</Typography>
+              <Typography variant="body2" color="text.secondary" noWrap>
+                {selectedRecord?.title || "Complete a transcript to generate a note preview."}
+              </Typography>
+            </Box>
             <Button variant="contained" disabled={!obsidianDraft} onClick={saveToObsidian}>
               Save to Obsidian
             </Button>
@@ -273,115 +220,23 @@ export function VToTextPage() {
   );
 }
 
-function WorkflowSteps({ status }: { status?: string }) {
-  const activeIndex = statusToStepIndex(status);
+function WorkflowStepper({ status }: { status?: string }) {
   return (
-    <Stack direction="row" spacing={1} sx={{ overflowX: "auto", pb: 0.5 }}>
-      {steps.map((step, index) => (
-        <Stack key={step} direction="row" alignItems="center" spacing={1} sx={{ minWidth: 150, flex: 1 }}>
-          <Typography
-            sx={{
-              display: "grid",
-              placeItems: "center",
-              width: 28,
-              height: 28,
-              borderRadius: "50%",
-              bgcolor: index <= activeIndex ? "primary.light" : "background.default",
-              color: index <= activeIndex ? "primary.dark" : "text.secondary",
-              border: 1,
-              borderColor: index <= activeIndex ? "primary.main" : "divider",
-              fontWeight: 800
-            }}
-          >
-            {index + 1}
-          </Typography>
-          <Typography color={index <= activeIndex ? "text.primary" : "text.secondary"} fontWeight={700}>
-            {step}
-          </Typography>
-        </Stack>
+    <Stepper activeStep={statusToStepIndex(status)} alternativeLabel>
+      {steps.map((step) => (
+        <Step key={step} completed={isStepCompleted(step, status)}>
+          <StepLabel>{step}</StepLabel>
+        </Step>
       ))}
-    </Stack>
-  );
-}
-
-function HistoryPanel({
-  records,
-  selectedRecordId,
-  onSelect
-}: {
-  records: TranscriptionRecordSummary[];
-  selectedRecordId: string | null;
-  onSelect: (recordId: string) => void;
-}) {
-  return (
-    <WorkspacePanel>
-      <Stack spacing={1.5}>
-        <Stack direction="row" alignItems="center" justifyContent="space-between">
-          <Typography variant="h3">History</Typography>
-          <Chip size="small" label={`${records.length} records`} variant="outlined" />
-        </Stack>
-        <Divider />
-        <List disablePadding sx={{ display: "grid", gap: 1, maxHeight: 520, overflow: "auto" }}>
-          {records.slice(0, 24).map((record) => (
-            <ListItemButton
-              key={record.job_id}
-              selected={record.job_id === selectedRecordId}
-              onClick={() => onSelect(record.job_id)}
-              sx={{ border: 1, borderColor: "divider" }}
-            >
-              <ListItemText
-                primary={record.title || record.source?.name || "Untitled transcript"}
-                secondary={`${formatDateTime(record.updated_at)} · ${record.result?.segment_count ?? 0} segments`}
-                primaryTypographyProps={{ fontSize: 13, fontWeight: 800, noWrap: true }}
-                secondaryTypographyProps={{ fontSize: 12, noWrap: true }}
-              />
-            </ListItemButton>
-          ))}
-          {!records.length ? (
-            <Typography color="text.secondary">Completed transcripts will appear here.</Typography>
-          ) : null}
-        </List>
-      </Stack>
-    </WorkspacePanel>
-  );
-}
-
-function SegmentsPanel({ segments }: { segments: NormalizedSegment[] }) {
-  if (!segments.length) {
-    return (
-      <Stack alignItems="center" justifyContent="center" spacing={1} sx={{ minHeight: 360, color: "text.secondary" }}>
-        <AudioFileOutlinedIcon />
-        <Typography>Transcript segments will appear here.</Typography>
-      </Stack>
-    );
-  }
-
-  return (
-    <Stack spacing={1} sx={{ maxHeight: 560, overflow: "auto", pr: 0.5 }}>
-      {segments.map((segment, index) => (
-        <Paper key={`${segment.id}-${index}`} variant="outlined" sx={{ p: 1.5 }}>
-          <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-            <Box sx={{ width: { md: 150 }, flexShrink: 0 }}>
-              <Typography variant="body2" fontWeight={800}>
-                {segment.time}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {segment.durationText}
-              </Typography>
-            </Box>
-            <Typography sx={{ lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{segment.text}</Typography>
-          </Stack>
-        </Paper>
-      ))}
-    </Stack>
+    </Stepper>
   );
 }
 
 function ObsidianPreview({ draft }: { draft: ReturnType<typeof buildTranscriptObsidianDraft> }) {
   if (!draft) {
     return (
-      <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 260, color: "text.secondary" }}>
-        <Typography>Complete or select a transcript to preview the note.</Typography>
+      <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 520, color: "text.secondary" }}>
+        <Typography>Complete a transcript to preview the note.</Typography>
       </Stack>
     );
   }
@@ -393,7 +248,8 @@ function ObsidianPreview({ draft }: { draft: ReturnType<typeof buildTranscriptOb
         bgcolor: "#1F2330",
         color: "#F1F4FA",
         borderColor: "#343A4A",
-        maxHeight: 520,
+        minHeight: 520,
+        maxHeight: 720,
         overflow: "auto"
       }}
     >
@@ -429,29 +285,6 @@ function PreviewSection({ title, children }: { title: string; children: React.Re
   );
 }
 
-type NormalizedSegment = {
-  id: string | number;
-  time: string;
-  durationText: string;
-  text: string;
-};
-
-function normalizeSegments(segments?: TranscriptSegment[]): NormalizedSegment[] {
-  if (!segments?.length) return [];
-  return segments.map((segment, index) => {
-    const start = segment.start ?? 0;
-    const end = segment.end ?? 0;
-    const hasTimestamps = segment.has_timestamps !== false && segment.start !== null && segment.end !== null;
-    return {
-      id: segment.id ?? index,
-      time: segment.time || (hasTimestamps ? `${formatSeconds(start)} -> ${formatSeconds(end)}` : "time unavailable"),
-      durationText:
-        segment.duration_text || (hasTimestamps ? `${Math.max(0, Number(end) - Number(start)).toFixed(1)}s` : ""),
-      text: segment.text || ""
-    };
-  });
-}
-
 function statusToStepIndex(status?: string) {
   if (status === "completed") return 4;
   if (status === "running") return 1;
@@ -461,18 +294,17 @@ function statusToStepIndex(status?: string) {
   return 0;
 }
 
+function isStepCompleted(step: string, status?: string) {
+  if (status === "completed") return true;
+  if (status === "running") return step === "downloading";
+  return false;
+}
+
 function jobProgressMessage(job?: TranscriptionJob) {
   if (!job) return "";
   if (job.message) return job.message;
   if (job.status === "completed") return "Transcript ready";
   return job.status;
-}
-
-function sourceSummary(job?: TranscriptionJob, record?: TranscriptionRecordSummary | null) {
-  const title = job?.source_name || record?.source?.name || "No source selected";
-  const type = job?.source_type || record?.source?.type || "--";
-  const size = formatBytes(job?.source_size ?? record?.source?.size);
-  return `${title} · ${type} · ${size}`;
 }
 
 function errorMessage(error: unknown) {
