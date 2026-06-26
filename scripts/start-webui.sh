@@ -3,6 +3,8 @@ set -e
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEBUI_DIR="$ROOT_DIR/source/webui"
+FRONTEND_DIR="$WEBUI_DIR/frontend"
+STATIC_INDEX="$WEBUI_DIR/app/static/index.html"
 CONFIG_PATH="$HOME/.airtype/config.toml"
 WEBUI_LOG_PATH="$HOME/.airtype/airtype-webui.log"
 VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
@@ -10,6 +12,7 @@ UV_BIN="${UV_BIN:-}"
 
 AIRTYPE_WEBUI_PORT="${AIRTYPE_WEBUI_PORT:-8003}"
 AIRTYPE_WEBUI_HOST="${AIRTYPE_WEBUI_HOST:-0.0.0.0}"
+AIRTYPE_WEBUI_BUILD_FRONTEND="${AIRTYPE_WEBUI_BUILD_FRONTEND:-auto}"
 
 mkdir -p "$(dirname "$WEBUI_LOG_PATH")"
 
@@ -62,6 +65,72 @@ if [[ -z "$UV_BIN" ]]; then
     echo "  ./scripts/setup.sh"
     exit 1
 fi
+
+build_frontend_if_needed() {
+    if [[ ! -d "$FRONTEND_DIR" ]]; then
+        return
+    fi
+
+    case "$AIRTYPE_WEBUI_BUILD_FRONTEND" in
+        0|false|False|FALSE|no|No|NO|never)
+            echo "Skipping frontend build because AIRTYPE_WEBUI_BUILD_FRONTEND=$AIRTYPE_WEBUI_BUILD_FRONTEND"
+            return
+            ;;
+        1|true|True|TRUE|yes|Yes|YES|always|auto)
+            ;;
+        *)
+            echo "Invalid AIRTYPE_WEBUI_BUILD_FRONTEND value: $AIRTYPE_WEBUI_BUILD_FRONTEND"
+            echo "Use auto, always, or never."
+            exit 1
+            ;;
+    esac
+
+    if ! command -v npm >/dev/null 2>&1; then
+        echo "npm is required to build the React WebUI frontend."
+        echo "Install Node.js/npm, or skip the build with:"
+        echo "  AIRTYPE_WEBUI_BUILD_FRONTEND=never $0"
+        exit 1
+    fi
+
+    local npm_install_needed=0
+    if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
+        npm_install_needed=1
+    elif [[ "$FRONTEND_DIR/package-lock.json" -nt "$FRONTEND_DIR/node_modules/.package-lock.json" ]]; then
+        npm_install_needed=1
+    elif [[ "$FRONTEND_DIR/package.json" -nt "$FRONTEND_DIR/node_modules/.package-lock.json" ]]; then
+        npm_install_needed=1
+    fi
+
+    if [[ "$npm_install_needed" == "1" ]]; then
+        echo "Installing frontend dependencies..."
+        (cd "$FRONTEND_DIR" && npm install)
+    fi
+
+    local build_needed=0
+    if [[ "$AIRTYPE_WEBUI_BUILD_FRONTEND" == "always" || "$AIRTYPE_WEBUI_BUILD_FRONTEND" == "1" || "$AIRTYPE_WEBUI_BUILD_FRONTEND" == "true" || "$AIRTYPE_WEBUI_BUILD_FRONTEND" == "yes" ]]; then
+        build_needed=1
+    elif [[ ! -f "$STATIC_INDEX" ]]; then
+        build_needed=1
+    elif find \
+        "$FRONTEND_DIR/src" \
+        "$FRONTEND_DIR/index.html" \
+        "$FRONTEND_DIR/package.json" \
+        "$FRONTEND_DIR/package-lock.json" \
+        "$FRONTEND_DIR/tsconfig.json" \
+        "$FRONTEND_DIR/vite.config.ts" \
+        -type f -newer "$STATIC_INDEX" | grep -q .; then
+        build_needed=1
+    fi
+
+    if [[ "$build_needed" == "1" ]]; then
+        echo "Building React WebUI frontend..."
+        (cd "$FRONTEND_DIR" && npm run build)
+    else
+        echo "React WebUI frontend build is up to date."
+    fi
+}
+
+build_frontend_if_needed
 
 "$UV_BIN" pip install --python "$VENV_PYTHON" -r "$WEBUI_DIR/requirements.txt"
 
