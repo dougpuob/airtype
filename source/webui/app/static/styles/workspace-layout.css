@@ -463,11 +463,11 @@ body {
 .weaver-hint { margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .weaver-progress { justify-self: end; padding: 2px 0; }
 .weaver-progress-title { margin: 0 0 9px; color: var(--soft); font-size: 12px; font-weight: 800; text-align: right; }
-.weaver-progress-list { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, auto); grid-template-columns: repeat(2, max-content); justify-content: end; column-gap: 18px; row-gap: 7px; margin: 0; padding: 0; list-style: none; counter-reset: weaver-step; }
-.weaver-progress-step { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; counter-increment: weaver-step; }
-.weaver-progress-step::before { content: counter(weaver-step); display: grid; place-items: center; width: 16px; height: 16px; box-sizing: border-box; border: 1px solid #b8bec8; border-radius: 50%; background: transparent; font-size: 10px; font-weight: 700; }
+.weaver-progress-list { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, auto); grid-template-columns: repeat(2, max-content); justify-content: end; column-gap: 22px; row-gap: 9px; margin: 0; padding: 0; list-style: none; counter-reset: weaver-step; }
+.weaver-progress-step { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; counter-increment: weaver-step; }
+.weaver-progress-step::before { content: counter(weaver-step); display: grid; place-items: center; width: 24px; height: 24px; box-sizing: border-box; border: 2px solid #b8bec8; border-radius: 50%; background: transparent; font-size: 12px; font-weight: 800; }
 .weaver-progress-step.active { color: var(--text); font-weight: 700; }
-.weaver-progress-step.active::before { border-color: #ec6475; background: #ec6475; box-shadow: 0 0 0 3px rgba(236, 100, 117, .14); }
+.weaver-progress-step.active::before { border-color: #ec6475; background: #ec6475; box-shadow: 0 0 0 4px rgba(236, 100, 117, .14); }
 .weaver-progress-step.complete { color: var(--soft); }
 .weaver-progress-step.complete::before { border-color: #6aa585; background: #6aa585; }
 .weaver-progress-step.error { color: #c84357; }
