@@ -17,6 +17,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSettingsQuery } from "../api/settings";
+import { compactStepperSx } from "../components/workflow/stepperStyles";
 import {
   useCancelTranscriptionJobMutation,
   useCreateUrlTranscriptionJobMutation,
@@ -28,7 +29,7 @@ import type { TranscriptionJob } from "../types/transcription";
 import { buildTranscriptObsidianDraft, openObsidianDraft } from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
-const steps = ["downloading", "transcripting", "polishing", "titled", "done"];
+const steps = ["Downloading", "Transcribing", "Polishing", "Titled", "Done"];
 
 export function VToTextPage() {
   const queryClient = useQueryClient();
@@ -131,6 +132,7 @@ export function VToTextPage() {
             <TextField
               fullWidth
               size="small"
+              sx={{ "& .MuiOutlinedInput-root": { height: 40 } }}
               value={sourceUrl}
               onChange={(event) => setSourceUrl(event.target.value)}
               placeholder="Paste media URL, YouTube, Bilibili, Shorts, Instagram, Threads, or a direct file link"
@@ -143,6 +145,7 @@ export function VToTextPage() {
               color={isWorking ? "error" : "primary"}
               disabled={createUrlJob.isPending || uploadJob.isPending || cancelJob.isPending}
               onClick={isWorking ? stopActiveJob : startUrlJob}
+              sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
             >
               {isWorking ? "Stop" : "Transcribe"}
             </Button>
@@ -150,6 +153,7 @@ export function VToTextPage() {
               variant="outlined"
               component="label"
               disabled={isWorking}
+              sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0, minWidth: 112 }}
             >
               Choose File
               <input
@@ -187,12 +191,7 @@ export function VToTextPage() {
       <WorkspacePanel>
         <Stack spacing={1.5}>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Box sx={{ minWidth: 0 }}>
-              <Typography variant="h3">Obsidian Preview</Typography>
-              <Typography variant="body2" color="text.secondary" noWrap>
-                {selectedRecord?.title || "Complete a transcript to generate a note preview."}
-              </Typography>
-            </Box>
+            <Typography variant="h3">Obsidian Preview</Typography>
             <Button variant="contained" disabled={!obsidianDraft} onClick={saveToObsidian}>
               Save to Obsidian
             </Button>
@@ -215,7 +214,7 @@ export function VToTextPage() {
 
 function WorkflowStepper({ status }: { status?: string }) {
   return (
-    <Stepper activeStep={statusToStepIndex(status)} alternativeLabel>
+    <Stepper activeStep={statusToStepIndex(status)} alternativeLabel sx={compactStepperSx}>
       {steps.map((step) => (
         <Step key={step} completed={isStepCompleted(step, status)}>
           <StepLabel>{step}</StepLabel>
@@ -247,7 +246,7 @@ function ObsidianPreview({ draft }: { draft: ReturnType<typeof buildTranscriptOb
       }}
     >
       <Stack spacing={2}>
-        <Typography variant="h2" sx={{ color: "#C8D2FF" }}>
+        <Typography sx={{ color: "#C8D2FF", fontSize: 18, fontWeight: 850, lineHeight: 1.35 }}>
           {draft.noteTitle}
         </Typography>
         <PreviewSection title="Properties">
@@ -268,10 +267,10 @@ function ObsidianPreview({ draft }: { draft: ReturnType<typeof buildTranscriptOb
 function PreviewSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <Box sx={{ pt: 1.5, borderTop: 1, borderColor: "#343A4A" }}>
-      <Typography variant="h3" sx={{ color: "#C8D2FF", mb: 1 }}>
+      <Typography sx={{ color: "#C8D2FF", mb: 1, fontSize: 13, fontWeight: 850 }}>
         {title}
       </Typography>
-      <Typography component="div" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.7 }}>
+      <Typography component="div" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.75, fontSize: 14 }}>
         {children}
       </Typography>
     </Box>
@@ -289,7 +288,7 @@ function statusToStepIndex(status?: string) {
 
 function isStepCompleted(step: string, status?: string) {
   if (status === "completed") return true;
-  if (status === "running") return step === "downloading";
+  if (status === "running") return step === "Downloading";
   return false;
 }
 
