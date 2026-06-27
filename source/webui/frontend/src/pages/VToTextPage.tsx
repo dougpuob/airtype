@@ -55,7 +55,8 @@ export function VToTextPage() {
 
   const settingsQuery = useSettingsQuery();
   const jobQuery = useTranscriptionJobQuery(activeJobId, Boolean(activeJobId));
-  const recordQuery = useTranscriptionRecordQuery(selectedRecordId);
+  const recordLookupId = selectedRecordId || activeJobId;
+  const recordQuery = useTranscriptionRecordQuery(recordLookupId);
   const createUrlJob = useCreateUrlTranscriptionJobMutation();
   const uploadJob = useUploadTranscriptionJobMutation();
   const cancelJob = useCancelTranscriptionJobMutation();
@@ -66,7 +67,7 @@ export function VToTextPage() {
   const selectedRecord = recordQuery.data;
   const activeProgress = uploadProgress ?? activeJob?.progress ?? selectedRecord?.progress ?? 0;
   const activeMessage = jobProgressMessage(activeJob) || selectedRecord?.message || (uploadProgress ? "Uploading media..." : "Ready");
-  const isWorking = Boolean(activeJobId) || createUrlJob.isPending || uploadJob.isPending;
+  const isWorking = Boolean(activeJobId && !isTerminalStatus(selectedRecord?.status)) || createUrlJob.isPending || uploadJob.isPending;
   const obsidianDraft = useMemo(() => buildTranscriptObsidianDraft(selectedRecord, aiTags), [selectedRecord, aiTags]);
   const aiTagsSource = useMemo(() => transcriptAiTagsSource(selectedRecord), [selectedRecord]);
 
@@ -94,6 +95,20 @@ export function VToTextPage() {
       setToast("Transcription stopped");
     }
   }, [activeJob, queryClient]);
+
+  useEffect(() => {
+    if (!activeJobId || !selectedRecord) return;
+    if (selectedRecord.status === "completed") {
+      setSelectedRecordId(activeJobId);
+      setActiveJobId(null);
+      setUploadProgress(null);
+      queryClient.invalidateQueries({ queryKey: ["transcription-record", activeJobId] });
+    }
+    if (selectedRecord.status === "failed" || selectedRecord.status === "cancelled") {
+      setActiveJobId(null);
+      setUploadProgress(null);
+    }
+  }, [activeJobId, selectedRecord, queryClient]);
 
   useEffect(() => {
     if (!aiTagsSource.key) {
@@ -254,9 +269,9 @@ export function VToTextPage() {
               />
             </Button>
           </Stack>
-          {createUrlJob.isError || uploadJob.isError || jobQuery.isError || recordQuery.isError ? (
+          {createUrlJob.isError || uploadJob.isError || (jobQuery.isError && !selectedRecord) || (selectedRecordId && recordQuery.isError) ? (
             <Alert severity="error">
-              {errorMessage(createUrlJob.error || uploadJob.error || jobQuery.error || recordQuery.error)}
+              {errorMessage(createUrlJob.error || uploadJob.error || (!selectedRecord ? jobQuery.error : null) || recordQuery.error)}
             </Alert>
           ) : null}
         </Stack>
@@ -342,6 +357,10 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong";
 }
 
+function isTerminalStatus(status?: string) {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
 function transcriptAiTagsSource(record?: TranscriptionRecord | null) {
   if (!record) return { key: "", title: "", content: "" };
   const content =
@@ -388,7 +407,7 @@ function readPersistedVToTextState(): PersistedVToTextState {
   const fallback = { activeJobId: null, selectedRecordId: null, sourceUrl: "" };
   if (typeof window === "undefined") return fallback;
   try {
-    const value = window.sessionStorage.getItem(V_TO_TEXT_STATE_KEY);
+    const value = window.sessionStorage.getItem(V_TO_TEXT_STATE_KEY) || window.localStorage.getItem(V_TO_TEXT_STATE_KEY);
     if (!value) return fallback;
     const parsed = JSON.parse(value) as Partial<PersistedVToTextState>;
     return {
@@ -404,7 +423,9 @@ function readPersistedVToTextState(): PersistedVToTextState {
 function writePersistedVToTextState(state: PersistedVToTextState) {
   if (typeof window === "undefined") return;
   try {
-    window.sessionStorage.setItem(V_TO_TEXT_STATE_KEY, JSON.stringify(state));
+    const value = JSON.stringify(state);
+    window.sessionStorage.setItem(V_TO_TEXT_STATE_KEY, value);
+    window.localStorage.setItem(V_TO_TEXT_STATE_KEY, value);
   } catch {
     // If storage is unavailable, the in-memory state still keeps the current page usable.
   }
