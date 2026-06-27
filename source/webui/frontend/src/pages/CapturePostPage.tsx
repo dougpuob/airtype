@@ -35,6 +35,7 @@ export function CapturePostPage() {
   const [capturedUrl, setCapturedUrl] = useState("");
   const [capturedTitle, setCapturedTitle] = useState("");
   const [polishedContent, setPolishedContent] = useState("");
+  const [aiTags, setAiTags] = useState("");
   const [step, setStep] = useState<CaptureStep>("idle");
   const [toast, setToast] = useState("");
   const [error, setError] = useState("");
@@ -44,8 +45,8 @@ export function CapturePostPage() {
   const llmApiKey = useLlmApiKey();
   const isWorking = importPost.isPending || ["capture", "polish", "title", "obsidian"].includes(step);
   const draft = useMemo(
-    () => buildPostObsidianDraft({ posts, capturedUrl, capturedTitle, polishedContent }),
-    [posts, capturedUrl, capturedTitle, polishedContent]
+    () => buildPostObsidianDraft({ posts, capturedUrl, capturedTitle, polishedContent, aiTags }),
+    [posts, capturedUrl, capturedTitle, polishedContent, aiTags]
   );
 
   async function capturePost() {
@@ -58,6 +59,7 @@ export function CapturePostPage() {
     setError("");
     setPosts([]);
     setPolishedContent("");
+    setAiTags("");
     setCapturedTitle("");
     setCapturedUrl(url);
     setStep("capture");
@@ -79,6 +81,8 @@ export function CapturePostPage() {
       setStep("title");
       const title = await generateTitle(polished || source);
       setCapturedTitle(title || initialTitle);
+      const generatedTags = await generateAiTags(polished || source, title || initialTitle);
+      setAiTags(generatedTags);
 
       setStep("complete");
       setToast("Post ready for Obsidian");
@@ -129,6 +133,27 @@ export function CapturePostPage() {
     } catch {
       setToast("AI title unavailable; using fallback title");
       return fallback;
+    }
+  }
+
+  async function generateAiTags(content: string, title: string) {
+    const source = content.trim();
+    if (!source) return "";
+    try {
+      const apiKey = await llmApiKey.ensureApiKey(settingsQuery.data || {});
+      const response = await chatWithLocalLlm(
+        settingsQuery.data || {},
+        `請根據以下文章產生 5 到 8 組 Obsidian hashtag。\n\n要求：\n1. 每一組包含一個繁體中文 hashtag 與一個對應英文 hashtag。\n2. 英文若有常見縮寫，請優先使用縮寫，例如 AI、LLM、API、GPU、CPU、SaaS。\n3. hashtag 不要有空格、標點或解釋文字。\n4. 每行只輸出一組，格式固定為：#中文標籤 #EnglishTag\n5. 不要輸出編號、前言、結語、Markdown code block。\n\n標題：${title || "未命名"}\n\n文章：\n${source}`,
+        "你是擅長資訊整理的繁體中文知識管理助手。只輸出可直接貼進 Obsidian 的 hashtag 清單。",
+        apiKey
+      );
+      const tags = normalizeAiTags(response);
+      if (tags) setToast("AI tags generated");
+      return tags;
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "AI tags unavailable";
+      setToast(message);
+      return "";
     }
   }
 
@@ -300,6 +325,17 @@ function normalizeGeneratedTitle(text = "") {
     .replace(/[「」『』"“”]/g, "")
     .trim();
   return sanitizeObsidianTitle(Array.from(normalized).slice(0, 30).join(""));
+}
+
+function normalizeAiTags(text = "") {
+  return String(text)
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```[a-zA-Z]*\n?/g, "").replace(/```/g, ""))
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim())
+    .filter(Boolean)
+    .filter((line) => line.includes("#"))
+    .slice(0, 8)
+    .join("\n");
 }
 
 function sanitizeObsidianTitle(text = "") {

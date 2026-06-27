@@ -5,6 +5,7 @@ type ObsidianPreviewDraft = {
   noteTitle: string;
   content: string;
   polishedContent: string;
+  aiTags: string;
   sources: string[];
   tags: string[];
   datetime: string;
@@ -55,9 +56,15 @@ export function ObsidianNotePreview({ draft, emptyMessage, polishedFallback, ori
       }}
     >
       <Stack spacing={2.25}>
-        <MarkdownPreviewText text={`# ${draft.noteTitle}`} />
+        <MarkdownPreviewText text={`\n\n# ${draft.noteTitle}`} />
         <PreviewSection title="Properties">
           <PropertiesTable draft={draft} />
+        </PreviewSection>
+        <PreviewSection title="Notes">
+          <Box sx={{ height: 48 }} />
+        </PreviewSection>
+        <PreviewSection title="AI Tags">
+          <MarkdownPreviewText text={draft.aiTags || "AI tags are not available yet."} />
         </PreviewSection>
         <PreviewSection title="AI Polished Article">
           <MarkdownPreviewText text={draft.polishedContent || polishedFallback} />

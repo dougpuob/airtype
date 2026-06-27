@@ -151,6 +151,7 @@ let pendingLlmApiKeyDialog = null;
 let wovenPosts = [];
 let capturedPostUrl = "";
 let capturedPostTitle = "";
+let wovenAiTags = "";
 const OBSIDIAN_POST_TEMPLATE = `---
 title: {{DATE}} {{TITLE}}
 sources:
@@ -168,7 +169,16 @@ tags:
 
 ---
 
-# AI Generated Tags
+# Notes
+
+
+
+
+---
+
+# AI Tags
+
+{{ai_tags}}
 
 ---
 
@@ -199,6 +209,19 @@ tags:
 # Title
 
 {{TITLE}}
+
+---
+
+# Notes
+
+
+
+
+---
+
+# AI Tags
+
+{{ai_tags}}
 
 ---
 
@@ -1450,6 +1473,7 @@ async function captureWovenPost() {
             showToast("Post captured");
         }
         capturedPostUrl = url;
+        wovenAiTags = "";
         postWeaverOutput.value = "";
         document.getElementById("weaverPolishSection").open = true;
         currentWeaverStep = "polish";
@@ -1458,6 +1482,7 @@ async function captureWovenPost() {
         currentWeaverStep = "title";
         setWeaverProgress(currentWeaverStep);
         capturedPostTitle = await generateWovenPostTitle(polishedContent || combinedPostsText());
+        wovenAiTags = await generateWovenPostAiTags(polishedContent || combinedPostsText(), capturedPostTitle);
         currentWeaverStep = "obsidian";
         setWeaverProgress(currentWeaverStep);
         renderObsidianPreview();
@@ -1539,6 +1564,37 @@ async function generateWovenPostTitle(publishedContent) {
     }
 }
 
+async function generateWovenPostAiTags(content, title) {
+    const source = String(content || "").trim();
+    if (!source) return "";
+    try {
+        const llm = appSettings.llm || {};
+        const apiKey = await ensureLlmApiKey(llm);
+        const response = await fetch("/api/local-llm/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                provider: llm.provider,
+                endpoint: llm.endpoint,
+                model: llm.model,
+                api_key: apiKey,
+                temperature: llm.temperature,
+                context_length: llm.contextLength,
+                system: "你是擅長資訊整理的繁體中文知識管理助手。只輸出可直接貼進 Obsidian 的 hashtag 清單。",
+                prompt: buildAiTagsPrompt(source, title)
+            })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.detail || "AI tags generation failed");
+        const tags = normalizeAiTags(payload.response);
+        if (tags) showToast("AI tags generated");
+        return tags;
+    } catch (error) {
+        showToast(error.message || "AI tags unavailable");
+        return "";
+    }
+}
+
 function localObsidianDateParts(date = new Date()) {
     const pad = value => String(value).padStart(2, "0");
     const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -1616,6 +1672,33 @@ function renderObsidianTags(tags) {
     return tags.map(tag => `<i class="obsidian-tag">${escapeHtml(tag)}</i>`).join("");
 }
 
+function buildAiTagsPrompt(content, title) {
+    return `請根據以下文章產生 5 到 8 組 Obsidian hashtag。
+
+要求：
+1. 每一組包含一個繁體中文 hashtag 與一個對應英文 hashtag。
+2. 英文若有常見縮寫，請優先使用縮寫，例如 AI、LLM、API、GPU、CPU、SaaS。
+3. hashtag 不要有空格、標點或解釋文字。
+4. 每行只輸出一組，格式固定為：#中文標籤 #EnglishTag
+5. 不要輸出編號、前言、結語、Markdown code block。
+
+標題：${title || "未命名"}
+
+文章：
+${content}`;
+}
+
+function normalizeAiTags(text = "") {
+    return String(text)
+        .replace(/```[\s\S]*?```/g, block => block.replace(/```[a-zA-Z]*\n?/g, "").replace(/```/g, ""))
+        .split(/\r?\n/)
+        .map(line => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim())
+        .filter(Boolean)
+        .filter(line => line.includes("#"))
+        .slice(0, 8)
+        .join("\n");
+}
+
 function renderObsidianPropertiesTable(rows) {
     return `
         <table class="obsidian-properties-table">
@@ -1661,10 +1744,11 @@ function buildObsidianNote() {
         DATE: dateParts.date,
         tags: yamlTagList(tags),
         TITLE: articleTitle,
+        ai_tags: wovenAiTags,
         polished_content: polishedContent,
         content
     };
-    const note = OBSIDIAN_POST_TEMPLATE.replace(/{{(sources|DATETIME|DATE|TITLE|tags|polished_content|content)}}/g, (_, key) => values[key]);
+    const note = OBSIDIAN_POST_TEMPLATE.replace(/{{(sources|DATETIME|DATE|TITLE|tags|ai_tags|polished_content|content)}}/g, (_, key) => values[key]);
     return {
         articleTitle,
         content,
@@ -1674,6 +1758,7 @@ function buildObsidianNote() {
         originalUrl,
         sources,
         tags,
+        aiTags: wovenAiTags,
         polishedContent
     };
 }
@@ -1689,7 +1774,7 @@ function renderObsidianPreview() {
     const polished = draft.polishedContent || "AI publishing was unavailable for this capture.";
     postWeaverObsidianPreview.className = "obsidian-note-preview";
     postWeaverObsidianPreview.innerHTML = `
-        ${renderObsidianMarkdownPreview(`# ${draft.noteTitle}`)}
+        ${renderObsidianMarkdownPreview(`\n\n# ${draft.noteTitle}`)}
         <section class="obsidian-properties" aria-label="Obsidian properties">
             <h1>Properties</h1>
             ${renderObsidianPropertiesTable([
@@ -1700,7 +1785,8 @@ function renderObsidianPreview() {
             ])}
         </section>
         <section class="obsidian-preview-section"><h1>Title</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview(draft.articleTitle)}</div></section>
-        <section class="obsidian-preview-section"><h1>AI Generated Tags</h1></section>
+        <section class="obsidian-preview-section"><h1>Notes</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview("\n\n\n")}</div></section>
+        <section class="obsidian-preview-section"><h1>AI Tags</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview(draft.aiTags || "AI tags are not available yet.")}</div></section>
         <section class="obsidian-preview-section"><h1>AI Polished Article</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview(polished)}</div></section>
         <section class="obsidian-preview-section"><h1>Original Content</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview(draft.content)}</div></section>
     `;
@@ -1741,10 +1827,11 @@ function buildTranscriptObsidianNote() {
         DATE: dateParts.date,
         tags: yamlTagList(tags),
         TITLE: title,
+        ai_tags: "",
         polished_content: currentArticleText.trim(),
         content
     };
-    const note = OBSIDIAN_TRANSCRIPT_TEMPLATE.replace(/{{(sources|DATETIME|DATE|TITLE|tags|polished_content|content)}}/g, (_, key) => values[key]);
+    const note = OBSIDIAN_TRANSCRIPT_TEMPLATE.replace(/{{(sources|DATETIME|DATE|TITLE|tags|ai_tags|polished_content|content)}}/g, (_, key) => values[key]);
     return {
         title,
         content,
@@ -1769,7 +1856,7 @@ function renderTranscriptObsidianPreview() {
     const polished = draft.polishedContent || "AI article is not available for this transcript.";
     transcriptObsidianPreview.className = "obsidian-note-preview";
     transcriptObsidianPreview.innerHTML = `
-        ${renderObsidianMarkdownPreview(`# ${draft.noteTitle}`)}
+        ${renderObsidianMarkdownPreview(`\n\n# ${draft.noteTitle}`)}
         <section class="obsidian-properties" aria-label="Obsidian properties">
             <h1>Properties</h1>
             ${renderObsidianPropertiesTable([
@@ -1780,6 +1867,8 @@ function renderTranscriptObsidianPreview() {
             ])}
         </section>
         <section class="obsidian-preview-section"><h1>Title</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview(draft.title)}</div></section>
+        <section class="obsidian-preview-section"><h1>Notes</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview("\n\n\n")}</div></section>
+        <section class="obsidian-preview-section"><h1>AI Tags</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview("AI tags are not available yet.")}</div></section>
         <section class="obsidian-preview-section"><h1>AI Polished Article</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview(polished)}</div></section>
         <section class="obsidian-preview-section"><h1>Original Transcript</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview(draft.content)}</div></section>
     `;

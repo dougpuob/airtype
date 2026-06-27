@@ -18,6 +18,19 @@ tags:
 
 ---
 
+# Notes
+
+
+
+
+---
+
+# AI Tags
+
+{{ai_tags}}
+
+---
+
 # AI Polished Article
 
 {{polished_content}}
@@ -35,12 +48,13 @@ export type TranscriptObsidianDraft = {
   note: string;
   content: string;
   polishedContent: string;
+  aiTags: string;
   sources: string[];
   tags: string[];
   datetime: string;
 };
 
-export function buildTranscriptObsidianDraft(record?: TranscriptionRecord | null): TranscriptObsidianDraft | null {
+export function buildTranscriptObsidianDraft(record?: TranscriptionRecord | null, aiTags = ""): TranscriptObsidianDraft | null {
   if (!record?.transcript?.segments?.length && !record?.transcript?.text) return null;
 
   const content = transcriptOriginalText(record.transcript?.segments, record.transcript?.text);
@@ -57,11 +71,12 @@ export function buildTranscriptObsidianDraft(record?: TranscriptionRecord | null
     DATE: dateParts.date,
     tags: yamlTagList(tags),
     TITLE: title,
+    ai_tags: aiTags,
     polished_content: polishedContent,
     content
   };
   const note = OBSIDIAN_TRANSCRIPT_TEMPLATE.replace(
-    /{{(sources|DATETIME|DATE|TITLE|tags|polished_content|content)}}/g,
+    /{{(sources|DATETIME|DATE|TITLE|tags|ai_tags|polished_content|content)}}/g,
     (_, key: string) => values[key] ?? ""
   );
 
@@ -71,6 +86,7 @@ export function buildTranscriptObsidianDraft(record?: TranscriptionRecord | null
     noteTitle: `${dateParts.date} ${title}`,
     content,
     polishedContent,
+    aiTags,
     sources,
     tags,
     datetime: dateParts.datetime
@@ -104,7 +120,16 @@ tags:
 
 ---
 
-# AI Generated Tags
+# Notes
+
+
+
+
+---
+
+# AI Tags
+
+{{ai_tags}}
 
 ---
 
@@ -128,6 +153,7 @@ export type PostObsidianDraft = {
   note: string;
   content: string;
   polishedContent: string;
+  aiTags: string;
   sources: string[];
   tags: string[];
   datetime: string;
@@ -138,6 +164,7 @@ export function buildPostObsidianDraft(input: {
   capturedUrl: string;
   capturedTitle: string;
   polishedContent: string;
+  aiTags?: string;
 }): PostObsidianDraft | null {
   const content = uniquePostBlocks(input.posts.map((post) => post.text.trim()).filter(Boolean).join("\n\n"));
   if (!content) return null;
@@ -153,11 +180,12 @@ export function buildPostObsidianDraft(input: {
     DATE: dateParts.date,
     tags: yamlTagList(tags),
     TITLE: articleTitle,
+    ai_tags: input.aiTags || "",
     polished_content: input.polishedContent,
     content
   };
   const note = OBSIDIAN_POST_TEMPLATE.replace(
-    /{{(sources|DATETIME|DATE|TITLE|tags|polished_content|content)}}/g,
+    /{{(sources|DATETIME|DATE|TITLE|tags|ai_tags|polished_content|content)}}/g,
     (_, key: string) => values[key] ?? ""
   );
 
@@ -167,6 +195,7 @@ export function buildPostObsidianDraft(input: {
     noteTitle: `${dateParts.date} ${articleTitle}`,
     content,
     polishedContent: input.polishedContent,
+    aiTags: input.aiTags || "",
     sources,
     tags,
     datetime: dateParts.datetime
