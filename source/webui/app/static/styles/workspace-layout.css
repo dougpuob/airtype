@@ -500,17 +500,23 @@ body {
 .transcript-obsidian-fold summary::after { display: none; }
 .obsidian-note-preview { display: grid; gap: 16px; max-height: 620px; overflow: auto; padding: 18px; color: #d7d8e4; background: #1e1f2a; border: 1px solid #34364a; border-radius: 8px; box-shadow: inset 0 1px 0 rgba(255,255,255,.04); }
 .obsidian-note-preview.empty { display: block; color: #9699af; }
-.obsidian-note-preview h3, .obsidian-note-preview h4 { margin: 0; color: #ff879a; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-.obsidian-note-preview h3 { font-size: 21px; line-height: 1.3; }
-.obsidian-note-preview h4 { font-size: 16px; }
-.obsidian-properties { display: grid; gap: 9px; padding: 14px; background: #292a38; border: 1px solid #3c3e55; border-radius: 8px; }
-.obsidian-properties strong { color: #aeb1c8; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
-.obsidian-property { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 12px; align-items: start; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 13px; line-height: 1.45; }
-.obsidian-property span:first-child { color: #aeb1c8; }
-.obsidian-property span:last-child { overflow-wrap: anywhere; color: #f0f0f6; }
+.obsidian-note-preview h1, .obsidian-note-preview h2, .obsidian-note-preview h3, .obsidian-note-preview h4, .obsidian-note-preview h5, .obsidian-note-preview h6 { margin: 0; color: #ff879a; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; line-height: 1.25; }
+.obsidian-note-preview h1 { font-size: 24px; }
+.obsidian-note-preview h2 { font-size: 20px; }
+.obsidian-note-preview h3 { font-size: 17px; }
+.obsidian-note-preview h4 { font-size: 15.5px; }
+.obsidian-note-preview h5 { font-size: 14.5px; }
+.obsidian-note-preview h6 { font-size: 14px; }
+.obsidian-note-preview p { margin: 0; color: #f0f0f6; white-space: pre-wrap; font-size: 14px; line-height: 1.7; }
+.obsidian-preview-spacer { height: 8px; }
+.obsidian-properties { display: grid; gap: 12px; padding: 14px; background: #292a38; border: 1px solid #3c3e55; border-radius: 8px; }
+.obsidian-properties-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 13px; line-height: 1.45; border: 1px solid #3c3e55; }
+.obsidian-properties-table th, .obsidian-properties-table td { padding: 8px 10px; border: 1px solid #3c3e55; vertical-align: top; text-align: left; }
+.obsidian-properties-table th { width: 112px; color: #aeb1c8; background: rgba(255,255,255,.04); }
+.obsidian-properties-table td { overflow-wrap: anywhere; white-space: pre-wrap; color: #f0f0f6; }
 .obsidian-tag { display: inline-block; margin: 0 5px 4px 0; padding: 2px 8px; color: #d8b7ff; background: #3c3156; border-radius: 999px; }
 .obsidian-preview-section { padding-top: 16px; border-top: 1px solid #3c3e55; }
-.obsidian-preview-content { margin: 10px 0 0; color: #f0f0f6; white-space: pre-wrap; font-size: 14px; line-height: 1.7; }
+.obsidian-preview-content { display: grid; gap: 4px; margin: 10px 0 0; }
 
 @media (max-width: 900px) {
     #postWeaverPage { grid-template-columns: 1fr; }

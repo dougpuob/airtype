@@ -1616,6 +1616,33 @@ function renderObsidianTags(tags) {
     return tags.map(tag => `<i class="obsidian-tag">${escapeHtml(tag)}</i>`).join("");
 }
 
+function renderObsidianPropertiesTable(rows) {
+    return `
+        <table class="obsidian-properties-table">
+            <tbody>
+                ${rows.map(([label, value]) => `
+                    <tr>
+                        <th scope="row">${escapeHtml(label)}</th>
+                        <td>${value}</td>
+                    </tr>
+                `).join("")}
+            </tbody>
+        </table>
+    `;
+}
+
+function renderObsidianMarkdownPreview(text) {
+    return String(text || "").replace(/\r\n?/g, "\n").split("\n").map(line => {
+        if (!line.trim()) return `<div class="obsidian-preview-spacer"></div>`;
+        const heading = /^(#{1,6})\s+(.+)$/.exec(line);
+        if (heading) {
+            const level = Math.min(heading[1].length, 6);
+            return `<h${level}>${escapeHtml(heading[2])}</h${level}>`;
+        }
+        return `<p>${escapeHtml(line)}</p>`;
+    }).join("");
+}
+
 function buildObsidianNote() {
     const content = combinedPostsText();
     if (!content) return null;
@@ -1662,18 +1689,20 @@ function renderObsidianPreview() {
     const polished = draft.polishedContent || "AI publishing was unavailable for this capture.";
     postWeaverObsidianPreview.className = "obsidian-note-preview";
     postWeaverObsidianPreview.innerHTML = `
-        <h3>${escapeHtml(draft.noteTitle)}</h3>
+        ${renderObsidianMarkdownPreview(`# ${draft.noteTitle}`)}
         <section class="obsidian-properties" aria-label="Obsidian properties">
-            <strong>Properties</strong>
-            <div class="obsidian-property"><span>title</span><span>${escapeHtml(`${draft.dateParts.date} ${draft.articleTitle}`)}</span></div>
-            <div class="obsidian-property"><span>sources</span><span>${escapeHtml(source)}</span></div>
-            <div class="obsidian-property"><span>datetime</span><span>${escapeHtml(draft.dateParts.datetime)}</span></div>
-            <div class="obsidian-property"><span>tags</span><span>${renderObsidianTags(draft.tags)}</span></div>
+            <h1>Properties</h1>
+            ${renderObsidianPropertiesTable([
+                ["title", escapeHtml(`${draft.dateParts.date} ${draft.articleTitle}`)],
+                ["sources", escapeHtml(source)],
+                ["datetime", escapeHtml(draft.dateParts.datetime)],
+                ["tags", renderObsidianTags(draft.tags)]
+            ])}
         </section>
-        <section class="obsidian-preview-section"><h4>Title</h4><div class="obsidian-preview-content">${escapeHtml(draft.articleTitle)}</div></section>
-        <section class="obsidian-preview-section"><h4>AI Generated Tags</h4></section>
-        <section class="obsidian-preview-section"><h4>AI Polished Article</h4><div class="obsidian-preview-content">${escapeHtml(polished)}</div></section>
-        <section class="obsidian-preview-section"><h4>Original Content</h4><div class="obsidian-preview-content">${escapeHtml(draft.content)}</div></section>
+        <section class="obsidian-preview-section"><h1>Title</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview(draft.articleTitle)}</div></section>
+        <section class="obsidian-preview-section"><h1>AI Generated Tags</h1></section>
+        <section class="obsidian-preview-section"><h1>AI Polished Article</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview(polished)}</div></section>
+        <section class="obsidian-preview-section"><h1>Original Content</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview(draft.content)}</div></section>
     `;
 }
 
@@ -1740,17 +1769,19 @@ function renderTranscriptObsidianPreview() {
     const polished = draft.polishedContent || "AI article is not available for this transcript.";
     transcriptObsidianPreview.className = "obsidian-note-preview";
     transcriptObsidianPreview.innerHTML = `
-        <h3>${escapeHtml(draft.noteTitle)}</h3>
+        ${renderObsidianMarkdownPreview(`# ${draft.noteTitle}`)}
         <section class="obsidian-properties" aria-label="Obsidian properties">
-            <strong>Properties</strong>
-            <div class="obsidian-property"><span>title</span><span>${escapeHtml(draft.noteTitle)}</span></div>
-            <div class="obsidian-property"><span>sources</span><span>${escapeHtml(source)}</span></div>
-            <div class="obsidian-property"><span>datetime</span><span>${escapeHtml(draft.dateParts.datetime)}</span></div>
-            <div class="obsidian-property"><span>tags</span><span>${renderObsidianTags(draft.tags)}</span></div>
+            <h1>Properties</h1>
+            ${renderObsidianPropertiesTable([
+                ["title", escapeHtml(draft.noteTitle)],
+                ["sources", escapeHtml(source)],
+                ["datetime", escapeHtml(draft.dateParts.datetime)],
+                ["tags", renderObsidianTags(draft.tags)]
+            ])}
         </section>
-        <section class="obsidian-preview-section"><h4>Title</h4><div class="obsidian-preview-content">${escapeHtml(draft.title)}</div></section>
-        <section class="obsidian-preview-section"><h4>AI Polished Article</h4><div class="obsidian-preview-content">${escapeHtml(polished)}</div></section>
-        <section class="obsidian-preview-section"><h4>Original Transcript</h4><div class="obsidian-preview-content">${escapeHtml(draft.content)}</div></section>
+        <section class="obsidian-preview-section"><h1>Title</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview(draft.title)}</div></section>
+        <section class="obsidian-preview-section"><h1>AI Polished Article</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview(polished)}</div></section>
+        <section class="obsidian-preview-section"><h1>Original Transcript</h1><div class="obsidian-preview-content">${renderObsidianMarkdownPreview(draft.content)}</div></section>
     `;
 }
 

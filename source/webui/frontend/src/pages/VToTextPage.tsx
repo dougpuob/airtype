@@ -5,7 +5,6 @@ import {
   Button,
   Divider,
   LinearProgress,
-  Paper,
   Snackbar,
   Stack,
   Step,
@@ -17,6 +16,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSettingsQuery } from "../api/settings";
+import { ObsidianNotePreview } from "../components/obsidian/ObsidianNotePreview";
 import { compactStepperSx } from "../components/workflow/stepperStyles";
 import {
   useCancelTranscriptionJobMutation,
@@ -237,55 +237,13 @@ function WorkflowStepper({ status }: { status?: string }) {
 }
 
 function ObsidianPreview({ draft }: { draft: ReturnType<typeof buildTranscriptObsidianDraft> }) {
-  if (!draft) {
-    return (
-      <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 520, color: "text.secondary" }}>
-        <Typography>Complete a transcript to preview the note.</Typography>
-      </Stack>
-    );
-  }
-
   return (
-    <Paper
-      sx={{
-        p: 2,
-        bgcolor: "#1F2330",
-        color: "#F1F4FA",
-        borderColor: "#343A4A",
-        minHeight: 520,
-        maxHeight: 720,
-        overflow: "auto"
-      }}
-    >
-      <Stack spacing={2}>
-        <Typography sx={{ color: "#C8D2FF", fontSize: 18, fontWeight: 850, lineHeight: 1.35 }}>
-          {draft.noteTitle}
-        </Typography>
-        <PreviewSection title="Properties">
-          <Typography>title: {draft.noteTitle}</Typography>
-          <Typography>sources: {draft.sources.length ? draft.sources.join(", ") : "--"}</Typography>
-          <Typography>datetime: {draft.datetime}</Typography>
-          <Typography>tags: {draft.tags.join(", ")}</Typography>
-        </PreviewSection>
-        <PreviewSection title="AI Polished Article">
-          {draft.polishedContent || "AI article is not available for this transcript."}
-        </PreviewSection>
-        <PreviewSection title="Original Transcript">{draft.content}</PreviewSection>
-      </Stack>
-    </Paper>
-  );
-}
-
-function PreviewSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <Box sx={{ pt: 1.5, borderTop: 1, borderColor: "#343A4A" }}>
-      <Typography sx={{ color: "#C8D2FF", mb: 1, fontSize: 13, fontWeight: 850 }}>
-        {title}
-      </Typography>
-      <Typography component="div" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.75, fontSize: 14 }}>
-        {children}
-      </Typography>
-    </Box>
+    <ObsidianNotePreview
+      draft={draft}
+      emptyMessage="Complete a transcript to preview the note."
+      polishedFallback="AI article is not available for this transcript."
+      originalTitle="Original Transcript"
+    />
   );
 }
 
