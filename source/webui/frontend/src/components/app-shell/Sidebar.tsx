@@ -4,7 +4,9 @@ import GraphicEqOutlinedIcon from "@mui/icons-material/GraphicEqOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import { Box, List, ListItemButton, ListItemIcon, ListItemText, Typography } from "@mui/material";
-import { NavLink } from "react-router-dom";
+import type { MouseEvent } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useWorkGuard } from "../../hooks/useWorkGuard";
 
 export const navItems = [
   { label: "Dashboard", path: "/", icon: <DashboardOutlinedIcon /> },
@@ -25,6 +27,24 @@ type NavigationListProps = {
 
 export function NavigationList({ orientation = "vertical", onNavigate }: NavigationListProps) {
   const horizontal = orientation === "horizontal";
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { requestLeave } = useWorkGuard();
+
+  function handleNavigate(event: MouseEvent<HTMLAnchorElement>, path: string) {
+    if (event.button !== 0 || event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return;
+    if (location.pathname === path) {
+      onNavigate?.();
+      return;
+    }
+
+    event.preventDefault();
+    requestLeave(() => {
+      navigate(path);
+      onNavigate?.();
+    });
+  }
+
   return (
     <List
       dense
@@ -42,7 +62,7 @@ export function NavigationList({ orientation = "vertical", onNavigate }: Navigat
           component={NavLink}
           to={item.path}
           end={item.path === "/"}
-          onClick={onNavigate}
+          onClick={(event) => handleNavigate(event, item.path)}
           sx={{
             color: "text.secondary",
             flexDirection: horizontal ? "column" : "row",
