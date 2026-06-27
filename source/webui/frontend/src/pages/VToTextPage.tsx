@@ -21,6 +21,7 @@ import { LlmApiKeyDialog } from "../components/llm/LlmApiKeyDialog";
 import { ObsidianNotePreview } from "../components/obsidian/ObsidianNotePreview";
 import { compactStepperSx } from "../components/workflow/stepperStyles";
 import { useLlmApiKey } from "../hooks/useLlmApiKey";
+import { useGuardedWork } from "../hooks/useWorkGuard";
 import {
   useCancelTranscriptionJobMutation,
   useCreateUrlTranscriptionJobMutation,
@@ -39,6 +40,8 @@ type PersistedVToTextState = {
   activeJobId: string | null;
   selectedRecordId: string | null;
   sourceUrl: string;
+  aiTags: string;
+  aiTagsSourceKey: string;
 };
 
 export function VToTextPage() {
@@ -49,8 +52,8 @@ export function VToTextPage() {
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(restoredState.selectedRecordId);
   const [activeJobId, setActiveJobId] = useState<string | null>(restoredState.activeJobId);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const [aiTags, setAiTags] = useState("");
-  const [aiTagsSourceKey, setAiTagsSourceKey] = useState("");
+  const [aiTags, setAiTags] = useState(restoredState.aiTags);
+  const [aiTagsSourceKey, setAiTagsSourceKey] = useState(restoredState.aiTagsSourceKey);
   const [toast, setToast] = useState("");
 
   const settingsQuery = useSettingsQuery();
@@ -71,9 +74,32 @@ export function VToTextPage() {
   const obsidianDraft = useMemo(() => buildTranscriptObsidianDraft(selectedRecord, aiTags), [selectedRecord, aiTags]);
   const aiTagsSource = useMemo(() => transcriptAiTagsSource(selectedRecord), [selectedRecord]);
 
+  useGuardedWork({
+    id: "v-to-text",
+    label: "V to Text",
+    isActive: isWorking,
+    onConfirmLeave: async () => {
+      if (!activeJobId) return;
+      await cancelJob.mutateAsync(activeJobId);
+      setActiveJobId(null);
+      setUploadProgress(null);
+    }
+  });
+
   useEffect(() => {
-    writePersistedVToTextState({ activeJobId, selectedRecordId, sourceUrl });
-  }, [activeJobId, selectedRecordId, sourceUrl]);
+    writePersistedVToTextState({ activeJobId, selectedRecordId, sourceUrl, aiTags, aiTagsSourceKey });
+  }, [activeJobId, selectedRecordId, sourceUrl, aiTags, aiTagsSourceKey]);
+
+  useEffect(() => {
+    if (!isWorking || !activeJobId) return;
+    function handlePageHide() {
+      navigator.sendBeacon?.(`/api/transcribe/jobs/${activeJobId}/cancel`, new Blob());
+      writePersistedVToTextState({ activeJobId: null, selectedRecordId, sourceUrl, aiTags, aiTagsSourceKey });
+    }
+
+    window.addEventListener("pagehide", handlePageHide);
+    return () => window.removeEventListener("pagehide", handlePageHide);
+  }, [activeJobId, aiTags, aiTagsSourceKey, isWorking, selectedRecordId, sourceUrl]);
 
   useEffect(() => {
     if (!activeJob) return;
@@ -165,7 +191,7 @@ export function VToTextPage() {
       language: whisper.language || null,
       whisperEndpoint: whisper.remote_endpoint || null
     });
-    writePersistedVToTextState({ activeJobId: job.job_id, selectedRecordId: null, sourceUrl: url });
+    writePersistedVToTextState({ activeJobId: job.job_id, selectedRecordId: null, sourceUrl: url, aiTags, aiTagsSourceKey });
     setActiveJobId(job.job_id);
     setToast("URL job started");
   }
@@ -179,7 +205,7 @@ export function VToTextPage() {
       whisperEndpoint: whisper.remote_endpoint || null,
       onProgress: setUploadProgress
     });
-    writePersistedVToTextState({ activeJobId: job.job_id, selectedRecordId: null, sourceUrl: "" });
+    writePersistedVToTextState({ activeJobId: job.job_id, selectedRecordId: null, sourceUrl: "", aiTags, aiTagsSourceKey });
     setActiveJobId(job.job_id);
     setToast("Upload complete; transcription queued");
   }
@@ -404,7 +430,7 @@ function normalizeAiTags(text = "") {
 }
 
 function readPersistedVToTextState(): PersistedVToTextState {
-  const fallback = { activeJobId: null, selectedRecordId: null, sourceUrl: "" };
+  const fallback = { activeJobId: null, selectedRecordId: null, sourceUrl: "", aiTags: "", aiTagsSourceKey: "" };
   if (typeof window === "undefined") return fallback;
   try {
     const value = window.sessionStorage.getItem(V_TO_TEXT_STATE_KEY) || window.localStorage.getItem(V_TO_TEXT_STATE_KEY);
@@ -413,7 +439,9 @@ function readPersistedVToTextState(): PersistedVToTextState {
     return {
       activeJobId: typeof parsed.activeJobId === "string" && parsed.activeJobId ? parsed.activeJobId : null,
       selectedRecordId: typeof parsed.selectedRecordId === "string" && parsed.selectedRecordId ? parsed.selectedRecordId : null,
-      sourceUrl: typeof parsed.sourceUrl === "string" ? parsed.sourceUrl : ""
+      sourceUrl: typeof parsed.sourceUrl === "string" ? parsed.sourceUrl : "",
+      aiTags: typeof parsed.aiTags === "string" ? parsed.aiTags : "",
+      aiTagsSourceKey: typeof parsed.aiTagsSourceKey === "string" ? parsed.aiTagsSourceKey : ""
     };
   } catch {
     return fallback;

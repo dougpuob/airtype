@@ -61,9 +61,9 @@ export function TopAppBar({ sidebarWidth, onMenuClick }: TopAppBarProps) {
             src="/app/favicon.svg"
             alt=""
             sx={{
-              width: 32,
-              height: 32,
-              p: 0.6,
+              width: 40,
+              height: 40,
+              p: 0.7,
               borderRadius: 2,
               border: 1,
               borderColor: "divider",

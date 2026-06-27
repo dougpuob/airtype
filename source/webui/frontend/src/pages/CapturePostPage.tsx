@@ -13,7 +13,7 @@ import {
   TextField,
   Typography
 } from "@mui/material";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { chatWithLocalLlm } from "../api/localLlm";
 import { useImportPostMutation } from "../api/postWeaver";
 import { useSettingsQuery } from "../api/settings";
@@ -21,24 +21,38 @@ import { LlmApiKeyDialog } from "../components/llm/LlmApiKeyDialog";
 import { ObsidianNotePreview } from "../components/obsidian/ObsidianNotePreview";
 import { compactStepperSx } from "../components/workflow/stepperStyles";
 import { useLlmApiKey } from "../hooks/useLlmApiKey";
+import { useGuardedWork } from "../hooks/useWorkGuard";
 import type { ThreadsChainResponse, WovenPost } from "../types/postWeaver";
 import { buildPostObsidianDraft, openObsidianDraft } from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
 const steps = ["Capturing", "Polishing", "Titled", "Done"];
+const CAPTURE_POST_STATE_KEY = "airtype:capture-post:state";
 
 type CaptureStep = "idle" | "capture" | "polish" | "title" | "obsidian" | "complete" | "error";
 
+type PersistedCapturePostState = {
+  postUrl: string;
+  posts: WovenPost[];
+  capturedUrl: string;
+  capturedTitle: string;
+  polishedContent: string;
+  aiTags: string;
+  step: CaptureStep;
+  error: string;
+};
+
 export function CapturePostPage() {
-  const [postUrl, setPostUrl] = useState("");
-  const [posts, setPosts] = useState<WovenPost[]>([]);
-  const [capturedUrl, setCapturedUrl] = useState("");
-  const [capturedTitle, setCapturedTitle] = useState("");
-  const [polishedContent, setPolishedContent] = useState("");
-  const [aiTags, setAiTags] = useState("");
-  const [step, setStep] = useState<CaptureStep>("idle");
+  const restoredState = useMemo(readPersistedCapturePostState, []);
+  const [postUrl, setPostUrl] = useState(restoredState.postUrl);
+  const [posts, setPosts] = useState<WovenPost[]>(restoredState.posts);
+  const [capturedUrl, setCapturedUrl] = useState(restoredState.capturedUrl);
+  const [capturedTitle, setCapturedTitle] = useState(restoredState.capturedTitle);
+  const [polishedContent, setPolishedContent] = useState(restoredState.polishedContent);
+  const [aiTags, setAiTags] = useState(restoredState.aiTags);
+  const [step, setStep] = useState<CaptureStep>(restoredState.step);
   const [toast, setToast] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(restoredState.error);
 
   const settingsQuery = useSettingsQuery();
   const importPost = useImportPostMutation();
@@ -48,6 +62,48 @@ export function CapturePostPage() {
     () => buildPostObsidianDraft({ posts, capturedUrl, capturedTitle, polishedContent, aiTags }),
     [posts, capturedUrl, capturedTitle, polishedContent, aiTags]
   );
+
+  useGuardedWork({
+    id: "capture-post",
+    label: "Capture Post",
+    isActive: isWorking,
+    onConfirmLeave: () => {
+      setStep("idle");
+      writePersistedCapturePostState({
+        postUrl,
+        posts,
+        capturedUrl,
+        capturedTitle,
+        polishedContent,
+        aiTags,
+        step: "idle",
+        error
+      });
+    }
+  });
+
+  useEffect(() => {
+    writePersistedCapturePostState({ postUrl, posts, capturedUrl, capturedTitle, polishedContent, aiTags, step, error });
+  }, [postUrl, posts, capturedUrl, capturedTitle, polishedContent, aiTags, step, error]);
+
+  useEffect(() => {
+    if (!isWorking) return;
+    function handlePageHide() {
+      writePersistedCapturePostState({
+        postUrl,
+        posts,
+        capturedUrl,
+        capturedTitle,
+        polishedContent,
+        aiTags,
+        step: "idle",
+        error
+      });
+    }
+
+    window.addEventListener("pagehide", handlePageHide);
+    return () => window.removeEventListener("pagehide", handlePageHide);
+  }, [aiTags, capturedTitle, capturedUrl, error, isWorking, polishedContent, postUrl, posts]);
 
   async function capturePost() {
     const url = postUrl.trim();
@@ -343,4 +399,57 @@ function sanitizeObsidianTitle(text = "") {
     .replace(/[\\/:*?"<>|;；：\u0000-\u001F]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function readPersistedCapturePostState(): PersistedCapturePostState {
+  const fallback: PersistedCapturePostState = {
+    postUrl: "",
+    posts: [],
+    capturedUrl: "",
+    capturedTitle: "",
+    polishedContent: "",
+    aiTags: "",
+    step: "idle",
+    error: ""
+  };
+  if (typeof window === "undefined") return fallback;
+  try {
+    const value = window.sessionStorage.getItem(CAPTURE_POST_STATE_KEY) || window.localStorage.getItem(CAPTURE_POST_STATE_KEY);
+    if (!value) return fallback;
+    const parsed = JSON.parse(value) as Partial<PersistedCapturePostState>;
+    const step = isPersistableCaptureStep(parsed.step) ? parsed.step : "idle";
+    return {
+      postUrl: typeof parsed.postUrl === "string" ? parsed.postUrl : "",
+      posts: Array.isArray(parsed.posts) ? parsed.posts.filter(isPersistedPost) : [],
+      capturedUrl: typeof parsed.capturedUrl === "string" ? parsed.capturedUrl : "",
+      capturedTitle: typeof parsed.capturedTitle === "string" ? parsed.capturedTitle : "",
+      polishedContent: typeof parsed.polishedContent === "string" ? parsed.polishedContent : "",
+      aiTags: typeof parsed.aiTags === "string" ? parsed.aiTags : "",
+      step: ["capture", "polish", "title", "obsidian"].includes(step) ? "idle" : step,
+      error: typeof parsed.error === "string" ? parsed.error : ""
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function writePersistedCapturePostState(state: PersistedCapturePostState) {
+  if (typeof window === "undefined") return;
+  try {
+    const value = JSON.stringify(state);
+    window.sessionStorage.setItem(CAPTURE_POST_STATE_KEY, value);
+    window.localStorage.setItem(CAPTURE_POST_STATE_KEY, value);
+  } catch {
+    // If storage is unavailable, the current in-memory page state still works.
+  }
+}
+
+function isPersistableCaptureStep(value: unknown): value is CaptureStep {
+  return ["idle", "capture", "polish", "title", "obsidian", "complete", "error"].includes(String(value));
+}
+
+function isPersistedPost(value: unknown): value is WovenPost {
+  if (!value || typeof value !== "object") return false;
+  const post = value as Partial<WovenPost>;
+  return typeof post.text === "string" && typeof post.url === "string" && Array.isArray(post.mediaUrls);
 }

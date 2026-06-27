@@ -5,6 +5,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { HashRouter } from "react-router-dom";
 import App from "./App";
 import { queryClient } from "./api/queryClient";
+import { WorkGuardProvider } from "./hooks/useWorkGuard";
 import { theme } from "./theme";
 import "./styles.css";
 
@@ -14,7 +15,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <ThemeProvider theme={theme}>
         <CssBaseline />
         <HashRouter>
-          <App />
+          <WorkGuardProvider>
+            <App />
+          </WorkGuardProvider>
         </HashRouter>
       </ThemeProvider>
     </QueryClientProvider>
