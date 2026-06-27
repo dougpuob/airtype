@@ -76,6 +76,7 @@ CONFIG_PATH = _find_config_path()
 WEBUI_DATA_DIR = read_webui_data_dir(CONFIG_PATH)
 RECORDS_DIR = os.path.join(WEBUI_DATA_DIR, "records")
 RECORD_ID_PATTERN = re.compile(r"\d{8}-\d{6}")
+IME_CORRECTION_SYSTEM_PROMPT = "你是一個很棒的語音輸入法錯誤校正器。下方是一個語音輸入的原始結果，修正錯誤最後的只需要回我修正誤的結果。"
 
 
 def _webui_auth_settings() -> Dict[str, Any]:
@@ -274,6 +275,7 @@ class LocalChatRequest(LocalModelsRequest):
     temperature: float = 0.4
     context_length: Optional[int] = None
     context: Optional[int] = None
+    disable_thinking: bool = False
 
 
 class AppSettingsRequest(BaseModel):
@@ -587,6 +589,8 @@ async def transcribe_audio(
             source_path=temp_path,
             **options,
         )
+        if selected_record_type == IME_RECORD_TYPE:
+            result = _correct_ime_transcription_result(result)
         transcribe_ms = _elapsed_ms(transcribe_started_at)
         timing = result.setdefault("debug", {}).setdefault("timing_ms", {})
         timing.update(
@@ -2122,41 +2126,135 @@ def _llm_messages(system: Optional[str], prompt: str) -> list[Dict[str, str]]:
     return messages
 
 
+def _strip_thinking_blocks(text: str) -> str:
+    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^\s*</?think>\s*", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
+
+
 def _local_chat_response(request: LocalChatRequest) -> str:
     if request.provider == "ollama":
+        options = {
+            "temperature": request.temperature,
+            "num_ctx": _request_context_length(request),
+        }
+        payload_body: Dict[str, Any] = {
+            "model": request.model,
+            "stream": False,
+            "messages": _llm_messages(request.system, request.prompt),
+            "options": options,
+        }
+        if request.disable_thinking:
+            payload_body["think"] = False
         payload = _http_json(
             "POST",
             _join_url(_llm_base_endpoint(request.endpoint), "/api/chat"),
-            {
-                "model": request.model,
-                "stream": False,
-                "messages": _llm_messages(request.system, request.prompt),
-                "options": {
-                    "temperature": request.temperature,
-                    "num_ctx": _request_context_length(request),
-                },
-            },
+            payload_body,
             api_key=request.api_key,
         )
-        return payload.get("message", {}).get("content", "")
+        return _strip_thinking_blocks(payload.get("message", {}).get("content", ""))
 
+    payload_body = {
+        "model": request.model,
+        "messages": _llm_messages(request.system, request.prompt),
+        "temperature": request.temperature,
+        **({"n_ctx": _request_context_length(request)} if request.provider == "llama.cpp" else {}),
+    }
+    if request.disable_thinking and request.provider == "llama.cpp":
+        payload_body["chat_template_kwargs"] = {"enable_thinking": False}
     payload = _http_json(
         "POST",
         _join_url(_llm_base_endpoint(request.endpoint), "/v1/chat/completions"),
-        {
-            "model": request.model,
-            "messages": _llm_messages(request.system, request.prompt),
-            "temperature": request.temperature,
-            **({"n_ctx": _request_context_length(request)} if request.provider == "llama.cpp" else {}),
-        },
+        payload_body,
         api_key=request.api_key,
     )
     choices = payload.get("choices", [])
-    return choices[0].get("message", {}).get("content", "") if choices else ""
+    return _strip_thinking_blocks(choices[0].get("message", {}).get("content", "")) if choices else ""
 
 
 def _request_context_length(request: LocalChatRequest) -> int:
     return request.context_length or request.context or 8192
+
+
+def _configured_llm_request(
+    *,
+    system: str,
+    prompt: str,
+    temperature: float,
+    disable_thinking: bool = False,
+) -> tuple[LocalChatRequest, str]:
+    settings = _read_app_settings()
+    llm = settings.get("llm", {}) if isinstance(settings.get("llm"), dict) else {}
+    model = str(llm.get("model") or llm.get("selected_model") or "").strip()
+    if not model:
+        models = llm.get("models")
+        if isinstance(models, list):
+            model = next((str(candidate).strip() for candidate in models if str(candidate).strip()), "")
+    if not model:
+        raise ValueError("Local LLM model is not configured")
+
+    server_name = str(llm.get("name") or settings.get("default_llm_server_name") or "default")
+    return (
+        LocalChatRequest(
+            provider=str(llm.get("provider") or "llama.cpp"),
+            endpoint=str(llm.get("endpoint") or "http://127.0.0.1:8080"),
+            api_key=str(llm.get("api_key") or "") or None,
+            model=model,
+            system=system,
+            prompt=prompt,
+            temperature=temperature,
+            context_length=min(int(llm.get("contextLength", 8192) or 8192), 4096),
+            disable_thinking=disable_thinking,
+        ),
+        server_name,
+    )
+
+
+def _correct_ime_transcription_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    raw_text = str(result.get("text") or "").strip()
+    if not raw_text:
+        return result
+
+    corrected_result = dict(result)
+    debug = corrected_result.setdefault("debug", {})
+    debug["ime_correction"] = {
+        "enabled": True,
+        "original_text": raw_text,
+        "success": False,
+    }
+
+    try:
+        request, server_name = _configured_llm_request(
+            system=IME_CORRECTION_SYSTEM_PROMPT,
+            prompt=raw_text,
+            temperature=0,
+            disable_thinking=True,
+        )
+        append_service_log(
+            "webui",
+            "requesting IME correction: "
+            f"server={server_name} provider={request.provider} "
+            f"endpoint={_llm_base_endpoint(request.endpoint)} model={request.model} chars={len(raw_text)}",
+        )
+        corrected_text = _local_chat_response(request).strip()
+        if not corrected_text:
+            raise RuntimeError("Local LLM returned an empty IME correction")
+
+        corrected_result["text"] = corrected_text
+        debug["ime_correction"].update(
+            {
+                "success": True,
+                "provider": request.provider,
+                "model": request.model,
+                "server": server_name,
+                "corrected_text_length": len(corrected_text),
+            }
+        )
+        return corrected_result
+    except Exception as error:
+        debug["ime_correction"]["error"] = str(error)
+        append_service_log("webui", f"IME correction failed; using raw ASR text: error={error}")
+        return corrected_result
 
 
 def _ollama_model_details(endpoint: str, model: str, api_key: Optional[str] = None) -> Dict[str, Any]:
