@@ -15,9 +15,12 @@ import {
 } from "@mui/material";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { chatWithLocalLlm } from "../api/localLlm";
 import { useSettingsQuery } from "../api/settings";
+import { LlmApiKeyDialog } from "../components/llm/LlmApiKeyDialog";
 import { ObsidianNotePreview } from "../components/obsidian/ObsidianNotePreview";
 import { compactStepperSx } from "../components/workflow/stepperStyles";
+import { useLlmApiKey } from "../hooks/useLlmApiKey";
 import {
   useCancelTranscriptionJobMutation,
   useCreateUrlTranscriptionJobMutation,
@@ -25,7 +28,7 @@ import {
   useTranscriptionRecordQuery,
   useUploadTranscriptionJobMutation
 } from "../api/transcription";
-import type { TranscriptionJob } from "../types/transcription";
+import type { TranscriptionJob, TranscriptionRecord } from "../types/transcription";
 import { buildTranscriptObsidianDraft, openObsidianDraft } from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
@@ -38,6 +41,8 @@ export function VToTextPage() {
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [aiTags, setAiTags] = useState("");
+  const [aiTagsSourceKey, setAiTagsSourceKey] = useState("");
   const [toast, setToast] = useState("");
 
   const settingsQuery = useSettingsQuery();
@@ -46,6 +51,7 @@ export function VToTextPage() {
   const createUrlJob = useCreateUrlTranscriptionJobMutation();
   const uploadJob = useUploadTranscriptionJobMutation();
   const cancelJob = useCancelTranscriptionJobMutation();
+  const llmApiKey = useLlmApiKey();
 
   const whisper = settingsQuery.data?.whisper || {};
   const activeJob = jobQuery.data;
@@ -53,7 +59,8 @@ export function VToTextPage() {
   const activeProgress = uploadProgress ?? activeJob?.progress ?? selectedRecord?.progress ?? 0;
   const activeMessage = jobProgressMessage(activeJob) || selectedRecord?.message || (uploadProgress ? "Uploading media..." : "Ready");
   const isWorking = Boolean(activeJobId) || createUrlJob.isPending || uploadJob.isPending;
-  const obsidianDraft = useMemo(() => buildTranscriptObsidianDraft(selectedRecord), [selectedRecord]);
+  const obsidianDraft = useMemo(() => buildTranscriptObsidianDraft(selectedRecord, aiTags), [selectedRecord, aiTags]);
+  const aiTagsSource = useMemo(() => transcriptAiTagsSource(selectedRecord), [selectedRecord]);
 
   useEffect(() => {
     if (!activeJob) return;
@@ -75,6 +82,47 @@ export function VToTextPage() {
       setToast("Transcription stopped");
     }
   }, [activeJob, queryClient]);
+
+  useEffect(() => {
+    if (!aiTagsSource.key) {
+      setAiTags("");
+      setAiTagsSourceKey("");
+      return;
+    }
+    if (aiTagsSourceKey === aiTagsSource.key) return;
+
+    let cancelled = false;
+    setAiTags("");
+    setAiTagsSourceKey(aiTagsSource.key);
+
+    async function generateTranscriptAiTags() {
+      try {
+        const apiKey = await llmApiKey.ensureApiKey(settingsQuery.data || {});
+        const response = await chatWithLocalLlm(
+          settingsQuery.data || {},
+          buildAiTagsPrompt(aiTagsSource.content, aiTagsSource.title),
+          "你是擅長資訊整理的繁體中文知識管理助手。只輸出可直接貼進 Obsidian 的 hashtag 清單。",
+          apiKey
+        );
+        if (!cancelled) {
+          const tags = normalizeAiTags(response);
+          setAiTags(tags);
+          if (tags) setToast("AI tags generated");
+        }
+      } catch (caught) {
+        if (!cancelled) {
+          const message = caught instanceof Error ? caught.message : "AI tags unavailable";
+          setToast(message);
+        }
+      }
+    }
+
+    void generateTranscriptAiTags();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [aiTagsSource, aiTagsSourceKey, llmApiKey, settingsQuery.data]);
 
   async function startUrlJob() {
     const url = sourceUrl.trim();
@@ -220,6 +268,13 @@ export function VToTextPage() {
         message={toast}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       />
+      <LlmApiKeyDialog
+        open={Boolean(llmApiKey.pendingRequest)}
+        endpoint={llmApiKey.pendingRequest?.endpoint}
+        provider={llmApiKey.pendingRequest?.provider}
+        onSubmit={llmApiKey.submitApiKey}
+        onCancel={llmApiKey.cancelApiKey}
+      />
     </PageScaffold>
   );
 }
@@ -271,4 +326,46 @@ function jobProgressMessage(job?: TranscriptionJob) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong";
+}
+
+function transcriptAiTagsSource(record?: TranscriptionRecord | null) {
+  if (!record) return { key: "", title: "", content: "" };
+  const content =
+    record.article?.text?.trim() ||
+    record.transcript?.text?.trim() ||
+    (record.transcript?.segments || []).map((segment) => segment.text || "").join("\n").trim();
+  if (!content) return { key: "", title: "", content: "" };
+  const title = record.article?.title || record.title || record.source?.name || "Untitled transcript";
+  return {
+    key: `${record.job_id || title}|${title}|${content.slice(0, 2000)}`,
+    title,
+    content
+  };
+}
+
+function buildAiTagsPrompt(content: string, title: string) {
+  return `請根據以下文章產生 5 到 8 組 Obsidian hashtag。
+
+要求：
+1. 每一組包含一個繁體中文 hashtag 與一個對應英文 hashtag。
+2. 英文若有常見縮寫，請優先使用縮寫，例如 AI、LLM、API、GPU、CPU、SaaS。
+3. hashtag 不要有空格、標點或解釋文字。
+4. 每行只輸出一組，格式固定為：#中文標籤 #EnglishTag
+5. 不要輸出編號、前言、結語、Markdown code block。
+
+標題：${title || "未命名"}
+
+文章：
+${content}`;
+}
+
+function normalizeAiTags(text = "") {
+  return String(text)
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```[a-zA-Z]*\n?/g, "").replace(/```/g, ""))
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim())
+    .filter(Boolean)
+    .filter((line) => line.includes("#"))
+    .slice(0, 8)
+    .join("\n");
 }
