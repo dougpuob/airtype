@@ -508,7 +508,7 @@ body {
 .obsidian-note-preview h5 { font-size: 14.5px; }
 .obsidian-note-preview h6 { font-size: 14px; }
 .obsidian-note-preview p { margin: 0; color: #f0f0f6; white-space: pre-wrap; font-size: 14px; line-height: 1.7; }
-.obsidian-preview-spacer { height: 8px; }
+.obsidian-preview-spacer { height: 4px; }
 .obsidian-properties { display: grid; gap: 12px; padding: 14px; background: #292a38; border: 1px solid #3c3e55; border-radius: 8px; }
 .obsidian-properties-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 13px; line-height: 1.45; border: 1px solid #3c3e55; }
 .obsidian-properties-table th, .obsidian-properties-table td { padding: 8px 10px; border: 1px solid #3c3e55; vertical-align: top; text-align: left; }
