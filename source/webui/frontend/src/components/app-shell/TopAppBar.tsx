@@ -1,13 +1,15 @@
 import CircleIcon from "@mui/icons-material/Circle";
-import { AppBar, Box, Chip, Stack, Toolbar, Typography, useMediaQuery, useTheme } from "@mui/material";
+import MenuIcon from "@mui/icons-material/Menu";
+import { AppBar, Box, Chip, IconButton, Stack, Toolbar, Typography, useMediaQuery, useTheme } from "@mui/material";
 import { useSettingsQuery } from "../../api/settings";
 import { useLocalLlmHealthQuery, useWhisperServerStatusQuery } from "../../api/serviceStatus";
 
 type TopAppBarProps = {
   sidebarWidth: number;
+  onMenuClick?: () => void;
 };
 
-export function TopAppBar({ sidebarWidth }: TopAppBarProps) {
+export function TopAppBar({ sidebarWidth, onMenuClick }: TopAppBarProps) {
   const theme = useTheme();
   const compact = useMediaQuery(theme.breakpoints.down("sm"));
   const settingsQuery = useSettingsQuery();
@@ -40,6 +42,14 @@ export function TopAppBar({ sidebarWidth }: TopAppBarProps) {
       }}
     >
       <Toolbar sx={{ minHeight: "58px !important", px: { xs: 1.25, md: 2.5 }, gap: 1 }}>
+        <IconButton
+          aria-label="Open workspace navigation"
+          edge="start"
+          onClick={onMenuClick}
+          sx={{ display: { xs: "inline-flex", md: "none" }, mr: 0.25 }}
+        >
+          <MenuIcon />
+        </IconButton>
         <Stack
           direction="row"
           alignItems="center"
