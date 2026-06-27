@@ -128,7 +128,7 @@ function MarkdownPreviewText({ text }: { text: string }) {
   return (
     <Box sx={{ display: "grid", gap: 0.5 }}>
       {lines.map((line, index) => {
-        if (!line.trim()) return <Box key={index} sx={{ height: 8 }} />;
+        if (!line.trim()) return <Box key={index} sx={{ height: 4 }} />;
 
         const heading = /^(#{1,6})\s+(.+)$/.exec(line);
         if (heading) {
