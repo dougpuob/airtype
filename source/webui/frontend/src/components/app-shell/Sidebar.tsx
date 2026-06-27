@@ -6,7 +6,7 @@ import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import { Box, List, ListItemButton, ListItemIcon, ListItemText, Typography } from "@mui/material";
 import { NavLink } from "react-router-dom";
 
-const navItems = [
+export const navItems = [
   { label: "Dashboard", path: "/", icon: <DashboardOutlinedIcon /> },
   { label: "V to Text", path: "/v-to-text", icon: <GraphicEqOutlinedIcon /> },
   { label: "Capture Post", path: "/capture-post", icon: <ArticleOutlinedIcon /> },
@@ -18,32 +18,96 @@ type SidebarProps = {
   topBarHeight: number;
 };
 
+type NavigationListProps = {
+  orientation?: "vertical" | "horizontal";
+  onNavigate?: () => void;
+};
+
+export function NavigationList({ orientation = "vertical", onNavigate }: NavigationListProps) {
+  const horizontal = orientation === "horizontal";
+  return (
+    <List
+      dense
+      disablePadding
+      sx={{
+        display: horizontal ? "flex" : "grid",
+        gap: 0.5,
+        width: "100%",
+        minWidth: horizontal ? "max-content" : 0
+      }}
+    >
+      {navItems.map((item) => (
+        <ListItemButton
+          key={item.path}
+          component={NavLink}
+          to={item.path}
+          end={item.path === "/"}
+          onClick={onNavigate}
+          sx={{
+            color: "text.secondary",
+            flexDirection: horizontal ? "column" : "row",
+            justifyContent: horizontal ? "center" : "flex-start",
+            minWidth: horizontal ? 72 : 0,
+            minHeight: horizontal ? 56 : 42,
+            px: horizontal ? 1 : 2,
+            py: horizontal ? 0.5 : 1,
+            "&.active": {
+              bgcolor: "primary.light",
+              color: "primary.dark",
+              "& .MuiListItemIcon-root": {
+                color: "primary.dark"
+              }
+            }
+          }}
+        >
+          <ListItemIcon
+            sx={{
+              minWidth: horizontal ? 0 : 36,
+              color: "text.secondary",
+              mb: horizontal ? 0.25 : 0
+            }}
+          >
+            {item.icon}
+          </ListItemIcon>
+          <ListItemText
+            primary={item.label}
+            primaryTypographyProps={{
+              fontSize: horizontal ? 10 : 13,
+              fontWeight: 750,
+              textAlign: horizontal ? "center" : "left",
+              noWrap: true
+            }}
+          />
+        </ListItemButton>
+      ))}
+    </List>
+  );
+}
+
 export function Sidebar({ topBarHeight }: SidebarProps) {
   return (
     <Box
       component="aside"
       sx={{
-        gridColumn: { xs: 1, md: 1 },
-        gridRow: { xs: 3, md: 2 },
+        gridColumn: 1,
+        gridRow: 2,
         minHeight: 0,
-        display: "flex",
-        flexDirection: { xs: "row", md: "column" },
-        alignItems: { xs: "center", md: "stretch" },
-        borderRight: { xs: 0, md: 1 },
-        borderTop: { xs: 1, md: 0 },
+        display: { xs: "none", md: "flex" },
+        flexDirection: "column",
+        alignItems: "stretch",
+        borderRight: 1,
         borderColor: "divider",
         bgcolor: "background.paper",
-        px: { xs: 0.75, md: 1.5 },
-        py: { xs: 0.75, md: 2 },
+        px: 1.5,
+        py: 2,
         mt: 0,
-        overflowX: { xs: "auto", md: "visible" },
+        overflowX: "visible",
         overflowY: "hidden"
       }}
     >
       <Typography
         variant="overline"
         sx={{
-          display: { xs: "none", md: "block" },
           color: "text.secondary",
           fontSize: 11,
           fontWeight: 800,
@@ -54,62 +118,9 @@ export function Sidebar({ topBarHeight }: SidebarProps) {
       >
         Workspace
       </Typography>
-      <List
-        dense
-        disablePadding
-        sx={{
-          display: { xs: "flex", md: "grid" },
-          gap: { xs: 0.5, md: 0.5 },
-          width: "100%",
-          minWidth: { xs: "max-content", md: 0 }
-        }}
-      >
-        {navItems.map((item) => (
-          <ListItemButton
-            key={item.path}
-            component={NavLink}
-            to={item.path}
-            end={item.path === "/"}
-            sx={{
-              color: "text.secondary",
-              flexDirection: { xs: "column", md: "row" },
-              justifyContent: "center",
-              minWidth: { xs: 72, md: 0 },
-              minHeight: { xs: 56, md: 42 },
-              px: { xs: 1, md: 2 },
-              py: { xs: 0.5, md: 1 },
-              "&.active": {
-                bgcolor: "primary.light",
-                color: "primary.dark",
-                "& .MuiListItemIcon-root": {
-                  color: "primary.dark"
-                }
-              }
-            }}
-          >
-            <ListItemIcon
-              sx={{
-                minWidth: { xs: 0, md: 36 },
-                color: "text.secondary",
-                mb: { xs: 0.25, md: 0 }
-              }}
-            >
-              {item.icon}
-            </ListItemIcon>
-            <ListItemText
-              primary={item.label}
-              primaryTypographyProps={{
-                fontSize: { xs: 10, md: 13 },
-                fontWeight: 750,
-                textAlign: { xs: "center", md: "left" },
-                noWrap: true
-              }}
-            />
-          </ListItemButton>
-        ))}
-      </List>
-      <Box sx={{ flex: 1, display: { xs: "none", md: "block" } }} />
-      <Typography variant="caption" sx={{ display: { xs: "none", md: "block" }, color: "text.secondary", px: 1.5 }}>
+      <NavigationList />
+      <Box sx={{ flex: 1 }} />
+      <Typography variant="caption" sx={{ color: "text.secondary", px: 1.5 }}>
         Local workspace
       </Typography>
       <Box sx={{ display: "none", height: topBarHeight * 0 }} />
