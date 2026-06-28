@@ -130,15 +130,19 @@ connections from the same machine and from other devices on your local network.
 Open `http://<this-mac-ip>:8003`, for example `http://192.168.68.83:8003`.
 Make sure your firewall allows incoming connections to the port.
 
-To require a username and password for the WebUI and API, configure HTTP Basic
-auth in `~/.airtype/config.toml`:
+To require a username and password for the WebUI and API, enable cookie-session
+authentication in `~/.airtype/config.toml`:
 
 ```toml
 [webui.auth]
 enabled = true
 username = "airtype"
 password = "change-me"
+session_days = 14
 ```
+
+After signing in, the browser stores an HttpOnly session token rather than the
+password. Passwords saved from the Settings page are stored as PBKDF2 hashes.
 
 To limit the WebUI to this machine only, bind it to localhost:
 

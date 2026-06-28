@@ -1,6 +1,8 @@
 import CircleIcon from "@mui/icons-material/Circle";
+import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
 import MenuIcon from "@mui/icons-material/Menu";
-import { AppBar, Box, Chip, IconButton, Stack, Toolbar, Typography, useMediaQuery, useTheme } from "@mui/material";
+import { AppBar, Box, Button, Chip, IconButton, Stack, Toolbar, Tooltip, Typography, useMediaQuery, useTheme } from "@mui/material";
+import { useAuthStatusQuery, useLogoutMutation } from "../../api/auth";
 import { useSettingsQuery } from "../../api/settings";
 import { useLocalLlmHealthQuery, useWhisperServerStatusQuery } from "../../api/serviceStatus";
 
@@ -12,6 +14,8 @@ type TopAppBarProps = {
 export function TopAppBar({ sidebarWidth, onMenuClick }: TopAppBarProps) {
   const theme = useTheme();
   const compact = useMediaQuery(theme.breakpoints.down("sm"));
+  const authQuery = useAuthStatusQuery();
+  const logout = useLogoutMutation();
   const settingsQuery = useSettingsQuery();
   const whisperStatus = useWhisperServerStatusQuery();
   const llmHealth = useLocalLlmHealthQuery(settingsQuery.data);
@@ -79,6 +83,30 @@ export function TopAppBar({ sidebarWidth, onMenuClick }: TopAppBarProps) {
           <ServiceChip label={compact ? "ASR" : "ASR Server"} state={asr} />
           <ServiceChip label={compact ? "LLM" : "LLM Server"} state={llm} />
         </Stack>
+        {authQuery.data?.enabled ? (
+          compact ? (
+            <Tooltip title="Sign out">
+              <IconButton
+                aria-label="Sign out"
+                disabled={logout.isPending}
+                onClick={() => logout.mutate()}
+                size="small"
+              >
+                <LogoutOutlinedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          ) : (
+            <Button
+              color="inherit"
+              disabled={logout.isPending}
+              onClick={() => logout.mutate()}
+              startIcon={<LogoutOutlinedIcon />}
+              size="small"
+            >
+              Sign out
+            </Button>
+          )
+        ) : null}
       </Toolbar>
     </AppBar>
   );

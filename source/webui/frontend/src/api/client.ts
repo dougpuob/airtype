@@ -10,6 +10,7 @@ export class ApiError extends Error {
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {})
@@ -18,7 +19,17 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   });
 
   if (!response.ok) {
-    const message = await response.text();
+    const responseText = await response.text();
+    let message = responseText;
+    try {
+      const payload = JSON.parse(responseText) as { detail?: unknown };
+      if (typeof payload.detail === "string") message = payload.detail;
+    } catch {
+      // Keep the original response text when the error body is not JSON.
+    }
+    if (response.status === 401 && !path.startsWith("/api/auth/")) {
+      window.dispatchEvent(new Event("airtype:unauthorized"));
+    }
     throw new ApiError(message || response.statusText, response.status);
   }
 
