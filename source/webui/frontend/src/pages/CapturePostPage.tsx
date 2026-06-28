@@ -266,14 +266,14 @@ export function CapturePostPage() {
                 variant="contained"
                 disabled={isWorking}
                 onClick={capturePost}
-                sx={{ gridRow: { sm: "1 / span 2" }, height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
+                sx={{ alignSelf: "end", height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
               >
                 Capture
               </Button>
               <TextField
                 fullWidth
                 size="small"
-                sx={{ "& .MuiOutlinedInput-root": { height: 40 } }}
+                sx={{ gridColumn: { sm: "1 / -1" }, "& .MuiOutlinedInput-root": { height: 40 } }}
                 value={postUrl}
                 onChange={(event) => setPostUrl(event.target.value)}
                 placeholder="Paste post URL, Threads, ..."
