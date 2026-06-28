@@ -54,14 +54,18 @@ export type TranscriptObsidianDraft = {
   datetime: string;
 };
 
-export function buildTranscriptObsidianDraft(record?: TranscriptionRecord | null, aiTags = ""): TranscriptObsidianDraft | null {
+export function buildTranscriptObsidianDraft(
+  record?: TranscriptionRecord | null,
+  aiTags = "",
+  titleOverride = ""
+): TranscriptObsidianDraft | null {
   if (!record?.transcript?.segments?.length && !record?.transcript?.text) return null;
 
   const content = transcriptOriginalText(record.transcript?.segments, record.transcript?.text);
   if (!content.trim()) return null;
 
   const dateParts = localObsidianDateParts();
-  const title = sanitizeObsidianTitle(record.title || record.source?.name || "Untitled transcript");
+  const title = sanitizeObsidianTitle(titleOverride || record.title || record.source?.name || "Untitled transcript");
   const sources = transcriptSources(record);
   const tags = [dateParts.date, "airtype", "speech-to-text", ...sourceDomainTags(sources)];
   const polishedContent = record.article?.text?.trim() || "";
@@ -225,7 +229,7 @@ function transcriptOriginalText(segments?: TranscriptSegment[], fallbackText?: s
   return segments
     .map((segment) => (segment.text || "").trim().replace(/\r\n?/g, "\n"))
     .filter(Boolean)
-    .map((text) => `${text}    \n`)
+    .map((text) => `${text}${" ".repeat(4)}\n`)
     .join("");
 }
 
