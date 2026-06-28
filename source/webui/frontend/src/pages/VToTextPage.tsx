@@ -491,7 +491,7 @@ export function VToTextPage() {
 function WorkflowStepper({ activeStep, aiTitleEnabled }: { activeStep: number; aiTitleEnabled: boolean }) {
   const steps = ["Source", "AI Transcribe", aiTitleEnabled ? "AI Title" : "Title", "AI Tags", "Ready"];
   return (
-    <Stack spacing={0.5}>
+    <Stack spacing={1.5}>
       <Typography
         variant="body2"
         color="text.primary"
