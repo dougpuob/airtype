@@ -29,10 +29,14 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "contextLength": 8192,
         "temperature": 0.4,
         "system": "Summarize and answer questions using the transcript as the source of truth.",
+        "disable_thinking": False,
     },
     "ytdlp": {
         "cookies": "",
         "cookies_from_browser": "",
+    },
+    "obsidian": {
+        "default_folder": "",
     },
     "auth": {
         "enabled": False,
@@ -47,6 +51,7 @@ WEBUI_SECTION_ALIASES = {
     "whisper": ("whisper-server",),
     "llm": ("llm-server",),
     "ytdlp": ("yt-dlp", "ytdlp"),
+    "obsidian": ("obsidian",),
     "auth": ("auth",),
 }
 
@@ -236,6 +241,7 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         llm["model"] = llm["selected_model"]
     llm["contextLength"] = _int_in_range(llm.get("contextLength"), 8192, minimum=1)
     llm["temperature"] = _float_in_range(llm.get("temperature"), 0.4, minimum=0, maximum=2)
+    llm["disable_thinking"] = bool(llm.get("disable_thinking") or llm.get("disable-thinking"))
 
     ytdlp = {**DEFAULT_APP_SETTINGS["ytdlp"], **_dict_value(normalized.get("ytdlp"))}
     ytdlp["cookies"] = str(ytdlp.get("cookies") or "")
@@ -244,6 +250,13 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         or ytdlp.get("cookies-from-browser")
         or ""
     )
+
+    obsidian = {**DEFAULT_APP_SETTINGS["obsidian"], **_dict_value(normalized.get("obsidian"))}
+    obsidian["default_folder"] = str(
+        obsidian.get("default_folder")
+        or obsidian.get("default-folder")
+        or ""
+    ).strip().strip("/")
 
     auth = {**DEFAULT_APP_SETTINGS["auth"], **_dict_value(normalized.get("auth"))}
     auth["enabled"] = bool(auth.get("enabled"))
@@ -254,6 +267,7 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         "whisper": whisper,
         "llm": llm,
         "ytdlp": ytdlp,
+        "obsidian": obsidian,
         "auth": auth,
     }
 
@@ -262,7 +276,7 @@ def remove_webui_sections(text: str) -> str:
     import re
 
     pattern = re.compile(
-        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:auth|whisper-server|llm-server|yt-dlp|ytdlp)\]{1,2})\n.*?(?=^\[|\Z)"
+        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:auth|whisper-server|llm-server|yt-dlp|ytdlp|obsidian)\]{1,2})\n.*?(?=^\[|\Z)"
     )
     text = pattern.sub("", text)
     header_pattern = re.compile(
@@ -276,6 +290,7 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
     whisper = normalized["whisper"]
     llm = normalized["llm"]
     ytdlp = normalized["ytdlp"]
+    obsidian = normalized["obsidian"]
     auth = normalized["auth"]
     lines = [
         "#===============================================================================",
@@ -296,6 +311,9 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
         f"cookies = {_toml_string(ytdlp.get('cookies', ''))}",
         f"cookies_from_browser = {_toml_string(ytdlp.get('cookies_from_browser', ''))}",
         "",
+        "[webui.obsidian]",
+        f"default_folder = {_toml_string(obsidian.get('default_folder', ''))}",
+        "",
         "[webui.auth]",
         f"enabled = {'true' if auth.get('enabled') else 'false'}",
         f"username = {_toml_string(auth.get('username', 'airtype'))}",
@@ -310,6 +328,7 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
         f"selected-model = {_toml_string(llm.get('selected_model', llm.get('model', '')))}",
         f"contextLength = {_toml_number(llm.get('contextLength', 8192), 8192)}",
         f"temperature = {_toml_number(llm.get('temperature', 0.4), 0.4)}",
+        f"disable_thinking = {'true' if llm.get('disable_thinking') else 'false'}",
         f"system = {_toml_string(llm.get('system', ''))}",
         "",
         "[webui]",

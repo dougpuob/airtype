@@ -20,6 +20,7 @@ export type AppSettings = {
     temperature?: number;
     contextLength?: number;
     system?: string;
+    disable_thinking?: boolean;
   };
   ytdlp?: {
     cookies?: string;
@@ -29,6 +30,9 @@ export type AppSettings = {
     enabled?: boolean;
     username?: string;
     password?: string;
+  };
+  obsidian?: {
+    default_folder?: string;
   };
   llm_servers?: AppSettings["llm"][];
   default_llm_server_name?: string;

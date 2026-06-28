@@ -220,7 +220,7 @@ export function CapturePostPage() {
       setToast("Capture a post before saving");
       return;
     }
-    openObsidianDraft(draft);
+    openObsidianDraft(draft, settingsQuery.data?.obsidian?.default_folder);
     setToast("Opening Obsidian to create the note");
   }
 

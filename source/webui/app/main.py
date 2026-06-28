@@ -314,12 +314,15 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     whisper_input = incoming.get("whisper", {}) if isinstance(incoming.get("whisper"), dict) else {}
     llm_input = incoming.get("llm", {}) if isinstance(incoming.get("llm"), dict) else {}
     ytdlp_input = incoming.get("ytdlp", {}) if isinstance(incoming.get("ytdlp"), dict) else {}
+    obsidian_input = incoming.get("obsidian", {}) if isinstance(incoming.get("obsidian"), dict) else {}
     auth_input = incoming.get("auth", {}) if isinstance(incoming.get("auth"), dict) else {}
     current_settings = _read_backend_config_settings()
     current_whisper = current_settings.get("whisper", {})
     current_whisper = current_whisper if isinstance(current_whisper, dict) else {}
     current_ytdlp = current_settings.get("ytdlp", {})
     current_ytdlp = current_ytdlp if isinstance(current_ytdlp, dict) else {}
+    current_obsidian = current_settings.get("obsidian", {})
+    current_obsidian = current_obsidian if isinstance(current_obsidian, dict) else {}
     current_auth = current_settings.get("auth", {})
     current_auth = current_auth if isinstance(current_auth, dict) else {}
     model_dir, model_filename = _split_whisper_model_settings(whisper_input)
@@ -345,12 +348,19 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
             "contextLength": llm_input.get("contextLength", 8192),
             "temperature": llm_input.get("temperature", 0.4),
             "system": llm_input.get("system", ""),
+            "disable_thinking": bool(llm_input.get("disable_thinking", llm_input.get("disable-thinking", False))),
         },
         "ytdlp": {
             "cookies": ytdlp_input.get("cookies", current_ytdlp.get("cookies", "")),
             "cookies_from_browser": ytdlp_input.get(
                 "cookies_from_browser",
                 ytdlp_input.get("cookies-from-browser", current_ytdlp.get("cookies_from_browser", "")),
+            ),
+        },
+        "obsidian": {
+            "default_folder": obsidian_input.get(
+                "default_folder",
+                obsidian_input.get("default-folder", current_obsidian.get("default_folder", "")),
             ),
         },
         "auth": {
@@ -2204,7 +2214,7 @@ def _configured_llm_request(
             prompt=prompt,
             temperature=temperature,
             context_length=min(int(llm.get("contextLength", 8192) or 8192), 4096),
-            disable_thinking=disable_thinking,
+            disable_thinking=disable_thinking or bool(llm.get("disable_thinking")),
         ),
         server_name,
     )
@@ -2862,6 +2872,7 @@ def _generate_transcription_article(
             prompt=user_prompt,
             temperature=float(llm.get("temperature", 0.4) or 0.4),
             context_length=int(llm.get("contextLength", 8192) or 8192),
+            disable_thinking=bool(llm.get("disable_thinking")),
         )
     ).strip()
     if not article_text:

@@ -93,14 +93,25 @@ export function buildTranscriptObsidianDraft(record?: TranscriptionRecord | null
   };
 }
 
-export function openObsidianDraft(draft: { noteTitle: string; note: string }) {
+export function openObsidianDraft(draft: { noteTitle: string; note: string }, defaultFolder = "") {
+  const noteName = obsidianNotePath(defaultFolder, draft.noteTitle);
   const query = [
-    ["name", draft.noteTitle],
+    ["name", noteName],
     ["content", draft.note]
   ]
     .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
     .join("&");
   window.location.href = `obsidian://new?${query}`;
+}
+
+function obsidianNotePath(folder: string, noteTitle: string) {
+  const cleanFolder = String(folder || "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((part) => sanitizeObsidianTitle(part))
+    .filter(Boolean)
+    .join("/");
+  return cleanFolder ? `${cleanFolder}/${noteTitle}` : noteTitle;
 }
 
 const OBSIDIAN_POST_TEMPLATE = `---

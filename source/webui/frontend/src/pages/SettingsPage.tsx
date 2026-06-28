@@ -224,6 +224,15 @@ export function SettingsPage() {
                   onChange={(event) => updateSection("llm", { temperature: Number(event.target.value) })}
                   inputProps={{ min: 0, max: 2, step: 0.1 }}
                 />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={Boolean(draft?.llm?.disable_thinking)}
+                      onChange={(event) => updateSection("llm", { disable_thinking: event.target.checked })}
+                    />
+                  }
+                  label="Disable thinking for faster responses"
+                />
                 <TextField
                   size="small"
                   label="Default system prompt"
@@ -242,6 +251,13 @@ export function SettingsPage() {
                 <Typography variant="h3">Obsidian and Downloads</Typography>
                 <Typography color="text.secondary">Note export uses Obsidian URI links; media URL imports use yt-dlp.</Typography>
                 <Divider />
+                <TextField
+                  size="small"
+                  label="Obsidian default folder"
+                  placeholder="Inbox/AirType"
+                  value={draft?.obsidian?.default_folder || ""}
+                  onChange={(event) => updateSection("obsidian", { default_folder: event.target.value })}
+                />
                 <TextField
                   size="small"
                   label="yt-dlp cookies file"

@@ -221,7 +221,7 @@ export function VToTextPage() {
       setToast("Complete a transcript before saving");
       return;
     }
-    openObsidianDraft(obsidianDraft);
+    openObsidianDraft(obsidianDraft, settingsQuery.data?.obsidian?.default_folder);
     setToast("Opening Obsidian to create the note");
   }
 
