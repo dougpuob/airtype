@@ -76,7 +76,7 @@ export function VToTextPage() {
 
   useGuardedWork({
     id: "v-to-text",
-    label: "V to Text",
+    label: "Voice to Text",
     isActive: isWorking,
     onConfirmLeave: async () => {
       if (!activeJobId) return;

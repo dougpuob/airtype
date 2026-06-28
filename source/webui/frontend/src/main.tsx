@@ -9,6 +9,22 @@ import { WorkGuardProvider } from "./hooks/useWorkGuard";
 import { theme } from "./theme";
 import "./styles.css";
 
+const reloadScopedStateKeys = [
+  "airtype:v-to-text:state",
+  "airtype:capture-post:state",
+  "airtype:ime-history:state"
+];
+
+function clearReloadScopedState() {
+  if (typeof window === "undefined") return;
+  for (const key of reloadScopedStateKeys) {
+    window.sessionStorage.removeItem(key);
+    window.localStorage.removeItem(key);
+  }
+}
+
+clearReloadScopedState();
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
