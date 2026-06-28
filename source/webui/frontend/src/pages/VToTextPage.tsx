@@ -246,71 +246,80 @@ export function VToTextPage() {
         <Stack spacing={2.25} sx={{ minWidth: 0 }}>
           <Box
             sx={{
-              alignItems: "center",
+              alignItems: "stretch",
               display: "grid",
-              gap: { xs: 1.5, md: 3 },
-              gridTemplateColumns: { xs: "1fr", md: "minmax(360px, 520px) minmax(280px, 420px)" },
-              justifyContent: "center",
+              gap: { xs: 1.5, md: 2.5 },
+              gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) minmax(0, 1fr)" },
               minWidth: 0
             }}
           >
-            <Box sx={{ minWidth: 0, overflowX: "auto", pb: 0.5 }}>
+            <Box sx={{ alignContent: "center", minWidth: 0, overflowX: "auto", pb: 0.5 }}>
               <WorkflowStepper activeStep={workflowStepIndex} />
             </Box>
-            <Stack spacing={1} sx={{ width: "100%", maxWidth: 420, mx: "auto", minWidth: 0 }}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
-                <Typography variant="body2" color="text.secondary" fontWeight={700} noWrap>
-                  {activeMessage}
-                </Typography>
-                <Typography variant="body2" color="text.secondary" fontWeight={700} sx={{ flexShrink: 0 }}>
-                  {Math.round(activeProgress)}%
-                </Typography>
-              </Stack>
-              <LinearProgress value={Math.min(100, activeProgress)} variant="determinate" />
-            </Stack>
-          </Box>
-          <Divider />
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ minWidth: 0 }}>
-            <TextField
-              fullWidth
-              size="small"
-              sx={{ "& .MuiOutlinedInput-root": { height: 40 } }}
-              value={sourceUrl}
-              onChange={(event) => setSourceUrl(event.target.value)}
-              placeholder="Paste media URL, YouTube, Bilibili, Shorts, Instagram, Threads, or a direct file link"
-              InputProps={{
-                startAdornment: <LinkOutlinedIcon color="disabled" fontSize="small" sx={{ mr: 1 }} />
+            <Box
+              sx={{
+                alignItems: "stretch",
+                display: "grid",
+                gap: { xs: 1.25, sm: 1.5 },
+                gridTemplateColumns: { xs: "1fr", sm: "minmax(0, 1fr) auto" },
+                minWidth: 0
               }}
-            />
-            <Button
-              variant="contained"
-              color={isWorking ? "error" : "primary"}
-              disabled={createUrlJob.isPending || uploadJob.isPending || cancelJob.isPending}
-              onClick={isWorking ? stopActiveJob : startUrlJob}
-              sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
             >
-              {isWorking ? "Stop" : "Transcribe"}
-            </Button>
-            <Button
-              variant="outlined"
-              component="label"
-              disabled={isWorking}
-              sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0, minWidth: 112 }}
-            >
-              Choose File
-              <input
-                ref={fileInputRef}
-                hidden
-                type="file"
-                accept="audio/*,video/*"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) void startFileJob(file);
-                  event.target.value = "";
+              <Stack spacing={1} sx={{ minWidth: 0 }}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+                  <Typography variant="body2" color="text.secondary" fontWeight={700} noWrap>
+                    {activeMessage}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" fontWeight={700} sx={{ flexShrink: 0 }}>
+                    {Math.round(activeProgress)}%
+                  </Typography>
+                </Stack>
+                <LinearProgress value={Math.min(100, activeProgress)} variant="determinate" />
+              </Stack>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ gridRow: { sm: "1 / span 2" }, minWidth: 0 }}>
+                <Button
+                  variant="contained"
+                  color={isWorking ? "error" : "primary"}
+                  disabled={createUrlJob.isPending || uploadJob.isPending || cancelJob.isPending}
+                  onClick={isWorking ? stopActiveJob : startUrlJob}
+                  sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
+                >
+                  {isWorking ? "Stop" : "Transcribe"}
+                </Button>
+                <Button
+                  variant="outlined"
+                  component="label"
+                  disabled={isWorking}
+                  sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0, minWidth: 112 }}
+                >
+                  Choose File
+                  <input
+                    ref={fileInputRef}
+                    hidden
+                    type="file"
+                    accept="audio/*,video/*"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) void startFileJob(file);
+                      event.target.value = "";
+                    }}
+                  />
+                </Button>
+              </Stack>
+              <TextField
+                fullWidth
+                size="small"
+                sx={{ "& .MuiOutlinedInput-root": { height: 40 } }}
+                value={sourceUrl}
+                onChange={(event) => setSourceUrl(event.target.value)}
+                placeholder="Paste media URL, YouTube, Bilibili, Shorts, Instagram, Threads, or a direct file link"
+                InputProps={{
+                  startAdornment: <LinkOutlinedIcon color="disabled" fontSize="small" sx={{ mr: 1 }} />
                 }}
               />
-            </Button>
-          </Stack>
+            </Box>
+          </Box>
+          <Divider />
           {createUrlJob.isError || uploadJob.isError || (jobQuery.isError && !selectedRecord) || (selectedRecordId && recordQuery.isError) ? (
             <Alert severity="error">
               {errorMessage(createUrlJob.error || uploadJob.error || (!selectedRecord ? jobQuery.error : null) || recordQuery.error)}
