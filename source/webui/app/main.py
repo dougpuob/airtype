@@ -358,6 +358,10 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
             ),
         },
         "obsidian": {
+            "vault_name": obsidian_input.get(
+                "vault_name",
+                obsidian_input.get("vault-name", current_obsidian.get("vault_name", "")),
+            ),
             "default_folder": obsidian_input.get(
                 "default_folder",
                 obsidian_input.get("default-folder", current_obsidian.get("default_folder", "")),
@@ -1394,6 +1398,7 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
         f"cookies_from_browser = {_toml_string(ytdlp.get('cookies_from_browser', ''))}",
         "",
         "[webui.obsidian]",
+        f"vault_name = {_toml_string(obsidian.get('vault_name', ''))}",
         f"default_folder = {_toml_string(obsidian.get('default_folder', ''))}",
         "",
         "[webui.auth]",

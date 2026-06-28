@@ -236,7 +236,10 @@ export function VToTextPage() {
       setToast("Complete a transcript before saving");
       return;
     }
-    openObsidianDraft(obsidianDraft, settingsQuery.data?.obsidian?.default_folder);
+    openObsidianDraft(obsidianDraft, {
+      vaultName: settingsQuery.data?.obsidian?.vault_name,
+      defaultFolder: settingsQuery.data?.obsidian?.default_folder
+    });
     setToast("Opening Obsidian to create the note");
   }
 
