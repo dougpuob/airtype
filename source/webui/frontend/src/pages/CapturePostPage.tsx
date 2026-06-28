@@ -232,51 +232,58 @@ export function CapturePostPage() {
         <Stack spacing={2.25} sx={{ minWidth: 0 }}>
           <Box
             sx={{
-              alignItems: "center",
+              alignItems: "stretch",
               display: "grid",
-              gap: { xs: 1.5, md: 3 },
-              gridTemplateColumns: { xs: "1fr", md: "minmax(320px, 460px) minmax(260px, 380px)" },
-              justifyContent: "center",
+              gap: { xs: 1.5, md: 2.5 },
+              gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) minmax(0, 1fr)" },
               minWidth: 0
             }}
           >
-            <Box sx={{ minWidth: 0, overflowX: "auto", pb: 0.5 }}>
+            <Box sx={{ alignContent: "center", minWidth: 0, overflowX: "auto", pb: 0.5 }}>
               <WorkflowSteps step={step} />
             </Box>
-            <Stack spacing={1} sx={{ width: "100%", maxWidth: 380, mx: "auto", minWidth: 0 }}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
-                <Typography variant="body2" color="text.secondary" fontWeight={700} noWrap>
-                  {activeMessage}
-                </Typography>
-                <Typography variant="body2" color="text.secondary" fontWeight={700} sx={{ flexShrink: 0 }}>
-                  {activeProgress}%
-                </Typography>
+            <Box
+              sx={{
+                alignItems: "stretch",
+                display: "grid",
+                gap: { xs: 1.25, sm: 1.5 },
+                gridTemplateColumns: { xs: "1fr", sm: "minmax(0, 1fr) auto" },
+                minWidth: 0
+              }}
+            >
+              <Stack spacing={1} sx={{ minWidth: 0 }}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+                  <Typography variant="body2" color="text.secondary" fontWeight={700} noWrap>
+                    {activeMessage}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" fontWeight={700} sx={{ flexShrink: 0 }}>
+                    {activeProgress}%
+                  </Typography>
+                </Stack>
+                <LinearProgress value={activeProgress} variant="determinate" />
               </Stack>
-              <LinearProgress value={activeProgress} variant="determinate" />
-            </Stack>
+              <Button
+                variant="contained"
+                disabled={isWorking}
+                onClick={capturePost}
+                sx={{ gridRow: { sm: "1 / span 2" }, height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
+              >
+                Capture
+              </Button>
+              <TextField
+                fullWidth
+                size="small"
+                sx={{ "& .MuiOutlinedInput-root": { height: 40 } }}
+                value={postUrl}
+                onChange={(event) => setPostUrl(event.target.value)}
+                placeholder="Paste post URL, Threads, ..."
+                InputProps={{
+                  startAdornment: <LinkOutlinedIcon color="disabled" fontSize="small" sx={{ mr: 1 }} />
+                }}
+              />
+            </Box>
           </Box>
           <Divider />
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ minWidth: 0 }}>
-            <TextField
-              fullWidth
-              size="small"
-              sx={{ "& .MuiOutlinedInput-root": { height: 40 } }}
-              value={postUrl}
-              onChange={(event) => setPostUrl(event.target.value)}
-              placeholder="Paste post URL, Threads, ..."
-              InputProps={{
-                startAdornment: <LinkOutlinedIcon color="disabled" fontSize="small" sx={{ mr: 1 }} />
-              }}
-            />
-            <Button
-              variant="contained"
-              disabled={isWorking}
-              onClick={capturePost}
-              sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
-            >
-              Capture
-            </Button>
-          </Stack>
           {error ? <Alert severity="error">{error}</Alert> : null}
         </Stack>
       </WorkspacePanel>
