@@ -23,12 +23,11 @@ import { compactStepperSx } from "../components/workflow/stepperStyles";
 import { useLlmApiKey } from "../hooks/useLlmApiKey";
 import { useGuardedWork } from "../hooks/useWorkGuard";
 import type { ThreadsChainResponse, WovenPost } from "../types/postWeaver";
+import { DEFAULT_AI_TITLE_SYSTEM_PROMPT, fallbackAiTitle, normalizeAiTitle } from "../utils/aiTitle";
 import { buildPostObsidianDraft, openObsidianDraft } from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
 const CAPTURE_POST_STATE_KEY = "airtype:capture-post:state";
-const DEFAULT_TITLE_SYSTEM_PROMPT =
-  "你是擅長提煉文章重點的繁體中文標題編輯。請根據使用者提供的文章產生一個約 30 個字的標題；不要使用冒號、不要提供多個選項、不要加入引號或解釋，只輸出標題。";
 
 type CaptureStep = "idle" | "capture" | "polish" | "title" | "tags" | "obsidian" | "complete" | "error";
 
@@ -177,17 +176,17 @@ export function CapturePostPage() {
   }
 
   async function generateTitle(content: string) {
-    const fallback = fallbackArticleTitle(content);
+    const fallback = fallbackAiTitle(content);
     if (!content.trim()) return fallback;
     try {
       const apiKey = await llmApiKey.ensureApiKey(settingsQuery.data || {});
       const response = await chatWithLocalLlm(
         settingsQuery.data || {},
         content,
-        settingsQuery.data?.capture_post?.title_system_prompt ?? DEFAULT_TITLE_SYSTEM_PROMPT,
+        settingsQuery.data?.capture_post?.title_system_prompt ?? DEFAULT_AI_TITLE_SYSTEM_PROMPT,
         apiKey
       );
-      const title = normalizeGeneratedTitle(response);
+      const title = normalizeAiTitle(response);
       if (title) {
         setToast("AI title generated");
         return title;
@@ -331,13 +330,21 @@ export function CapturePostPage() {
 function WorkflowSteps({ step, aiTitleEnabled }: { step: CaptureStep; aiTitleEnabled: boolean }) {
   const steps = ["Capture", "AI Polish", aiTitleEnabled ? "AI Title" : "Title", "AI Tags", "Ready"];
   return (
-    <Stepper activeStep={stepToIndex(step)} alternativeLabel sx={compactStepperSx}>
-      {steps.map((label, index) => (
-        <Step key={label} completed={isStepCompleted(index, step)}>
-          <StepLabel>{label}</StepLabel>
-        </Step>
-      ))}
-    </Stepper>
+    <Stack spacing={0.5}>
+      <Typography
+        color="text.primary"
+        sx={{ fontSize: 13, fontWeight: 780, lineHeight: 1.25, textAlign: "center" }}
+      >
+        Capture Post
+      </Typography>
+      <Stepper activeStep={stepToIndex(step)} alternativeLabel sx={compactStepperSx}>
+        {steps.map((label, index) => (
+          <Step key={label} completed={isStepCompleted(index, step)}>
+            <StepLabel>{label}</StepLabel>
+          </Step>
+        ))}
+      </Stepper>
+    </Stack>
   );
 }
 
@@ -429,24 +436,6 @@ function titleFromPostText(text = "") {
   ).replace(/\s+/g, " ");
 }
 
-function fallbackArticleTitle(text = "") {
-  const characters = Array.from(String(text).replace(/\s+/g, " ").trim());
-  if (!characters.length) return "TITLE";
-  return sanitizeObsidianTitle(characters.slice(0, 30).join("")) || "TITLE";
-}
-
-function normalizeGeneratedTitle(text = "") {
-  const firstLine = String(text)
-    .split(/\r?\n/)
-    .find((line) => line.trim()) || "";
-  const normalized = firstLine
-    .replace(/^\s*(?:標題|title)\s*[:：]\s*/i, "")
-    .replace(/^#+\s*/, "")
-    .replace(/[「」『』"“”]/g, "")
-    .trim();
-  return sanitizeObsidianTitle(Array.from(normalized).slice(0, 30).join(""));
-}
-
 function normalizeAiTags(text = "") {
   return String(text)
     .replace(/```[\s\S]*?```/g, (block) => block.replace(/```[a-zA-Z]*\n?/g, "").replace(/```/g, ""))
@@ -456,13 +445,6 @@ function normalizeAiTags(text = "") {
     .filter((line) => line.includes("#"))
     .slice(0, 8)
     .join("\n");
-}
-
-function sanitizeObsidianTitle(text = "") {
-  return String(text)
-    .replace(/[\\/:*?"<>|;；：\u0000-\u001F]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 function readPersistedCapturePostState(): PersistedCapturePostState {

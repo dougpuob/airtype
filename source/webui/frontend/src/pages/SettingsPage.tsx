@@ -270,9 +270,9 @@ export function SettingsPage() {
           <Grid size={{ xs: 12, lg: 6 }}>
             <WorkspacePanel>
               <Stack spacing={1.5} sx={settingsPanelSx}>
-                <Typography variant="h3">Capture Post</Typography>
+                <Typography variant="h3">AI Titles</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Configure whether the LLM generates note titles and how it should write them.
+                  Configure AI-generated note titles for Capture Post and Voice to Text.
                 </Typography>
                 <Divider />
                 <FormControlLabel
@@ -284,7 +284,7 @@ export function SettingsPage() {
                       }
                     />
                   }
-                  label="Generate titles with AI"
+                  label="Generate workflow titles with AI"
                 />
                 <TextField
                   size="small"
@@ -296,7 +296,7 @@ export function SettingsPage() {
                   onChange={(event) =>
                     updateSection("capture_post", { title_system_prompt: event.target.value })
                   }
-                  helperText="Sent as the system prompt when Capture Post asks the selected LLM to generate a title."
+                  helperText="Sent as the system prompt when either workflow asks the selected LLM to generate a title."
                 />
               </Stack>
             </WorkspacePanel>

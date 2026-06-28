@@ -30,16 +30,18 @@ import {
   useUploadTranscriptionJobMutation
 } from "../api/transcription";
 import type { TranscriptionJob, TranscriptionRecord } from "../types/transcription";
+import { DEFAULT_AI_TITLE_SYSTEM_PROMPT, fallbackAiTitle, normalizeAiTitle } from "../utils/aiTitle";
 import { buildTranscriptObsidianDraft, openObsidianDraft } from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
-const steps = ["Source", "AI Transcribe", "AI Tags", "Ready"];
 const V_TO_TEXT_STATE_KEY = "airtype:v-to-text:state";
 
 type PersistedVToTextState = {
   activeJobId: string | null;
   selectedRecordId: string | null;
   sourceUrl: string;
+  aiTitle: string;
+  aiTitleSourceKey: string;
   aiTags: string;
   aiTagsSourceKey: string;
 };
@@ -52,6 +54,9 @@ export function VToTextPage() {
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(restoredState.selectedRecordId);
   const [activeJobId, setActiveJobId] = useState<string | null>(restoredState.activeJobId);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [aiTitle, setAiTitle] = useState(restoredState.aiTitle);
+  const [aiTitleSourceKey, setAiTitleSourceKey] = useState(restoredState.aiTitleSourceKey);
+  const [isGeneratingAiTitle, setIsGeneratingAiTitle] = useState(false);
   const [aiTags, setAiTags] = useState(restoredState.aiTags);
   const [aiTagsSourceKey, setAiTagsSourceKey] = useState(restoredState.aiTagsSourceKey);
   const [isGeneratingAiTags, setIsGeneratingAiTags] = useState(false);
@@ -67,23 +72,49 @@ export function VToTextPage() {
   const llmApiKey = useLlmApiKey();
 
   const whisper = settingsQuery.data?.whisper || {};
+  const aiTitleEnabled = settingsQuery.data?.capture_post?.ai_title_enabled ?? true;
+  const aiTitleSystemPrompt =
+    settingsQuery.data?.capture_post?.title_system_prompt ?? DEFAULT_AI_TITLE_SYSTEM_PROMPT;
   const activeJob = jobQuery.data;
   const selectedRecord = recordQuery.data;
   const isWorking = Boolean(activeJobId && !isTerminalStatus(selectedRecord?.status)) || createUrlJob.isPending || uploadJob.isPending;
-  const obsidianDraft = useMemo(() => buildTranscriptObsidianDraft(selectedRecord, aiTags), [selectedRecord, aiTags]);
-  const aiTagsSource = useMemo(() => transcriptAiTagsSource(selectedRecord), [selectedRecord]);
+  const aiTitleSource = useMemo(() => transcriptAiSource(selectedRecord), [selectedRecord]);
+  const aiTitleRequestKey = aiTitleSource.key
+    ? `${aiTitleSource.key}|${aiTitleEnabled ? "ai" : "plain"}|${aiTitleSystemPrompt}`
+    : "";
+  const aiTitleDone =
+    !aiTitleRequestKey || (aiTitleSourceKey === aiTitleRequestKey && !isGeneratingAiTitle);
+  const effectiveAiTitle = aiTitleSourceKey === aiTitleRequestKey ? aiTitle : "";
+  const aiTagsSource = useMemo(
+    () => transcriptAiSource(selectedRecord, effectiveAiTitle),
+    [effectiveAiTitle, selectedRecord]
+  );
+  const aiTagsRequestKey = aiTagsSource.key ? `${aiTagsSource.key}|${aiTagsSource.title}` : "";
+  const obsidianDraft = useMemo(
+    () => buildTranscriptObsidianDraft(selectedRecord, aiTags, effectiveAiTitle),
+    [aiTags, effectiveAiTitle, selectedRecord]
+  );
   const workflowStepIndex = voiceWorkflowStepIndex({
     status: activeJob?.status || selectedRecord?.status,
     hasRecord: Boolean(selectedRecord),
+    hasTitleSource: Boolean(aiTitleSource.key),
+    titleDone: aiTitleDone,
     hasTagSource: Boolean(aiTagsSource.key),
-    tagsDone: !aiTagsSource.key || (aiTagsSourceKey === aiTagsSource.key && !isGeneratingAiTags),
+    tagsDone: !aiTagsRequestKey || (aiTagsSourceKey === aiTagsRequestKey && !isGeneratingAiTags),
     isSubmitting: uploadProgress !== null || createUrlJob.isPending || uploadJob.isPending,
+    isGeneratingAiTitle,
     isGeneratingAiTags
   });
-  const activeProgress = isGeneratingAiTags ? Math.max(92, selectedRecord?.progress ?? 0) : uploadProgress ?? activeJob?.progress ?? selectedRecord?.progress ?? 0;
-  const activeMessage = isGeneratingAiTags
-    ? "Generating AI tags"
-    : jobProgressMessage(activeJob) || selectedRecord?.message || (uploadProgress ? "Uploading media..." : "Ready");
+  const activeProgress = isGeneratingAiTags
+    ? Math.max(94, selectedRecord?.progress ?? 0)
+    : isGeneratingAiTitle
+      ? Math.max(86, selectedRecord?.progress ?? 0)
+      : uploadProgress ?? activeJob?.progress ?? selectedRecord?.progress ?? 0;
+  const activeMessage = isGeneratingAiTitle
+    ? "Generating AI title"
+    : isGeneratingAiTags
+      ? "Generating AI tags"
+      : jobProgressMessage(activeJob) || selectedRecord?.message || (uploadProgress ? "Uploading media..." : "Ready");
 
   useGuardedWork({
     id: "v-to-text",
@@ -98,19 +129,35 @@ export function VToTextPage() {
   });
 
   useEffect(() => {
-    writePersistedVToTextState({ activeJobId, selectedRecordId, sourceUrl, aiTags, aiTagsSourceKey });
-  }, [activeJobId, selectedRecordId, sourceUrl, aiTags, aiTagsSourceKey]);
+    writePersistedVToTextState({
+      activeJobId,
+      selectedRecordId,
+      sourceUrl,
+      aiTitle,
+      aiTitleSourceKey,
+      aiTags,
+      aiTagsSourceKey
+    });
+  }, [activeJobId, selectedRecordId, sourceUrl, aiTitle, aiTitleSourceKey, aiTags, aiTagsSourceKey]);
 
   useEffect(() => {
     if (!isWorking || !activeJobId) return;
     function handlePageHide() {
       navigator.sendBeacon?.(`/api/transcribe/jobs/${activeJobId}/cancel`, new Blob());
-      writePersistedVToTextState({ activeJobId: null, selectedRecordId, sourceUrl, aiTags, aiTagsSourceKey });
+      writePersistedVToTextState({
+        activeJobId: null,
+        selectedRecordId,
+        sourceUrl,
+        aiTitle,
+        aiTitleSourceKey,
+        aiTags,
+        aiTagsSourceKey
+      });
     }
 
     window.addEventListener("pagehide", handlePageHide);
     return () => window.removeEventListener("pagehide", handlePageHide);
-  }, [activeJobId, aiTags, aiTagsSourceKey, isWorking, selectedRecordId, sourceUrl]);
+  }, [activeJobId, aiTitle, aiTitleSourceKey, aiTags, aiTagsSourceKey, isWorking, selectedRecordId, sourceUrl]);
 
   useEffect(() => {
     if (!activeJob) return;
@@ -148,18 +195,78 @@ export function VToTextPage() {
   }, [activeJobId, selectedRecord, queryClient]);
 
   useEffect(() => {
+    if (!aiTitleRequestKey) {
+      setAiTitle("");
+      setAiTitleSourceKey("");
+      setIsGeneratingAiTitle(false);
+      return;
+    }
+    if (aiTitleSourceKey === aiTitleRequestKey) return;
+
+    let cancelled = false;
+    const fallback = fallbackAiTitle(aiTitleSource.content);
+    if (!aiTitleEnabled) {
+      setAiTitle(aiTitleSource.title || fallback);
+      setAiTitleSourceKey(aiTitleRequestKey);
+      setIsGeneratingAiTitle(false);
+      return;
+    }
+    setIsGeneratingAiTitle(true);
+    setAiTitle("");
+
+    async function generateTranscriptAiTitle() {
+      try {
+        const apiKey = await llmApiKey.ensureApiKey(settingsQuery.data || {});
+        const response = await chatWithLocalLlm(
+          settingsQuery.data || {},
+          aiTitleSource.content,
+          aiTitleSystemPrompt,
+          apiKey
+        );
+        if (!cancelled) {
+          setAiTitle(normalizeAiTitle(response) || fallback);
+          setToast("AI title generated");
+        }
+      } catch {
+        if (!cancelled) {
+          setAiTitle(fallback);
+          setToast("AI title unavailable; using fallback title");
+        }
+      } finally {
+        if (!cancelled) {
+          setAiTitleSourceKey(aiTitleRequestKey);
+          setIsGeneratingAiTitle(false);
+        }
+      }
+    }
+
+    void generateTranscriptAiTitle();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    aiTitleEnabled,
+    aiTitleRequestKey,
+    aiTitleSource,
+    aiTitleSourceKey,
+    aiTitleSystemPrompt,
+    settingsQuery.data
+  ]);
+
+  useEffect(() => {
+    if (!aiTitleDone) return;
     if (!aiTagsSource.key) {
       setAiTags("");
       setAiTagsSourceKey("");
       setIsGeneratingAiTags(false);
       return;
     }
-    if (aiTagsSourceKey === aiTagsSource.key) return;
+    if (aiTagsSourceKey === aiTagsRequestKey) return;
 
     let cancelled = false;
     setIsGeneratingAiTags(true);
     setAiTags("");
-    setAiTagsSourceKey(aiTagsSource.key);
 
     async function generateTranscriptAiTags() {
       try {
@@ -181,7 +288,10 @@ export function VToTextPage() {
           setToast(message);
         }
       } finally {
-        if (!cancelled) setIsGeneratingAiTags(false);
+        if (!cancelled) {
+          setAiTagsSourceKey(aiTagsRequestKey);
+          setIsGeneratingAiTags(false);
+        }
       }
     }
 
@@ -190,7 +300,7 @@ export function VToTextPage() {
     return () => {
       cancelled = true;
     };
-  }, [aiTagsSource, aiTagsSourceKey, llmApiKey, settingsQuery.data]);
+  }, [aiTagsRequestKey, aiTagsSource, aiTagsSourceKey, aiTitleDone, settingsQuery.data]);
 
   async function startUrlJob() {
     const url = sourceUrl.trim();
@@ -206,7 +316,15 @@ export function VToTextPage() {
       language: whisper.language || null,
       whisperEndpoint: whisper.remote_endpoint || null
     });
-    writePersistedVToTextState({ activeJobId: job.job_id, selectedRecordId: null, sourceUrl: url, aiTags, aiTagsSourceKey });
+    writePersistedVToTextState({
+      activeJobId: job.job_id,
+      selectedRecordId: null,
+      sourceUrl: url,
+      aiTitle,
+      aiTitleSourceKey,
+      aiTags,
+      aiTagsSourceKey
+    });
     setActiveJobId(job.job_id);
     setToast("URL job started");
   }
@@ -220,7 +338,15 @@ export function VToTextPage() {
       whisperEndpoint: whisper.remote_endpoint || null,
       onProgress: setUploadProgress
     });
-    writePersistedVToTextState({ activeJobId: job.job_id, selectedRecordId: null, sourceUrl: "", aiTags, aiTagsSourceKey });
+    writePersistedVToTextState({
+      activeJobId: job.job_id,
+      selectedRecordId: null,
+      sourceUrl: "",
+      aiTitle,
+      aiTitleSourceKey,
+      aiTags,
+      aiTagsSourceKey
+    });
     setActiveJobId(job.job_id);
     setToast("Upload complete; transcription queued");
   }
@@ -257,7 +383,7 @@ export function VToTextPage() {
             }}
           >
             <Box sx={{ alignContent: "center", minWidth: 0, overflowX: "auto", pb: 0.5 }}>
-              <WorkflowStepper activeStep={workflowStepIndex} />
+              <WorkflowStepper activeStep={workflowStepIndex} aiTitleEnabled={aiTitleEnabled} />
             </Box>
             <Box
               sx={{
@@ -362,15 +488,24 @@ export function VToTextPage() {
   );
 }
 
-function WorkflowStepper({ activeStep }: { activeStep: number }) {
+function WorkflowStepper({ activeStep, aiTitleEnabled }: { activeStep: number; aiTitleEnabled: boolean }) {
+  const steps = ["Source", "AI Transcribe", aiTitleEnabled ? "AI Title" : "Title", "AI Tags", "Ready"];
   return (
-    <Stepper activeStep={activeStep} alternativeLabel sx={compactStepperSx}>
-      {steps.map((step, index) => (
-        <Step key={step} completed={index < activeStep}>
-          <StepLabel>{step}</StepLabel>
-        </Step>
-      ))}
-    </Stepper>
+    <Stack spacing={0.5}>
+      <Typography
+        color="text.primary"
+        sx={{ fontSize: 13, fontWeight: 780, lineHeight: 1.25, textAlign: "center" }}
+      >
+        Voice to Text
+      </Typography>
+      <Stepper activeStep={activeStep} alternativeLabel sx={compactStepperSx}>
+        {steps.map((step, index) => (
+          <Step key={step} completed={index < activeStep}>
+            <StepLabel>{step}</StepLabel>
+          </Step>
+        ))}
+      </Stepper>
+    </Stack>
   );
 }
 
@@ -388,22 +523,29 @@ function ObsidianPreview({ draft }: { draft: ReturnType<typeof buildTranscriptOb
 function voiceWorkflowStepIndex({
   status,
   hasRecord,
+  hasTitleSource,
+  titleDone,
   hasTagSource,
   tagsDone,
   isSubmitting,
+  isGeneratingAiTitle,
   isGeneratingAiTags
 }: {
   status?: string;
   hasRecord: boolean;
+  hasTitleSource: boolean;
+  titleDone: boolean;
   hasTagSource: boolean;
   tagsDone: boolean;
   isSubmitting: boolean;
+  isGeneratingAiTitle: boolean;
   isGeneratingAiTags: boolean;
 }) {
   if (isSubmitting || status === "queued" || status === "downloading") return 0;
   if (status === "running") return 1;
-  if (isGeneratingAiTags || (hasRecord && hasTagSource && !tagsDone)) return 2;
-  if (status === "completed" || hasRecord) return 3;
+  if (isGeneratingAiTitle || (hasRecord && hasTitleSource && !titleDone)) return 2;
+  if (isGeneratingAiTags || (hasRecord && hasTagSource && !tagsDone)) return 3;
+  if (status === "completed" || hasRecord) return 4;
   return 0;
 }
 
@@ -422,16 +564,16 @@ function isTerminalStatus(status?: string) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
-function transcriptAiTagsSource(record?: TranscriptionRecord | null) {
+function transcriptAiSource(record?: TranscriptionRecord | null, titleOverride = "") {
   if (!record) return { key: "", title: "", content: "" };
   const content =
     record.article?.text?.trim() ||
     record.transcript?.text?.trim() ||
     (record.transcript?.segments || []).map((segment) => segment.text || "").join("\n").trim();
   if (!content) return { key: "", title: "", content: "" };
-  const title = record.article?.title || record.title || record.source?.name || "Untitled transcript";
+  const title = titleOverride || record.article?.title || record.title || record.source?.name || "Untitled transcript";
   return {
-    key: `${record.job_id || title}|${title}|${content.slice(0, 2000)}`,
+    key: `${record.job_id || record.title || "transcript"}|${content.slice(0, 2000)}`,
     title,
     content
   };
@@ -465,7 +607,15 @@ function normalizeAiTags(text = "") {
 }
 
 function readPersistedVToTextState(): PersistedVToTextState {
-  const fallback = { activeJobId: null, selectedRecordId: null, sourceUrl: "", aiTags: "", aiTagsSourceKey: "" };
+  const fallback: PersistedVToTextState = {
+    activeJobId: null,
+    selectedRecordId: null,
+    sourceUrl: "",
+    aiTitle: "",
+    aiTitleSourceKey: "",
+    aiTags: "",
+    aiTagsSourceKey: ""
+  };
   if (typeof window === "undefined") return fallback;
   try {
     const value = window.sessionStorage.getItem(V_TO_TEXT_STATE_KEY) || window.localStorage.getItem(V_TO_TEXT_STATE_KEY);
@@ -475,6 +625,8 @@ function readPersistedVToTextState(): PersistedVToTextState {
       activeJobId: typeof parsed.activeJobId === "string" && parsed.activeJobId ? parsed.activeJobId : null,
       selectedRecordId: typeof parsed.selectedRecordId === "string" && parsed.selectedRecordId ? parsed.selectedRecordId : null,
       sourceUrl: typeof parsed.sourceUrl === "string" ? parsed.sourceUrl : "",
+      aiTitle: typeof parsed.aiTitle === "string" ? parsed.aiTitle : "",
+      aiTitleSourceKey: typeof parsed.aiTitleSourceKey === "string" ? parsed.aiTitleSourceKey : "",
       aiTags: typeof parsed.aiTags === "string" ? parsed.aiTags : "",
       aiTagsSourceKey: typeof parsed.aiTagsSourceKey === "string" ? parsed.aiTagsSourceKey : ""
     };
