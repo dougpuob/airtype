@@ -26,10 +26,10 @@ import type { ThreadsChainResponse, WovenPost } from "../types/postWeaver";
 import { buildPostObsidianDraft, openObsidianDraft } from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
-const steps = ["Capturing", "Polishing", "Titled", "Done"];
+const steps = ["Capture", "Polish", "Title", "Tags", "Ready"];
 const CAPTURE_POST_STATE_KEY = "airtype:capture-post:state";
 
-type CaptureStep = "idle" | "capture" | "polish" | "title" | "obsidian" | "complete" | "error";
+type CaptureStep = "idle" | "capture" | "polish" | "title" | "tags" | "obsidian" | "complete" | "error";
 
 type PersistedCapturePostState = {
   postUrl: string;
@@ -57,7 +57,7 @@ export function CapturePostPage() {
   const settingsQuery = useSettingsQuery();
   const importPost = useImportPostMutation();
   const llmApiKey = useLlmApiKey();
-  const isWorking = importPost.isPending || ["capture", "polish", "title", "obsidian"].includes(step);
+  const isWorking = importPost.isPending || ["capture", "polish", "title", "tags", "obsidian"].includes(step);
   const activeProgress = captureProgress(step);
   const activeMessage = captureProgressMessage(step);
   const draft = useMemo(
@@ -139,6 +139,8 @@ export function CapturePostPage() {
       setStep("title");
       const title = await generateTitle(polished || source);
       setCapturedTitle(title || initialTitle);
+
+      setStep("tags");
       const generatedTags = await generateAiTags(polished || source, title || initialTitle);
       setAiTags(generatedTags);
 
@@ -233,14 +235,15 @@ export function CapturePostPage() {
               alignItems: "center",
               display: "grid",
               gap: { xs: 1.5, md: 3 },
-              gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) minmax(0, 1fr)" },
+              gridTemplateColumns: { xs: "1fr", md: "minmax(320px, 460px) minmax(260px, 380px)" },
+              justifyContent: "center",
               minWidth: 0
             }}
           >
             <Box sx={{ minWidth: 0, overflowX: "auto", pb: 0.5 }}>
               <WorkflowSteps step={step} />
             </Box>
-            <Stack spacing={1} sx={{ minWidth: 0 }}>
+            <Stack spacing={1} sx={{ width: "100%", maxWidth: 380, mx: "auto", minWidth: 0 }}>
               <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
                 <Typography variant="body2" color="text.secondary" fontWeight={700} noWrap>
                   {activeMessage}
@@ -351,8 +354,9 @@ function normalizeImportedPosts(payload: unknown, url: string, isThreads: boolea
 }
 
 function stepToIndex(step: CaptureStep) {
-  if (step === "complete") return 3;
-  if (step === "obsidian") return 3;
+  if (step === "complete") return 4;
+  if (step === "obsidian") return 4;
+  if (step === "tags") return 3;
   if (step === "title") return 2;
   if (step === "polish") return 1;
   return 0;
@@ -366,7 +370,8 @@ function isStepCompleted(index: number, step: CaptureStep) {
 function captureProgress(step: CaptureStep) {
   if (step === "complete") return 100;
   if (step === "obsidian") return 95;
-  if (step === "title") return 78;
+  if (step === "tags") return 86;
+  if (step === "title") return 72;
   if (step === "polish") return 50;
   if (step === "capture") return 22;
   return 0;
@@ -376,7 +381,8 @@ function captureProgressMessage(step: CaptureStep) {
   if (step === "complete") return "Post ready";
   if (step === "error") return "Capture failed";
   if (step === "obsidian") return "Opening Obsidian";
-  if (step === "title") return "Generating title and tags";
+  if (step === "tags") return "Generating tags";
+  if (step === "title") return "Generating title";
   if (step === "polish") return "Polishing captured text";
   if (step === "capture") return "Capturing post";
   return "Ready";
@@ -466,7 +472,7 @@ function readPersistedCapturePostState(): PersistedCapturePostState {
       capturedTitle: typeof parsed.capturedTitle === "string" ? parsed.capturedTitle : "",
       polishedContent: typeof parsed.polishedContent === "string" ? parsed.polishedContent : "",
       aiTags: typeof parsed.aiTags === "string" ? parsed.aiTags : "",
-      step: ["capture", "polish", "title", "obsidian"].includes(step) ? "idle" : step,
+      step: ["capture", "polish", "title", "tags", "obsidian"].includes(step) ? "idle" : step,
       error: typeof parsed.error === "string" ? parsed.error : ""
     };
   } catch {
@@ -486,7 +492,7 @@ function writePersistedCapturePostState(state: PersistedCapturePostState) {
 }
 
 function isPersistableCaptureStep(value: unknown): value is CaptureStep {
-  return ["idle", "capture", "polish", "title", "obsidian", "complete", "error"].includes(String(value));
+  return ["idle", "capture", "polish", "title", "tags", "obsidian", "complete", "error"].includes(String(value));
 }
 
 function isPersistedPost(value: unknown): value is WovenPost {
