@@ -493,8 +493,10 @@ function WorkflowStepper({ activeStep, aiTitleEnabled }: { activeStep: number; a
   return (
     <Stack spacing={0.5}>
       <Typography
+        variant="body2"
         color="text.primary"
-        sx={{ fontSize: 13, fontWeight: 780, lineHeight: 1.25, textAlign: "center" }}
+        fontWeight={700}
+        sx={{ textAlign: "center" }}
       >
         Voice to Text
       </Typography>
