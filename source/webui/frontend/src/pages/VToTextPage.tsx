@@ -33,7 +33,7 @@ import type { TranscriptionJob, TranscriptionRecord } from "../types/transcripti
 import { buildTranscriptObsidianDraft, openObsidianDraft } from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
-const steps = ["Downloading", "Transcribing", "Polishing", "Titled", "Done"];
+const steps = ["Source", "Transcribe", "AI Tags", "Ready"];
 const V_TO_TEXT_STATE_KEY = "airtype:v-to-text:state";
 
 type PersistedVToTextState = {
@@ -54,6 +54,7 @@ export function VToTextPage() {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [aiTags, setAiTags] = useState(restoredState.aiTags);
   const [aiTagsSourceKey, setAiTagsSourceKey] = useState(restoredState.aiTagsSourceKey);
+  const [isGeneratingAiTags, setIsGeneratingAiTags] = useState(false);
   const [toast, setToast] = useState("");
 
   const settingsQuery = useSettingsQuery();
@@ -68,11 +69,21 @@ export function VToTextPage() {
   const whisper = settingsQuery.data?.whisper || {};
   const activeJob = jobQuery.data;
   const selectedRecord = recordQuery.data;
-  const activeProgress = uploadProgress ?? activeJob?.progress ?? selectedRecord?.progress ?? 0;
-  const activeMessage = jobProgressMessage(activeJob) || selectedRecord?.message || (uploadProgress ? "Uploading media..." : "Ready");
   const isWorking = Boolean(activeJobId && !isTerminalStatus(selectedRecord?.status)) || createUrlJob.isPending || uploadJob.isPending;
   const obsidianDraft = useMemo(() => buildTranscriptObsidianDraft(selectedRecord, aiTags), [selectedRecord, aiTags]);
   const aiTagsSource = useMemo(() => transcriptAiTagsSource(selectedRecord), [selectedRecord]);
+  const workflowStepIndex = voiceWorkflowStepIndex({
+    status: activeJob?.status || selectedRecord?.status,
+    hasRecord: Boolean(selectedRecord),
+    hasTagSource: Boolean(aiTagsSource.key),
+    tagsDone: !aiTagsSource.key || (aiTagsSourceKey === aiTagsSource.key && !isGeneratingAiTags),
+    isSubmitting: uploadProgress !== null || createUrlJob.isPending || uploadJob.isPending,
+    isGeneratingAiTags
+  });
+  const activeProgress = isGeneratingAiTags ? Math.max(92, selectedRecord?.progress ?? 0) : uploadProgress ?? activeJob?.progress ?? selectedRecord?.progress ?? 0;
+  const activeMessage = isGeneratingAiTags
+    ? "Generating AI tags"
+    : jobProgressMessage(activeJob) || selectedRecord?.message || (uploadProgress ? "Uploading media..." : "Ready");
 
   useGuardedWork({
     id: "v-to-text",
@@ -140,11 +151,13 @@ export function VToTextPage() {
     if (!aiTagsSource.key) {
       setAiTags("");
       setAiTagsSourceKey("");
+      setIsGeneratingAiTags(false);
       return;
     }
     if (aiTagsSourceKey === aiTagsSource.key) return;
 
     let cancelled = false;
+    setIsGeneratingAiTags(true);
     setAiTags("");
     setAiTagsSourceKey(aiTagsSource.key);
 
@@ -167,6 +180,8 @@ export function VToTextPage() {
           const message = caught instanceof Error ? caught.message : "AI tags unavailable";
           setToast(message);
         }
+      } finally {
+        if (!cancelled) setIsGeneratingAiTags(false);
       }
     }
 
@@ -234,14 +249,15 @@ export function VToTextPage() {
               alignItems: "center",
               display: "grid",
               gap: { xs: 1.5, md: 3 },
-              gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) minmax(0, 1fr)" },
+              gridTemplateColumns: { xs: "1fr", md: "minmax(360px, 520px) minmax(280px, 420px)" },
+              justifyContent: "center",
               minWidth: 0
             }}
           >
             <Box sx={{ minWidth: 0, overflowX: "auto", pb: 0.5 }}>
-              <WorkflowStepper status={activeJob?.status || selectedRecord?.status} />
+              <WorkflowStepper activeStep={workflowStepIndex} />
             </Box>
-            <Stack spacing={1} sx={{ minWidth: 0 }}>
+            <Stack spacing={1} sx={{ width: "100%", maxWidth: 420, mx: "auto", minWidth: 0 }}>
               <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
                 <Typography variant="body2" color="text.secondary" fontWeight={700} noWrap>
                   {activeMessage}
@@ -334,11 +350,11 @@ export function VToTextPage() {
   );
 }
 
-function WorkflowStepper({ status }: { status?: string }) {
+function WorkflowStepper({ activeStep }: { activeStep: number }) {
   return (
-    <Stepper activeStep={statusToStepIndex(status)} alternativeLabel sx={compactStepperSx}>
-      {steps.map((step) => (
-        <Step key={step} completed={isStepCompleted(step, status)}>
+    <Stepper activeStep={activeStep} alternativeLabel sx={compactStepperSx}>
+      {steps.map((step, index) => (
+        <Step key={step} completed={index < activeStep}>
           <StepLabel>{step}</StepLabel>
         </Step>
       ))}
@@ -357,19 +373,26 @@ function ObsidianPreview({ draft }: { draft: ReturnType<typeof buildTranscriptOb
   );
 }
 
-function statusToStepIndex(status?: string) {
-  if (status === "completed") return 4;
+function voiceWorkflowStepIndex({
+  status,
+  hasRecord,
+  hasTagSource,
+  tagsDone,
+  isSubmitting,
+  isGeneratingAiTags
+}: {
+  status?: string;
+  hasRecord: boolean;
+  hasTagSource: boolean;
+  tagsDone: boolean;
+  isSubmitting: boolean;
+  isGeneratingAiTags: boolean;
+}) {
+  if (isSubmitting || status === "queued" || status === "downloading") return 0;
   if (status === "running") return 1;
-  if (status === "downloading") return 0;
-  if (status === "queued") return 0;
-  if (status === "failed" || status === "cancelled") return 0;
+  if (isGeneratingAiTags || (hasRecord && hasTagSource && !tagsDone)) return 2;
+  if (status === "completed" || hasRecord) return 3;
   return 0;
-}
-
-function isStepCompleted(step: string, status?: string) {
-  if (status === "completed") return true;
-  if (status === "running") return step === "Downloading";
-  return false;
 }
 
 function jobProgressMessage(job?: TranscriptionJob) {
