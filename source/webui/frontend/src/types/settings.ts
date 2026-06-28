@@ -32,6 +32,7 @@ export type AppSettings = {
     password?: string;
   };
   obsidian?: {
+    vault_name?: string;
     default_folder?: string;
   };
   llm_servers?: AppSettings["llm"][];

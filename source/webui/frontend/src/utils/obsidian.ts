@@ -93,9 +93,16 @@ export function buildTranscriptObsidianDraft(record?: TranscriptionRecord | null
   };
 }
 
-export function openObsidianDraft(draft: { noteTitle: string; note: string }, defaultFolder = "") {
-  const noteName = obsidianNotePath(defaultFolder, draft.noteTitle);
+type ObsidianOpenOptions = {
+  vaultName?: string;
+  defaultFolder?: string;
+};
+
+export function openObsidianDraft(draft: { noteTitle: string; note: string }, options: ObsidianOpenOptions = {}) {
+  const vaultName = String(options.vaultName || "").trim();
+  const noteName = obsidianNotePath(options.defaultFolder || "", draft.noteTitle);
   const query = [
+    ...(vaultName ? [["vault", vaultName]] : []),
     ["name", noteName],
     ["content", draft.note]
   ]

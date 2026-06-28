@@ -36,6 +36,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "cookies_from_browser": "",
     },
     "obsidian": {
+        "vault_name": "",
         "default_folder": "",
     },
     "auth": {
@@ -252,6 +253,11 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     obsidian = {**DEFAULT_APP_SETTINGS["obsidian"], **_dict_value(normalized.get("obsidian"))}
+    obsidian["vault_name"] = str(
+        obsidian.get("vault_name")
+        or obsidian.get("vault-name")
+        or ""
+    ).strip()
     obsidian["default_folder"] = str(
         obsidian.get("default_folder")
         or obsidian.get("default-folder")
@@ -312,6 +318,7 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
         f"cookies_from_browser = {_toml_string(ytdlp.get('cookies_from_browser', ''))}",
         "",
         "[webui.obsidian]",
+        f"vault_name = {_toml_string(obsidian.get('vault_name', ''))}",
         f"default_folder = {_toml_string(obsidian.get('default_folder', ''))}",
         "",
         "[webui.auth]",

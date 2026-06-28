@@ -149,6 +149,11 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "vault_name": {
+              "type": "string",
+              "default": "",
+              "description": "Optional Obsidian vault name used by Save to Obsidian URI links."
+            },
             "default_folder": {
               "type": "string",
               "default": "",

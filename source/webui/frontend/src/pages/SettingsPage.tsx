@@ -277,6 +277,13 @@ export function SettingsPage() {
                 <Divider />
                 <TextField
                   size="small"
+                  label="Obsidian vault name"
+                  placeholder="MyVault"
+                  value={draft?.obsidian?.vault_name || ""}
+                  onChange={(event) => updateSection("obsidian", { vault_name: event.target.value })}
+                />
+                <TextField
+                  size="small"
                   label="Obsidian default folder"
                   placeholder="Inbox/AirType"
                   value={draft?.obsidian?.default_folder || ""}
