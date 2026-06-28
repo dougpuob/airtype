@@ -94,7 +94,7 @@ export function SettingsPage() {
               <Stack spacing={1.5} sx={settingsPanelSx}>
                 <Typography variant="h3">Web UI Access</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  HTTP Basic authentication for the browser UI and API.
+                  Cookie-based login for the browser UI and API.
                 </Typography>
                 <Divider />
                 <FormControlLabel
@@ -118,6 +118,24 @@ export function SettingsPage() {
                   type="password"
                   value={draft?.auth?.password || ""}
                   onChange={(event) => updateSection("auth", { password: event.target.value })}
+                  helperText={
+                    draft?.auth?.password_configured
+                      ? "A password is configured. Leave this blank to keep it unchanged."
+                      : "Set the password required by the AirType login page."
+                  }
+                />
+                <TextField
+                  size="small"
+                  label="Stay signed in (days)"
+                  type="number"
+                  value={draft?.auth?.session_days ?? 14}
+                  onChange={(event) =>
+                    updateSection("auth", {
+                      session_days: Math.min(90, Math.max(1, Number(event.target.value) || 14))
+                    })
+                  }
+                  inputProps={{ min: 1, max: 90, step: 1 }}
+                  helperText="New login sessions expire after this many days (1–90)."
                 />
               </Stack>
             </WorkspacePanel>

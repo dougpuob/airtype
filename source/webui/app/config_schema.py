@@ -47,6 +47,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "enabled": False,
         "username": "airtype",
         "password": "",
+        "session_days": 14,
     },
 }
 DEFAULT_WEBUI_DATA_DIR = "~/.airtype/data"
@@ -285,6 +286,7 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     auth["enabled"] = bool(auth.get("enabled"))
     auth["username"] = str(auth.get("username") or "airtype")
     auth["password"] = str(auth.get("password") or "")
+    auth["session_days"] = _int_in_range(auth.get("session_days"), 14, minimum=1, maximum=90)
 
     return {
         "whisper": whisper,
@@ -348,6 +350,7 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
         f"enabled = {'true' if auth.get('enabled') else 'false'}",
         f"username = {_toml_string(auth.get('username', 'airtype'))}",
         f"password = {_toml_string(auth.get('password', ''))}",
+        f"session_days = {_toml_number(auth.get('session_days', 14), 14)}",
         "",
         "[[webui.llm-server]]",
         f'name = {_toml_string(llm.get("name", "default"))}',

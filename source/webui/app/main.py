@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Any, Callable, Dict, Optional
@@ -10,6 +10,9 @@ from pathlib import Path
 import functools
 import asyncio
 import base64
+import binascii
+import hashlib
+import hmac
 import html
 import os
 import re
@@ -77,6 +80,9 @@ WEBUI_DATA_DIR = read_webui_data_dir(CONFIG_PATH)
 RECORDS_DIR = os.path.join(WEBUI_DATA_DIR, "records")
 RECORD_ID_PATTERN = re.compile(r"\d{8}-\d{6}")
 IME_CORRECTION_SYSTEM_PROMPT = "你是一個很棒的語音輸入法錯誤校正器。下方是一個語音輸入的原始結果，修正錯誤最後的只需要回我修正誤的結果。"
+AUTH_SESSION_COOKIE = "airtype_session"
+AUTH_PASSWORD_SCHEME = "pbkdf2_sha256"
+AUTH_PASSWORD_ITERATIONS = 310_000
 
 
 def _webui_auth_settings() -> Dict[str, Any]:
@@ -90,10 +96,7 @@ def _webui_auth_enabled(auth: Dict[str, Any]) -> bool:
 
 
 def _unauthorized_response(request: Request) -> JSONResponse:
-    headers = {"WWW-Authenticate": 'Basic realm="AirType"'}
-    if request.url.path.startswith("/api/"):
-        return JSONResponse({"detail": "Authentication required"}, status_code=401, headers=headers)
-    return JSONResponse({"detail": "Authentication required"}, status_code=401, headers=headers)
+    return JSONResponse({"detail": "Authentication required"}, status_code=401)
 
 
 def _basic_auth_ok(authorization: str, auth: Dict[str, Any]) -> bool:
@@ -107,20 +110,155 @@ def _basic_auth_ok(authorization: str, auth: Dict[str, Any]) -> bool:
     username, separator, password = decoded.partition(":")
     if not separator:
         return False
-    return secrets.compare_digest(username, str(auth.get("username") or "")) and secrets.compare_digest(
+    return secrets.compare_digest(username, str(auth.get("username") or "")) and _verify_auth_password(
         password,
         str(auth.get("password") or ""),
     )
 
 
+def _hash_auth_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        AUTH_PASSWORD_ITERATIONS,
+    )
+    return "$".join(
+        [
+            AUTH_PASSWORD_SCHEME,
+            str(AUTH_PASSWORD_ITERATIONS),
+            _base64url_encode(salt),
+            _base64url_encode(digest),
+        ]
+    )
+
+
+def _verify_auth_password(password: str, stored_password: str) -> bool:
+    if not stored_password:
+        return False
+    if not stored_password.startswith(f"{AUTH_PASSWORD_SCHEME}$"):
+        return secrets.compare_digest(password, stored_password)
+    try:
+        _, iterations_text, salt_text, digest_text = stored_password.split("$", 3)
+        iterations = int(iterations_text)
+        salt = _base64url_decode(salt_text)
+        expected = _base64url_decode(digest_text)
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    except (TypeError, ValueError, binascii.Error):
+        return False
+    return hmac.compare_digest(actual, expected)
+
+
+def _base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _base64url_decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+@functools.lru_cache(maxsize=1)
+def _auth_session_secret() -> bytes:
+    secret_path = Path(WEBUI_DATA_DIR) / "auth-session.key"
+    secret_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        secret = secret_path.read_bytes()
+        if len(secret) >= 32:
+            return secret
+    except OSError:
+        pass
+
+    generated = secrets.token_bytes(32)
+    try:
+        descriptor = os.open(secret_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        for _ in range(5):
+            secret = secret_path.read_bytes()
+            if len(secret) >= 32:
+                return secret
+            time.sleep(0.01)
+        raise RuntimeError(f"Auth session key is invalid: {secret_path}")
+    with os.fdopen(descriptor, "wb") as secret_file:
+        secret_file.write(generated)
+    return generated
+
+
+def _auth_session_signature(payload: str, auth: Dict[str, Any]) -> str:
+    credential_binding = (
+        f"{str(auth.get('username') or '')}\0{str(auth.get('password') or '')}"
+    ).encode("utf-8")
+    digest = hmac.new(
+        _auth_session_secret(),
+        payload.encode("ascii") + b"." + credential_binding,
+        hashlib.sha256,
+    ).digest()
+    return _base64url_encode(digest)
+
+
+def _create_auth_session(auth: Dict[str, Any]) -> tuple[str, int]:
+    session_days = max(1, min(90, int(auth.get("session_days") or 14)))
+    max_age = session_days * 24 * 60 * 60
+    payload = _base64url_encode(
+        json.dumps(
+            {
+                "username": str(auth.get("username") or ""),
+                "expires_at": int(time.time()) + max_age,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    return f"{payload}.{_auth_session_signature(payload, auth)}", max_age
+
+
+def _auth_session_ok(token: str, auth: Dict[str, Any]) -> bool:
+    if not token or len(token) > 4096:
+        return False
+    payload, separator, signature = token.partition(".")
+    try:
+        signature_ok = separator and hmac.compare_digest(
+            signature,
+            _auth_session_signature(payload, auth),
+        )
+    except UnicodeEncodeError:
+        return False
+    if not signature_ok:
+        return False
+    try:
+        session = json.loads(_base64url_decode(payload).decode("utf-8"))
+        username = str(session.get("username") or "")
+        expires_at = int(session.get("expires_at") or 0)
+    except (TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error):
+        return False
+    return (
+        secrets.compare_digest(username, str(auth.get("username") or ""))
+        and expires_at > int(time.time())
+    )
+
+
+def _request_has_valid_auth(request: Request, auth: Dict[str, Any]) -> bool:
+    return _auth_session_ok(request.cookies.get(AUTH_SESSION_COOKIE, ""), auth) or _basic_auth_ok(
+        request.headers.get("authorization", ""),
+        auth,
+    )
+
+
+def _public_auth_path(path: str) -> bool:
+    return (
+        path in {"/", "/api/health", "/api/auth/status", "/api/auth/login", "/favicon.svg"}
+        or path == "/app"
+        or path.startswith("/app/")
+    )
+
+
 @app.middleware("http")
-async def require_webui_basic_auth(request: Request, call_next: Callable):
-    if request.method == "OPTIONS" or request.url.path == "/api/health":
+async def require_webui_auth(request: Request, call_next: Callable):
+    if request.method == "OPTIONS" or _public_auth_path(request.url.path):
         return await call_next(request)
     auth = _webui_auth_settings()
     if not _webui_auth_enabled(auth):
         return await call_next(request)
-    if _basic_auth_ok(request.headers.get("authorization", ""), auth):
+    if _request_has_valid_auth(request, auth):
         return await call_next(request)
     return _unauthorized_response(request)
 
@@ -282,9 +420,80 @@ class AppSettingsRequest(BaseModel):
     settings: Dict[str, Any]
 
 
+class AuthLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+def _auth_status_payload(request: Request, auth: Dict[str, Any]) -> Dict[str, Any]:
+    enabled = _webui_auth_enabled(auth)
+    return {
+        "enabled": enabled,
+        "authenticated": not enabled or _request_has_valid_auth(request, auth),
+        "username": str(auth.get("username") or ""),
+        "session_days": max(1, min(90, int(auth.get("session_days") or 14))),
+    }
+
+
+def _session_cookie_secure(request: Request) -> bool:
+    forwarded_protocol = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+    return request.url.scheme == "https" or forwarded_protocol == "https"
+
+
+@app.get("/api/auth/status")
+async def get_auth_status(request: Request):
+    return JSONResponse(
+        _auth_status_payload(request, _webui_auth_settings()),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/auth/login")
+async def login(request: Request, credentials: AuthLoginRequest):
+    auth = _webui_auth_settings()
+    if not _webui_auth_enabled(auth):
+        return _auth_status_payload(request, auth)
+
+    username_ok = secrets.compare_digest(credentials.username, str(auth.get("username") or ""))
+    password_ok = _verify_auth_password(credentials.password, str(auth.get("password") or ""))
+    if not username_ok or not password_ok:
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+
+    token, max_age = _create_auth_session(auth)
+    response = JSONResponse(
+        {
+            "enabled": True,
+            "authenticated": True,
+            "username": str(auth.get("username") or ""),
+            "session_days": int(auth.get("session_days") or 14),
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+    response.set_cookie(
+        key=AUTH_SESSION_COOKIE,
+        value=token,
+        max_age=max_age,
+        path="/",
+        secure=_session_cookie_secure(request),
+        httponly=True,
+        samesite="lax",
+    )
+    return response
+
+
+@app.post("/api/auth/logout")
+async def logout():
+    response = JSONResponse(
+        {"enabled": True, "authenticated": False},
+        headers={"Cache-Control": "no-store"},
+    )
+    response.delete_cookie(key=AUTH_SESSION_COOKIE, path="/", httponly=True, samesite="lax")
+    return response
 
 
 def _elapsed_ms(started_at: float) -> int:
@@ -299,15 +508,36 @@ def _print_timing(label: str, timing: Dict[str, Any]) -> None:
 @app.get("/api/settings")
 async def get_app_settings():
     return JSONResponse(
-        {"settings": _read_app_settings()},
+        {"settings": _public_app_settings(_read_app_settings())},
         headers={"Cache-Control": "no-store"},
     )
 
 
 @app.put("/api/settings")
 async def update_app_settings(request: AppSettingsRequest):
-    settings = _write_app_settings(_settings_request_to_nested(request.settings))
-    return {"settings": settings}
+    nested_settings = _settings_request_to_nested(request.settings)
+    auth = nested_settings.get("auth", {}) if isinstance(nested_settings.get("auth"), dict) else {}
+    if auth.get("enabled") and (
+        not str(auth.get("username") or "").strip()
+        or not str(auth.get("password") or "")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Set both a username and password before enabling Web UI authentication.",
+        )
+    settings = _write_app_settings(nested_settings)
+    return {"settings": _public_app_settings(settings)}
+
+
+def _public_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
+    public_settings = dict(settings)
+    auth = settings.get("auth", {}) if isinstance(settings.get("auth"), dict) else {}
+    public_settings["auth"] = {
+        **auth,
+        "password": "",
+        "password_configured": bool(str(auth.get("password") or "")),
+    }
+    return public_settings
 
 
 def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
@@ -388,7 +618,8 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
         "auth": {
             "enabled": bool(auth_input.get("enabled", current_auth.get("enabled", False))),
             "username": auth_input.get("username", current_auth.get("username", "airtype")),
-            "password": auth_input.get("password", current_auth.get("password", "")),
+            "password": auth_input.get("password") or current_auth.get("password", ""),
+            "session_days": auth_input.get("session_days", current_auth.get("session_days", 14)),
         },
         "llm_servers": incoming.get("llm_servers", []),
         "default_llm_server_name": incoming.get("default_llm_server_name") or llm_input.get("name", "default"),
@@ -1282,6 +1513,9 @@ def _write_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
             **{key: value for key, value in settings.items() if key in allowed},
         }
     )
+    auth_password = str(merged["auth"].get("password") or "")
+    if auth_password and not auth_password.startswith(f"{AUTH_PASSWORD_SCHEME}$"):
+        merged["auth"]["password"] = _hash_auth_password(auth_password)
     llm_servers = _normalized_llm_servers_from_settings(settings, merged["llm"])
     default_llm_server_name = str(settings.get("default_llm_server_name") or merged["llm"].get("name") or "default")
     selected = _select_llm_server(llm_servers, default_llm_server_name)
@@ -1393,6 +1627,7 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
     whisper = normalized["whisper"]
     ytdlp = normalized["ytdlp"]
     obsidian = normalized["obsidian"]
+    capture_post = normalized["capture_post"]
     auth = normalized["auth"]
     selected_llm = normalized["llm"]
     default_name = str(settings.get("default_llm_server_name") or selected_llm.get("name") or "default")
@@ -1419,10 +1654,15 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
         f"vault_name = {_toml_string(obsidian.get('vault_name', ''))}",
         f"default_folder = {_toml_string(obsidian.get('default_folder', ''))}",
         "",
+        "[webui.capture-post]",
+        f"ai_title_enabled = {'true' if capture_post.get('ai_title_enabled') else 'false'}",
+        f"title_system_prompt = {_toml_string(capture_post.get('title_system_prompt', ''))}",
+        "",
         "[webui.auth]",
         f"enabled = {'true' if auth.get('enabled') else 'false'}",
         f"username = {_toml_string(auth.get('username', 'airtype'))}",
         f"password = {_toml_string(auth.get('password', ''))}",
+        f"session_days = {auth.get('session_days', 14)}",
         "",
     ]
 
@@ -3298,11 +3538,7 @@ def _is_job_cancelled(job_id: str) -> bool:
 # Root endpoint
 @app.get("/")
 async def root():
-    return {
-        "name": "AirType API",
-        "version": "1.0.0",
-        "status": "running"
-    }
+    return RedirectResponse(url="/app/")
 
 
 @app.get("/favicon.svg")

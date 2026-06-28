@@ -38,10 +38,11 @@ move_lock = false
 data_dir = "~/.airtype/data"
 
 [webui.auth]
-# Require HTTP Basic authentication for the Web UI and API.
+# Require cookie-session authentication for the Web UI and API.
 enabled = false
 username = "airtype"
 password = ""
+session_days = 14
 
 [webui.whisper-server]
 model_dir = "~/.airtype/models"

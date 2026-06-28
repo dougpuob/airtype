@@ -25,6 +25,7 @@ export function useUpdateSettingsMutation() {
     onSuccess: (settings) => {
       queryClient.setQueryData(["settings"], settings);
       queryClient.invalidateQueries({ queryKey: ["settings"] });
+      queryClient.invalidateQueries({ queryKey: ["auth-status"] });
     }
   });
 }

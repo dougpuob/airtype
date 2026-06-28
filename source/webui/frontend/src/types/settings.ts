@@ -30,6 +30,8 @@ export type AppSettings = {
     enabled?: boolean;
     username?: string;
     password?: string;
+    password_configured?: boolean;
+    session_days?: number;
   };
   obsidian?: {
     vault_name?: string;
