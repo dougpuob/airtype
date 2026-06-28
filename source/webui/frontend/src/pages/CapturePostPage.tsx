@@ -58,6 +58,8 @@ export function CapturePostPage() {
   const importPost = useImportPostMutation();
   const llmApiKey = useLlmApiKey();
   const isWorking = importPost.isPending || ["capture", "polish", "title", "obsidian"].includes(step);
+  const activeProgress = captureProgress(step);
+  const activeMessage = captureProgressMessage(step);
   const draft = useMemo(
     () => buildPostObsidianDraft({ posts, capturedUrl, capturedTitle, polishedContent, aiTags }),
     [posts, capturedUrl, capturedTitle, polishedContent, aiTags]
@@ -226,8 +228,29 @@ export function CapturePostPage() {
     <PageScaffold>
       <WorkspacePanel>
         <Stack spacing={2.25} sx={{ minWidth: 0 }}>
-          <Box sx={{ minWidth: 0, overflowX: "auto", pb: 0.5 }}>
-            <WorkflowSteps step={step} />
+          <Box
+            sx={{
+              alignItems: "center",
+              display: "grid",
+              gap: { xs: 1.5, md: 3 },
+              gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) minmax(0, 1fr)" },
+              minWidth: 0
+            }}
+          >
+            <Box sx={{ minWidth: 0, overflowX: "auto", pb: 0.5 }}>
+              <WorkflowSteps step={step} />
+            </Box>
+            <Stack spacing={1} sx={{ minWidth: 0 }}>
+              <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+                <Typography variant="body2" color="text.secondary" fontWeight={700} noWrap>
+                  {activeMessage}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" fontWeight={700} sx={{ flexShrink: 0 }}>
+                  {activeProgress}%
+                </Typography>
+              </Stack>
+              <LinearProgress value={activeProgress} variant="determinate" />
+            </Stack>
           </Box>
           <Divider />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ minWidth: 0 }}>
@@ -251,7 +274,6 @@ export function CapturePostPage() {
               Capture
             </Button>
           </Stack>
-          {isWorking ? <LinearProgress /> : null}
           {error ? <Alert severity="error">{error}</Alert> : null}
         </Stack>
       </WorkspacePanel>
@@ -339,6 +361,25 @@ function stepToIndex(step: CaptureStep) {
 function isStepCompleted(index: number, step: CaptureStep) {
   if (step === "complete") return true;
   return index < stepToIndex(step);
+}
+
+function captureProgress(step: CaptureStep) {
+  if (step === "complete") return 100;
+  if (step === "obsidian") return 95;
+  if (step === "title") return 78;
+  if (step === "polish") return 50;
+  if (step === "capture") return 22;
+  return 0;
+}
+
+function captureProgressMessage(step: CaptureStep) {
+  if (step === "complete") return "Post ready";
+  if (step === "error") return "Capture failed";
+  if (step === "obsidian") return "Opening Obsidian";
+  if (step === "title") return "Generating title and tags";
+  if (step === "polish") return "Polishing captured text";
+  if (step === "capture") return "Capturing post";
+  return "Ready";
 }
 
 function uniquePostBlocks(text = "") {

@@ -4,28 +4,36 @@ import GraphicEqOutlinedIcon from "@mui/icons-material/GraphicEqOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import { Box, List, ListItemButton, ListItemIcon, ListItemText, Typography } from "@mui/material";
-import type { MouseEvent } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useWorkGuard } from "../../hooks/useWorkGuard";
 
-export const navItems = [
+type NavItem = {
+  label: string;
+  path: string;
+  icon: ReactNode;
+};
+
+export const navItems: NavItem[] = [
   { label: "Dashboard", path: "/", icon: <DashboardOutlinedIcon /> },
-  { label: "V to Text", path: "/v-to-text", icon: <GraphicEqOutlinedIcon /> },
+  { label: "Voice to Text", path: "/v-to-text", icon: <GraphicEqOutlinedIcon /> },
   { label: "Capture Post", path: "/capture-post", icon: <ArticleOutlinedIcon /> },
-  { label: "IME History", path: "/ime-history", icon: <HistoryOutlinedIcon /> },
-  { label: "Settings", path: "/settings", icon: <SettingsOutlinedIcon /> }
+  { label: "IME History", path: "/ime-history", icon: <HistoryOutlinedIcon /> }
 ];
+
+export const settingsNavItem: NavItem = { label: "Settings", path: "/settings", icon: <SettingsOutlinedIcon /> };
 
 type SidebarProps = {
   topBarHeight: number;
 };
 
 type NavigationListProps = {
+  items?: NavItem[];
   orientation?: "vertical" | "horizontal";
   onNavigate?: () => void;
 };
 
-export function NavigationList({ orientation = "vertical", onNavigate }: NavigationListProps) {
+export function NavigationList({ items = navItems, orientation = "vertical", onNavigate }: NavigationListProps) {
   const horizontal = orientation === "horizontal";
   const location = useLocation();
   const navigate = useNavigate();
@@ -56,7 +64,7 @@ export function NavigationList({ orientation = "vertical", onNavigate }: Navigat
         minWidth: horizontal ? "max-content" : 0
       }}
     >
-      {navItems.map((item) => (
+      {items.map((item) => (
         <ListItemButton
           key={item.path}
           component={NavLink}
@@ -140,9 +148,7 @@ export function Sidebar({ topBarHeight }: SidebarProps) {
       </Typography>
       <NavigationList />
       <Box sx={{ flex: 1 }} />
-      <Typography variant="caption" sx={{ color: "text.secondary", px: 1.5 }}>
-        Local workspace
-      </Typography>
+      <NavigationList items={[settingsNavItem]} />
       <Box sx={{ display: "none", height: topBarHeight * 0 }} />
     </Box>
   );

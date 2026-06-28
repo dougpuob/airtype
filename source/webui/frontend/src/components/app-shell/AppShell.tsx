@@ -1,7 +1,7 @@
 import { Box, Drawer, Typography } from "@mui/material";
 import type { PropsWithChildren } from "react";
 import { useState } from "react";
-import { NavigationList, Sidebar } from "./Sidebar";
+import { NavigationList, Sidebar, settingsNavItem } from "./Sidebar";
 import { TopAppBar } from "./TopAppBar";
 
 const sidebarWidth = 236;
@@ -49,9 +49,7 @@ export function AppShell({ children }: PropsWithChildren) {
         </Typography>
         <NavigationList onNavigate={() => setMobileNavOpen(false)} />
         <Box sx={{ flex: 1 }} />
-        <Typography variant="caption" sx={{ color: "text.secondary", px: 1.5, mt: 2 }}>
-          Local workspace
-        </Typography>
+        <NavigationList items={[settingsNavItem]} onNavigate={() => setMobileNavOpen(false)} />
       </Drawer>
       <Box
         component="main"
