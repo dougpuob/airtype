@@ -33,7 +33,7 @@ import type { TranscriptionJob, TranscriptionRecord } from "../types/transcripti
 import { buildTranscriptObsidianDraft, openObsidianDraft } from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
-const steps = ["Source", "Transcribe", "AI Tags", "Ready"];
+const steps = ["Source", "AI Transcribe", "AI Tags", "Ready"];
 const V_TO_TEXT_STATE_KEY = "airtype:v-to-text:state";
 
 type PersistedVToTextState = {

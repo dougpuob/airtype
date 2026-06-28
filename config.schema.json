@@ -161,6 +161,22 @@
             }
           }
         },
+        "capture-post": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ai_title_enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Use the configured LLM to generate a title for captured posts."
+            },
+            "title_system_prompt": {
+              "type": "string",
+              "default": "你是擅長提煉文章重點的繁體中文標題編輯。請根據使用者提供的文章產生一個約 30 個字的標題；不要使用冒號、不要提供多個選項、不要加入引號或解釋，只輸出標題。",
+              "description": "System prompt used when the LLM generates a Capture Post title."
+            }
+          }
+        },
         "default-llm-server-name": {
           "type": "string",
           "default": "llama.cpp",
