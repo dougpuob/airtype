@@ -19,7 +19,8 @@ export const compactStepperSx = {
     color: "text.secondary",
     fontSize: 13,
     fontWeight: 780,
-    lineHeight: 1.25
+    lineHeight: 1.25,
+    whiteSpace: "nowrap"
   },
   "& .MuiStepLabel-label.Mui-active, & .MuiStepLabel-label.Mui-completed": {
     color: "text.primary"
