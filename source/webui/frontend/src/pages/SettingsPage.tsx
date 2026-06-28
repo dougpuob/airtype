@@ -27,6 +27,22 @@ const languageOptions = [
 
 const providerOptions = ["llama.cpp", "ollama", "openai"];
 
+const settingsPanelSx = {
+  "& .MuiInputBase-input": {
+    fontSize: 13
+  },
+  "& .MuiInputLabel-root": {
+    fontSize: 13
+  },
+  "& .MuiFormControlLabel-label": {
+    fontSize: 13,
+    fontWeight: 700
+  },
+  "& .MuiAlert-message": {
+    fontSize: 13
+  }
+};
+
 export function SettingsPage() {
   const settingsQuery = useSettingsQuery();
   const updateSettings = useUpdateSettingsMutation();
@@ -75,9 +91,11 @@ export function SettingsPage() {
         <Grid container spacing={2}>
           <Grid size={{ xs: 12, lg: 6 }}>
             <WorkspacePanel>
-              <Stack spacing={1.5}>
+              <Stack spacing={1.5} sx={settingsPanelSx}>
                 <Typography variant="h3">Web UI Access</Typography>
-                <Typography color="text.secondary">HTTP Basic authentication for the browser UI and API.</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  HTTP Basic authentication for the browser UI and API.
+                </Typography>
                 <Divider />
                 <FormControlLabel
                   control={
@@ -107,9 +125,11 @@ export function SettingsPage() {
 
           <Grid size={{ xs: 12, lg: 6 }}>
             <WorkspacePanel>
-              <Stack spacing={1.5}>
+              <Stack spacing={1.5} sx={settingsPanelSx}>
                 <Typography variant="h3">Whisper Server</Typography>
-                <Typography color="text.secondary">Speech recognition model, server, and language defaults.</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Speech recognition model, server, and language defaults.
+                </Typography>
                 <Divider />
                 <TextField
                   select
@@ -160,9 +180,11 @@ export function SettingsPage() {
 
           <Grid size={{ xs: 12, lg: 6 }}>
             <WorkspacePanel>
-              <Stack spacing={1.5}>
+              <Stack spacing={1.5} sx={settingsPanelSx}>
                 <Typography variant="h3">Local LLM Model</Typography>
-                <Typography color="text.secondary">Default model used for transcript polishing, tags, and IME correction.</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Default model used for transcript polishing, tags, and IME correction.
+                </Typography>
                 <Divider />
                 <TextField
                   size="small"
@@ -247,9 +269,11 @@ export function SettingsPage() {
 
           <Grid size={{ xs: 12, lg: 6 }}>
             <WorkspacePanel>
-              <Stack spacing={1.5}>
+              <Stack spacing={1.5} sx={settingsPanelSx}>
                 <Typography variant="h3">Obsidian and Downloads</Typography>
-                <Typography color="text.secondary">Note export uses Obsidian URI links; media URL imports use yt-dlp.</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Note export uses Obsidian URI links; media URL imports use yt-dlp.
+                </Typography>
                 <Divider />
                 <TextField
                   size="small"

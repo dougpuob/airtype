@@ -1370,6 +1370,7 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
     normalized = normalize_app_settings(settings)
     whisper = normalized["whisper"]
     ytdlp = normalized["ytdlp"]
+    obsidian = normalized["obsidian"]
     auth = normalized["auth"]
     selected_llm = normalized["llm"]
     default_name = str(settings.get("default_llm_server_name") or selected_llm.get("name") or "default")
@@ -1391,6 +1392,9 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
         "[webui.yt-dlp]",
         f"cookies = {_toml_string(ytdlp.get('cookies', ''))}",
         f"cookies_from_browser = {_toml_string(ytdlp.get('cookies_from_browser', ''))}",
+        "",
+        "[webui.obsidian]",
+        f"default_folder = {_toml_string(obsidian.get('default_folder', ''))}",
         "",
         "[webui.auth]",
         f"enabled = {'true' if auth.get('enabled') else 'false'}",
@@ -1414,6 +1418,7 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
                 f"selected-model = {_toml_string(server.get('selected_model', server.get('model', '')))}",
                 f"contextLength = {server.get('contextLength', 8192)}",
                 f"temperature = {server.get('temperature', 0.4)}",
+                f"disable_thinking = {'true' if server.get('disable_thinking') else 'false'}",
                 f"system = {_toml_string(server.get('system', ''))}",
                 "",
             ]
