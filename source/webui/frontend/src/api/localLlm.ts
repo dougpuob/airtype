@@ -13,6 +13,7 @@ export async function chatWithLocalLlm(settings: AppSettings, prompt: string, sy
       api_key: apiKey ?? llm.api_key ?? "",
       temperature: llm.temperature ?? 0.4,
       context_length: llm.contextLength,
+      disable_thinking: Boolean(llm.disable_thinking),
       system,
       prompt
     })

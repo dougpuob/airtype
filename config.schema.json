@@ -133,10 +133,26 @@
               "selected-model": { "type": "string", "default": "gemma-4-e2b" },
               "contextLength": { "type": "integer", "minimum": 1, "default": 8192 },
               "temperature": { "type": "number", "minimum": 0, "maximum": 2, "default": 0.4 },
+              "disable_thinking": {
+                "type": "boolean",
+                "default": false,
+                "description": "Disable model thinking/reasoning output for faster local LLM responses when supported."
+              },
               "system": {
                 "type": "string",
                 "default": "No explanations or detailed listings are needed; simply organize the verbatim transcript, including correcting typos, polishing sentences, and stringing the transcript together into an article."
               }
+            }
+          }
+        },
+        "obsidian": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "default_folder": {
+              "type": "string",
+              "default": "",
+              "description": "Optional default folder/path inside the Obsidian vault for Save to Obsidian notes."
             }
           }
         },
