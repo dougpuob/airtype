@@ -270,6 +270,41 @@ export function SettingsPage() {
           <Grid size={{ xs: 12, lg: 6 }}>
             <WorkspacePanel>
               <Stack spacing={1.5} sx={settingsPanelSx}>
+                <Typography variant="h3">Capture Post</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Configure whether the LLM generates note titles and how it should write them.
+                </Typography>
+                <Divider />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={draft?.capture_post?.ai_title_enabled ?? true}
+                      onChange={(event) =>
+                        updateSection("capture_post", { ai_title_enabled: event.target.checked })
+                      }
+                    />
+                  }
+                  label="Generate titles with AI"
+                />
+                <TextField
+                  size="small"
+                  label="Title system prompt"
+                  multiline
+                  minRows={5}
+                  disabled={draft?.capture_post?.ai_title_enabled === false}
+                  value={draft?.capture_post?.title_system_prompt || ""}
+                  onChange={(event) =>
+                    updateSection("capture_post", { title_system_prompt: event.target.value })
+                  }
+                  helperText="Sent as the system prompt when Capture Post asks the selected LLM to generate a title."
+                />
+              </Stack>
+            </WorkspacePanel>
+          </Grid>
+
+          <Grid size={{ xs: 12, lg: 6 }}>
+            <WorkspacePanel>
+              <Stack spacing={1.5} sx={settingsPanelSx}>
                 <Typography variant="h3">Obsidian and Downloads</Typography>
                 <Typography variant="body2" color="text.secondary">
                   Note export uses Obsidian URI links; media URL imports use yt-dlp.

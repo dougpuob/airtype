@@ -35,6 +35,10 @@ export type AppSettings = {
     vault_name?: string;
     default_folder?: string;
   };
+  capture_post?: {
+    ai_title_enabled?: boolean;
+    title_system_prompt?: string;
+  };
   llm_servers?: AppSettings["llm"][];
   default_llm_server_name?: string;
 };

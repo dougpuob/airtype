@@ -315,6 +315,7 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     llm_input = incoming.get("llm", {}) if isinstance(incoming.get("llm"), dict) else {}
     ytdlp_input = incoming.get("ytdlp", {}) if isinstance(incoming.get("ytdlp"), dict) else {}
     obsidian_input = incoming.get("obsidian", {}) if isinstance(incoming.get("obsidian"), dict) else {}
+    capture_post_input = incoming.get("capture_post", {}) if isinstance(incoming.get("capture_post"), dict) else {}
     auth_input = incoming.get("auth", {}) if isinstance(incoming.get("auth"), dict) else {}
     current_settings = _read_backend_config_settings()
     current_whisper = current_settings.get("whisper", {})
@@ -323,6 +324,8 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     current_ytdlp = current_ytdlp if isinstance(current_ytdlp, dict) else {}
     current_obsidian = current_settings.get("obsidian", {})
     current_obsidian = current_obsidian if isinstance(current_obsidian, dict) else {}
+    current_capture_post = current_settings.get("capture_post", {})
+    current_capture_post = current_capture_post if isinstance(current_capture_post, dict) else {}
     current_auth = current_settings.get("auth", {})
     current_auth = current_auth if isinstance(current_auth, dict) else {}
     model_dir, model_filename = _split_whisper_model_settings(whisper_input)
@@ -365,6 +368,21 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
             "default_folder": obsidian_input.get(
                 "default_folder",
                 obsidian_input.get("default-folder", current_obsidian.get("default_folder", "")),
+            ),
+        },
+        "capture_post": {
+            "ai_title_enabled": bool(
+                capture_post_input.get(
+                    "ai_title_enabled",
+                    current_capture_post.get("ai_title_enabled", True),
+                )
+            ),
+            "title_system_prompt": capture_post_input.get(
+                "title_system_prompt",
+                current_capture_post.get(
+                    "title_system_prompt",
+                    DEFAULT_APP_SETTINGS["capture_post"]["title_system_prompt"],
+                ),
             ),
         },
         "auth": {

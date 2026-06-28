@@ -39,6 +39,10 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "vault_name": "",
         "default_folder": "",
     },
+    "capture_post": {
+        "ai_title_enabled": True,
+        "title_system_prompt": "你是擅長提煉文章重點的繁體中文標題編輯。請根據使用者提供的文章產生一個約 30 個字的標題；不要使用冒號、不要提供多個選項、不要加入引號或解釋，只輸出標題。",
+    },
     "auth": {
         "enabled": False,
         "username": "airtype",
@@ -53,6 +57,7 @@ WEBUI_SECTION_ALIASES = {
     "llm": ("llm-server",),
     "ytdlp": ("yt-dlp", "ytdlp"),
     "obsidian": ("obsidian",),
+    "capture_post": ("capture-post", "capture_post"),
     "auth": ("auth",),
 }
 
@@ -264,6 +269,18 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         or ""
     ).strip().strip("/")
 
+    capture_post_input = _dict_value(normalized.get("capture_post"))
+    capture_post = {
+        **DEFAULT_APP_SETTINGS["capture_post"],
+        **capture_post_input,
+    }
+    if "ai_title_enabled" not in capture_post_input and "ai-title-enabled" in capture_post_input:
+        capture_post["ai_title_enabled"] = capture_post_input["ai-title-enabled"]
+    if "title_system_prompt" not in capture_post_input and "title-system-prompt" in capture_post_input:
+        capture_post["title_system_prompt"] = capture_post_input["title-system-prompt"]
+    capture_post["ai_title_enabled"] = bool(capture_post.get("ai_title_enabled"))
+    capture_post["title_system_prompt"] = str(capture_post.get("title_system_prompt") or "")
+
     auth = {**DEFAULT_APP_SETTINGS["auth"], **_dict_value(normalized.get("auth"))}
     auth["enabled"] = bool(auth.get("enabled"))
     auth["username"] = str(auth.get("username") or "airtype")
@@ -274,6 +291,7 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         "llm": llm,
         "ytdlp": ytdlp,
         "obsidian": obsidian,
+        "capture_post": capture_post,
         "auth": auth,
     }
 
@@ -282,7 +300,7 @@ def remove_webui_sections(text: str) -> str:
     import re
 
     pattern = re.compile(
-        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:auth|whisper-server|llm-server|yt-dlp|ytdlp|obsidian)\]{1,2})\n.*?(?=^\[|\Z)"
+        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:auth|whisper-server|llm-server|yt-dlp|ytdlp|obsidian|capture-post|capture_post)\]{1,2})\n.*?(?=^\[|\Z)"
     )
     text = pattern.sub("", text)
     header_pattern = re.compile(
@@ -297,6 +315,7 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
     llm = normalized["llm"]
     ytdlp = normalized["ytdlp"]
     obsidian = normalized["obsidian"]
+    capture_post = normalized["capture_post"]
     auth = normalized["auth"]
     lines = [
         "#===============================================================================",
@@ -320,6 +339,10 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
         "[webui.obsidian]",
         f"vault_name = {_toml_string(obsidian.get('vault_name', ''))}",
         f"default_folder = {_toml_string(obsidian.get('default_folder', ''))}",
+        "",
+        "[webui.capture-post]",
+        f"ai_title_enabled = {'true' if capture_post.get('ai_title_enabled') else 'false'}",
+        f"title_system_prompt = {_toml_string(capture_post.get('title_system_prompt', ''))}",
         "",
         "[webui.auth]",
         f"enabled = {'true' if auth.get('enabled') else 'false'}",
@@ -399,7 +422,16 @@ def _float_in_range(
 
 def _toml_string(value: Any) -> str:
     text = str(value or "")
-    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    escaped = (
+        text.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\b", "\\b")
+        .replace("\t", "\\t")
+        .replace("\n", "\\n")
+        .replace("\f", "\\f")
+        .replace("\r", "\\r")
+    )
+    return '"' + escaped + '"'
 
 
 def _toml_string_array(value: Any) -> str:
