@@ -252,7 +252,7 @@ export function VToTextPage() {
               alignItems: "stretch",
               display: "grid",
               gap: { xs: 1.5, md: 2.5 },
-              gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) minmax(0, 1fr)" },
+              gridTemplateColumns: { xs: "1fr", md: "minmax(0, 3fr) minmax(0, 7fr)" },
               minWidth: 0
             }}
           >
