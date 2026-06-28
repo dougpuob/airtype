@@ -276,7 +276,7 @@ export function VToTextPage() {
                 </Stack>
                 <LinearProgress value={Math.min(100, activeProgress)} variant="determinate" />
               </Stack>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ gridRow: { sm: "1 / span 2" }, minWidth: 0 }}>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignSelf: "end", minWidth: 0 }}>
                 <Button
                   variant="contained"
                   color={isWorking ? "error" : "primary"}
@@ -309,7 +309,7 @@ export function VToTextPage() {
               <TextField
                 fullWidth
                 size="small"
-                sx={{ "& .MuiOutlinedInput-root": { height: 40 } }}
+                sx={{ gridColumn: { sm: "1 / -1" }, "& .MuiOutlinedInput-root": { height: 40 } }}
                 value={sourceUrl}
                 onChange={(event) => setSourceUrl(event.target.value)}
                 placeholder="Paste media URL, YouTube, Bilibili, Shorts, Instagram, Threads, or a direct file link"
