@@ -22,6 +22,8 @@ remote_endpoint = ""
 selected_device_name = "Jabra Speak2 55 MS"
 # Microphone Mode. Options: "on_demand", "always"
 mode = "on_demand"
+# Release an Always On microphone after this many idle minutes. Use 0 to disable the timeout.
+always_on_timeout_minutes = 10
 pre_roll_seconds = 2
 
 [localapp.floating-dialog]

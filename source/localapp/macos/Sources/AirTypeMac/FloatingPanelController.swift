@@ -52,6 +52,12 @@ final class FloatingPanelController {
         model.setLevel(level)
     }
 
+    func applyConfig() {
+        if panel.isVisible {
+            positionPanel()
+        }
+    }
+
     private func makePanel() -> NSPanel {
         let rootView = FloatingPanelView(model: model)
             .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -173,6 +173,12 @@ final class AudioRecorder: @unchecked Sendable {
         return devices.contains { $0.localizedName == activeMicrophoneDeviceName }
     }
 
+    func isPreparedForInput() -> Bool {
+        audioLock.lock()
+        defer { audioLock.unlock() }
+        return prepared
+    }
+
     private func selectedInputDevice(microphoneDeviceName: String) -> AVCaptureDevice? {
         guard !microphoneDeviceName.isEmpty else { return nil }
         let devices = Self.inputDevices()

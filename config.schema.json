@@ -31,6 +31,13 @@
           "properties": {
             "selected_device_name": { "type": "string", "default": "" },
             "mode": { "type": "string", "enum": ["on_demand", "always"], "default": "on_demand" },
+            "always_on_timeout_minutes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 480,
+              "default": 10,
+              "description": "Release an Always On microphone after this many idle minutes. Use 0 to keep it on indefinitely."
+            },
             "pre_roll_seconds": { "type": "number", "minimum": 0, "maximum": 5, "default": 2 }
           }
         },
