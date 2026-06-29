@@ -16,7 +16,9 @@ Run these commands from the project root.
 - menu bar app
 - Chinese mode menu: `zh-tw`, `zh-cn`
 - microphone device menu with persisted device name
-- microphone mode menu: `on_demand`, `always`
+- microphone mode menu: `Always On`, `On Demand`
+- optional `always_on_timeout_minutes` setting (`0` keeps Always On active indefinitely; a positive value releases it after that many idle minutes and appears in the menu label)
+- `Reload Config` menu action for applying config file changes without restarting the app
 - move lock
 - floating recording dialog
 - desktop-ratio dialog position persisted to `~/.airtype/config.toml`

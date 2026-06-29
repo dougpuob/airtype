@@ -23,6 +23,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     private weak var microphoneDeviceMenu: NSMenu?
     private var hotkeyMonitor: HotkeyMonitor?
     private var floatingPanel: FloatingPanelController?
+    private var timedMicrophoneReleaseTimer: Timer?
     private var targetApp: RunningAppIdentity?
     private var nextInputID = 1
     private var activeInputID: Int?
@@ -54,6 +55,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         setupStatusItem()
         setupFloatingPanel()
         refreshMicrophoneAvailability()
+        scheduleTimedMicrophoneRelease(reason: "startup")
         setupHotkey()
     }
 
@@ -69,6 +71,8 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     func stop() {
+        timedMicrophoneReleaseTimer?.invalidate()
+        timedMicrophoneReleaseTimer = nil
         hotkeyMonitor?.stop()
         audioRecorder.stop()
         backendProcessManager.stop()
@@ -126,9 +130,11 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
 
     private func applyMicrophoneRuntimeSettings(reason: String) {
         let config = configStore.config
+        cancelTimedMicrophoneRelease()
         Logger.shared.log(
             "Applying microphone settings: reason=\(reason), mode=\(config.microphone.mode), "
             + "selected_device_name=\(config.microphone.selectedDeviceName.isEmpty ? "default" : config.microphone.selectedDeviceName), "
+            + "always_on_timeout_minutes=\(config.microphone.alwaysOnTimeoutMinutes), "
             + "pre_roll_seconds=\(config.microphone.preRollSeconds)"
         )
 
@@ -142,6 +148,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                 stopRecording()
             } else {
                 Logger.shared.log("Recording is active while microphone settings changed; continuing recording (device still available)")
+                return
             }
         }
 
@@ -152,6 +159,47 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                 preRollSeconds: config.microphone.preRollSeconds
             )
         }
+        scheduleTimedMicrophoneRelease(reason: reason)
+    }
+
+    private func cancelTimedMicrophoneRelease() {
+        timedMicrophoneReleaseTimer?.invalidate()
+        timedMicrophoneReleaseTimer = nil
+    }
+
+    private func scheduleTimedMicrophoneRelease(reason: String) {
+        cancelTimedMicrophoneRelease()
+        let timeoutMinutes = configStore.config.microphone.alwaysOnTimeoutMinutes
+        guard configStore.config.microphone.mode == "always", timeoutMinutes > 0 else { return }
+        guard recordingState == .idle else { return }
+        guard audioRecorder.isPreparedForInput() else { return }
+        let timeoutInterval = TimeInterval(timeoutMinutes * 60)
+
+        let timer = Timer(timeInterval: timeoutInterval, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.releaseTimedMicrophoneIfIdle()
+            }
+        }
+        timedMicrophoneReleaseTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+        Logger.shared.log(
+            "Scheduled Always On microphone release: reason=\(reason), "
+            + "timeout_minutes=\(timeoutMinutes)"
+        )
+    }
+
+    private func releaseTimedMicrophoneIfIdle() {
+        timedMicrophoneReleaseTimer = nil
+        let timeoutMinutes = configStore.config.microphone.alwaysOnTimeoutMinutes
+        guard configStore.config.microphone.mode == "always", timeoutMinutes > 0 else { return }
+        guard recordingState == .idle else {
+            scheduleTimedMicrophoneRelease(reason: "recording_active_at_timeout")
+            return
+        }
+        audioRecorder.stop()
+        Logger.shared.log(
+            "Released Always On microphone after \(timeoutMinutes) minutes of inactivity"
+        )
     }
 
     private func microphoneAvailabilityIssue(devices: [AVCaptureDevice]) -> String? {
@@ -206,6 +254,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     private func startRecording() {
+        cancelTimedMicrophoneRelease()
         let inputID = nextInputID
         nextInputID += 1
         activeInputID = inputID
@@ -219,9 +268,14 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         floatingPanel?.showPreparing()
 
         let config = configStore.config
-        let warmupDelay: TimeInterval = config.microphone.mode == "always" ? 0 : 0.7
-        if config.microphone.mode == "on_demand" {
-            Logger.shared.log("Input #\(inputID): on-demand microphone warmup requested: delay_ms=\(Int(warmupDelay * 1000))")
+        let requiresWarmup = config.microphone.mode == "on_demand"
+            || !audioRecorder.isPreparedForInput()
+        let warmupDelay: TimeInterval = requiresWarmup ? 0.7 : 0
+        if requiresWarmup {
+            Logger.shared.log(
+                "Input #\(inputID): microphone warmup requested: "
+                + "mode=\(config.microphone.mode), delay_ms=\(Int(warmupDelay * 1000))"
+            )
             DispatchQueue.global(qos: .userInitiated).async { [audioRecorder] in
                 audioRecorder.prepare(
                     microphoneDeviceName: config.microphone.selectedDeviceName,
@@ -232,7 +286,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                         audioRecorder.stop()
                         return
                     }
-                    Logger.shared.log("Input #\(inputID): on-demand microphone warmup ready")
+                    Logger.shared.log("Input #\(inputID): microphone warmup ready")
                     DispatchQueue.main.asyncAfter(deadline: .now() + warmupDelay) { [weak self] in
                         self?.beginRecordingIfStillPreparing(inputID: inputID)
                     }
@@ -286,6 +340,9 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         Logger.shared.log("\(inputLogPrefix(inputID))second hotkey double-press received; recording stop requested")
         let wasRecording = recordingState == .recording
         recordingState = .idle
+        defer {
+            scheduleTimedMicrophoneRelease(reason: "recording_stopped")
+        }
         statusItem?.button?.image = StatusIcon.make(recording: false)
         floatingPanel?.hide()
 
@@ -360,6 +417,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         let inputStartedAt = activeInputStartedAt
         Logger.shared.log(wasRecording ? "\(inputLogPrefix(inputID))recording cancelled by Escape; ASR skipped" : "\(inputLogPrefix(inputID))recording warmup cancelled by Escape")
         finishInput(inputID, startedAt: inputStartedAt, result: "CANCELLED", details: "reason=escape")
+        scheduleTimedMicrophoneRelease(reason: "recording_cancelled")
     }
 
     private func inputLogPrefix(_ inputID: Int?) -> String {
@@ -407,8 +465,12 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         menu.addItem(microphoneItem)
 
         let microphoneModeMenu = NSMenu()
+        let timeoutMinutes = configStore.config.microphone.alwaysOnTimeoutMinutes
+        let alwaysOnTitle = timeoutMinutes > 0
+            ? "Always On (\(timeoutMinutes) min)"
+            : "Always On"
+        addMicrophoneModeItem(to: microphoneModeMenu, title: alwaysOnTitle, mode: "always")
         addMicrophoneModeItem(to: microphoneModeMenu, title: "On Demand", mode: "on_demand")
-        addMicrophoneModeItem(to: microphoneModeMenu, title: "Always Warm", mode: "always")
         let microphoneModeItem = NSMenuItem(title: "Microphone Mode", action: nil, keyEquivalent: "")
         microphoneModeItem.submenu = microphoneModeMenu
         menu.addItem(microphoneModeItem)
@@ -416,6 +478,14 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         // The LLM Server menu is only relevant for the web UI and is not needed in the local app.
         // It has been removed to simplify the local menu.
 
+        menu.addItem(.separator())
+        let reloadConfigItem = NSMenuItem(
+            title: "Reload Config",
+            action: #selector(reloadConfig),
+            keyEquivalent: ""
+        )
+        reloadConfigItem.target = self
+        menu.addItem(reloadConfigItem)
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
@@ -603,6 +673,37 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         configStore.updateMicrophoneMode(mode)
         applyMicrophoneRuntimeSettings(reason: "menu_microphone_mode")
         rebuildMenu()
+    }
+
+    @objc private func reloadConfig() {
+        let previousBackendMode = configStore.config.backend.mode
+        let previousBackendEndpoint = configStore.config.backend.selectedEndpoint
+
+        do {
+            try configStore.load()
+            migrateLegacyMicrophoneSelection()
+
+            let backendChanged = previousBackendMode != configStore.config.backend.mode
+                || previousBackendEndpoint != configStore.config.backend.selectedEndpoint
+            if backendChanged {
+                backendProcessManager.stop()
+            }
+            backendProcessManager.startIfNeeded(
+                config: configStore.config,
+                projectRoot: configStore.projectRoot
+            )
+
+            applyMicrophoneRuntimeSettings(reason: "reload_config")
+            floatingPanel?.applyConfig()
+            rebuildMenu()
+            Logger.shared.log(
+                "Reloaded the complete config and reapplied runtime settings: "
+                + "backend_changed=\(backendChanged)"
+            )
+        } catch {
+            Logger.shared.log("Could not reload config: \(error.localizedDescription)")
+            NSSound.beep()
+        }
     }
 
     @objc private func selectLLMServer(_ sender: NSMenuItem) {

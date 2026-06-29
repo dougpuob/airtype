@@ -28,6 +28,7 @@ struct BackendConfig {
 struct MicrophoneConfig {
     var selectedDeviceName = ""
     var mode = "on_demand"
+    var alwaysOnTimeoutMinutes = 10
     var preRollSeconds = 2.0
 }
 
@@ -145,6 +146,7 @@ final class ConfigStore: ObservableObject {
         Logger.shared.log(
             "Config localapp.microphone: mode=\(config.microphone.mode), "
             + "selected_device_name=\(config.microphone.selectedDeviceName.isEmpty ? "default" : config.microphone.selectedDeviceName), "
+            + "always_on_timeout_minutes=\(config.microphone.alwaysOnTimeoutMinutes), "
             + "pre_roll_seconds=\(config.microphone.preRollSeconds)"
         )
         Logger.shared.log(
@@ -665,6 +667,10 @@ final class ConfigStore: ObservableObject {
                 stringField("localapp.microphone", "mode", comment: #"Microphone Mode. Options: "on_demand", "always""#,
                             apply: { $0.microphone.mode = normalizeMicrophoneMode($1) },
                             render: { $0.microphone.mode }),
+                intField("localapp.microphone", "always_on_timeout_minutes",
+                         comment: "Release an Always On microphone after this many idle minutes. Use 0 to disable the timeout.",
+                         apply: { $0.microphone.alwaysOnTimeoutMinutes = clamp(parseInt($1, defaultValue: 10), minimum: 0, maximum: 480) },
+                         render: { String($0.microphone.alwaysOnTimeoutMinutes) }),
                 numberField("localapp.microphone", "pre_roll_seconds",
                             apply: { $0.microphone.preRollSeconds = clamp(parseDouble($1, defaultValue: 2.0), minimum: 0.0, maximum: 5.0) },
                             render: { format($0.microphone.preRollSeconds) })
