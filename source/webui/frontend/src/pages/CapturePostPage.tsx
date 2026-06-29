@@ -330,13 +330,16 @@ export function CapturePostPage() {
 function WorkflowSteps({ step, aiTitleEnabled }: { step: CaptureStep; aiTitleEnabled: boolean }) {
   const steps = ["Capture", "AI Polish", aiTitleEnabled ? "AI Title" : "Title", "AI Tags", "Ready"];
   return (
-    <Stack spacing={0.5}>
+    <Stack spacing={1}>
       <Typography
+        variant="body2"
         color="text.primary"
-        sx={{ fontSize: 13, fontWeight: 780, lineHeight: 1.25, textAlign: "center" }}
+        fontWeight={700}
+        sx={{ textAlign: "center" }}
       >
         Capture Post
       </Typography>
+      <LinearProgress aria-hidden value={0} variant="determinate" />
       <Stepper activeStep={stepToIndex(step)} alternativeLabel sx={compactStepperSx}>
         {steps.map((label, index) => (
           <Step key={label} completed={isStepCompleted(index, step)}>

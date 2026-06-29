@@ -491,7 +491,7 @@ export function VToTextPage() {
 function WorkflowStepper({ activeStep, aiTitleEnabled }: { activeStep: number; aiTitleEnabled: boolean }) {
   const steps = ["Source", "AI Transcribe", aiTitleEnabled ? "AI Title" : "Title", "AI Tags", "Ready"];
   return (
-    <Stack spacing={1.5}>
+    <Stack spacing={1}>
       <Typography
         variant="body2"
         color="text.primary"
@@ -500,6 +500,7 @@ function WorkflowStepper({ activeStep, aiTitleEnabled }: { activeStep: number; a
       >
         Voice to Text
       </Typography>
+      <LinearProgress aria-hidden value={0} variant="determinate" />
       <Stepper activeStep={activeStep} alternativeLabel sx={compactStepperSx}>
         {steps.map((step, index) => (
           <Step key={step} completed={index < activeStep}>
