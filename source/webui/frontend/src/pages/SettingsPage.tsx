@@ -57,9 +57,7 @@ export function SettingsPage() {
   useEffect(() => {
     if (settingsQuery.data) {
       setDraft(settingsQuery.data);
-      setBrowserVaultName(
-        browserObsidianVaultName() ?? settingsQuery.data.obsidian?.vault_name ?? ""
-      );
+      setBrowserVaultName(browserObsidianVaultName() ?? "");
     }
   }, [settingsQuery.data]);
 

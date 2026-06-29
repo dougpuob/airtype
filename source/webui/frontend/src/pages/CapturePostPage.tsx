@@ -229,7 +229,7 @@ export function CapturePostPage() {
       return;
     }
     openObsidianDraft(draft, {
-      vaultName: effectiveObsidianVaultName(settingsQuery.data?.obsidian?.vault_name),
+      vaultName: effectiveObsidianVaultName(),
       defaultFolder: settingsQuery.data?.obsidian?.default_folder
     });
     setToast("Opening Obsidian to create the note");

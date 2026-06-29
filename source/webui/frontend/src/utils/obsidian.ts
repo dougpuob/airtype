@@ -122,8 +122,8 @@ export function saveBrowserObsidianVaultName(vaultName: string) {
   }
 }
 
-export function effectiveObsidianVaultName(serverDefault?: string) {
-  return browserObsidianVaultName() ?? String(serverDefault || "").trim();
+export function effectiveObsidianVaultName() {
+  return browserObsidianVaultName() ?? "";
 }
 
 export function openObsidianDraft(draft: { noteTitle: string; note: string }, options: ObsidianOpenOptions = {}) {
