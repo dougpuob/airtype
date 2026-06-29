@@ -102,6 +102,30 @@ type ObsidianOpenOptions = {
   defaultFolder?: string;
 };
 
+const OBSIDIAN_VAULT_STORAGE_KEY = "airtype:obsidian:vault-name";
+
+export function browserObsidianVaultName() {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(OBSIDIAN_VAULT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function saveBrowserObsidianVaultName(vaultName: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(OBSIDIAN_VAULT_STORAGE_KEY, String(vaultName).trim());
+  } catch {
+    // Browsers may disable local storage; the server default remains available.
+  }
+}
+
+export function effectiveObsidianVaultName(serverDefault?: string) {
+  return browserObsidianVaultName() ?? String(serverDefault || "").trim();
+}
+
 export function openObsidianDraft(draft: { noteTitle: string; note: string }, options: ObsidianOpenOptions = {}) {
   const vaultName = String(options.vaultName || "").trim();
   const noteName = obsidianNotePath(options.defaultFolder || "", draft.noteTitle);
