@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 
 private final class LLMModelMenuSelection: NSObject {
@@ -12,13 +13,14 @@ private final class LLMModelMenuSelection: NSObject {
 }
 
 @MainActor
-final class AirTypeCoordinator: ObservableObject {
+final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     private let configStore = ConfigStore()
     private let audioRecorder = AudioRecorder()
     private let pasteController = PasteController()
     private let backendClient = BackendClient()
     private let backendProcessManager = BackendProcessManager()
     private var statusItem: NSStatusItem?
+    private weak var microphoneDeviceMenu: NSMenu?
     private var hotkeyMonitor: HotkeyMonitor?
     private var floatingPanel: FloatingPanelController?
     private var targetApp: RunningAppIdentity?
@@ -51,6 +53,7 @@ final class AirTypeCoordinator: ObservableObject {
         }
         setupStatusItem()
         setupFloatingPanel()
+        refreshMicrophoneAvailability()
         setupHotkey()
     }
 
@@ -151,10 +154,53 @@ final class AirTypeCoordinator: ObservableObject {
         }
     }
 
+    private func microphoneAvailabilityIssue(devices: [AVCaptureDevice]) -> String? {
+        guard !devices.isEmpty else {
+            return "No microphone device found"
+        }
+
+        let selectedDeviceName = configStore.config.microphone.selectedDeviceName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !selectedDeviceName.isEmpty else { return nil }
+        guard devices.contains(where: { $0.localizedName == selectedDeviceName }) else {
+            return "Microphone device missing"
+        }
+        return nil
+    }
+
+    @discardableResult
+    private func refreshMicrophoneAvailability(
+        devices: [AVCaptureDevice] = AudioRecorder.inputDevices(),
+        playErrorSound: Bool = false,
+        reason: String = "refresh"
+    ) -> Bool {
+        guard let issue = microphoneAvailabilityIssue(devices: devices) else {
+            floatingPanel?.clearMicrophoneError()
+            return true
+        }
+
+        let selectedDeviceName = configStore.config.microphone.selectedDeviceName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        Logger.shared.log(
+            "Microphone unavailable: reason=\(reason), issue=\(issue), "
+            + "selected_device_name=\(selectedDeviceName.isEmpty ? "system_default" : selectedDeviceName), "
+            + "available_device_count=\(devices.count)"
+        )
+        floatingPanel?.showMicrophoneError(issue)
+        if playErrorSound {
+            NSSound.beep()
+        }
+        return false
+    }
+
     private func toggleRecording() {
         if recordingState == .recording || recordingState == .preparing {
             stopRecording()
         } else {
+            guard refreshMicrophoneAvailability(
+                playErrorSound: true,
+                reason: "recording_hotkey"
+            ) else { return }
             startRecording()
         }
     }
@@ -203,6 +249,23 @@ final class AirTypeCoordinator: ObservableObject {
     private func beginRecordingIfStillPreparing(inputID expectedInputID: Int) {
         guard recordingState == .preparing else { return }
         guard activeInputID == expectedInputID else { return }
+        guard refreshMicrophoneAvailability(
+            playErrorSound: true,
+            reason: "recording_begin"
+        ) else {
+            let inputID = activeInputID
+            let inputStartedAt = activeInputStartedAt
+            recordingState = .idle
+            statusItem?.button?.image = StatusIcon.make(recording: false)
+            audioRecorder.stop()
+            finishInput(
+                inputID,
+                startedAt: inputStartedAt,
+                result: "SKIPPED",
+                details: "reason=microphone_unavailable"
+            )
+            return
+        }
         let config = configStore.config
         let inputID = activeInputID
         recordingState = .recording
@@ -336,6 +399,8 @@ final class AirTypeCoordinator: ObservableObject {
         menu.addItem(languageItem)
 
         let microphoneMenu = NSMenu()
+        microphoneMenu.delegate = self
+        microphoneDeviceMenu = microphoneMenu
         rebuildMicrophoneMenu(microphoneMenu)
         let microphoneItem = NSMenuItem(title: "Microphone Device", action: nil, keyEquivalent: "")
         microphoneItem.submenu = microphoneMenu
@@ -367,14 +432,29 @@ final class AirTypeCoordinator: ObservableObject {
         menu.addItem(item)
     }
 
-    private func rebuildMicrophoneMenu(_ menu: NSMenu) {
+    @discardableResult
+    private func rebuildMicrophoneMenu(_ menu: NSMenu) -> Int {
+        menu.removeAllItems()
         let devices = AudioRecorder.inputDevices()
+        refreshMicrophoneAvailability(devices: devices, reason: "microphone_menu")
+
         if devices.isEmpty {
             let item = NSMenuItem(title: "No microphones found", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
-            return
+            return 0
         }
+
+        let defaultItem = NSMenuItem(
+            title: "System Default",
+            action: #selector(selectMicrophone(_:)),
+            keyEquivalent: ""
+        )
+        defaultItem.target = self
+        defaultItem.representedObject = ""
+        defaultItem.state = configStore.config.microphone.selectedDeviceName.isEmpty ? .on : .off
+        menu.addItem(defaultItem)
+        menu.addItem(.separator())
 
         for (index, device) in devices.enumerated() {
             let deviceName = device.localizedName
@@ -388,6 +468,16 @@ final class AirTypeCoordinator: ObservableObject {
             item.state = configStore.config.microphone.selectedDeviceName == deviceName ? .on : .off
             menu.addItem(item)
         }
+        return devices.count
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === microphoneDeviceMenu else { return }
+        let previousCount = max(0, menu.items.filter { !$0.isSeparatorItem }.count - 1)
+        let currentCount = rebuildMicrophoneMenu(menu)
+        Logger.shared.log(
+            "Refreshed microphone menu: previous_device_count=\(previousCount), current_device_count=\(currentCount)"
+        )
     }
 
     private func addMicrophoneModeItem(to menu: NSMenu, title: String, mode: String) {
