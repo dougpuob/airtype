@@ -24,7 +24,11 @@ import { useLlmApiKey } from "../hooks/useLlmApiKey";
 import { useGuardedWork } from "../hooks/useWorkGuard";
 import type { ThreadsChainResponse, WovenPost } from "../types/postWeaver";
 import { DEFAULT_AI_TITLE_SYSTEM_PROMPT, fallbackAiTitle, normalizeAiTitle } from "../utils/aiTitle";
-import { buildPostObsidianDraft, openObsidianDraft } from "../utils/obsidian";
+import {
+  buildPostObsidianDraft,
+  effectiveObsidianVaultName,
+  openObsidianDraft
+} from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
 const CAPTURE_POST_STATE_KEY = "airtype:capture-post:state";
@@ -225,7 +229,7 @@ export function CapturePostPage() {
       return;
     }
     openObsidianDraft(draft, {
-      vaultName: settingsQuery.data?.obsidian?.vault_name,
+      vaultName: effectiveObsidianVaultName(settingsQuery.data?.obsidian?.vault_name),
       defaultFolder: settingsQuery.data?.obsidian?.default_folder
     });
     setToast("Opening Obsidian to create the note");

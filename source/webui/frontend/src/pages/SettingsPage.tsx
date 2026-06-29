@@ -15,6 +15,10 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useSettingsQuery, useUpdateSettingsMutation } from "../api/settings";
 import type { AppSettings } from "../types/settings";
+import {
+  browserObsidianVaultName,
+  saveBrowserObsidianVaultName
+} from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
 const languageOptions = [
@@ -47,10 +51,16 @@ export function SettingsPage() {
   const settingsQuery = useSettingsQuery();
   const updateSettings = useUpdateSettingsMutation();
   const [draft, setDraft] = useState<AppSettings | null>(null);
+  const [browserVaultName, setBrowserVaultName] = useState("");
   const [toast, setToast] = useState("");
 
   useEffect(() => {
-    if (settingsQuery.data) setDraft(settingsQuery.data);
+    if (settingsQuery.data) {
+      setDraft(settingsQuery.data);
+      setBrowserVaultName(
+        browserObsidianVaultName() ?? settingsQuery.data.obsidian?.vault_name ?? ""
+      );
+    }
   }, [settingsQuery.data]);
 
   const selectedModels = useMemo(() => draft?.llm?.models || [], [draft?.llm?.models]);
@@ -69,6 +79,7 @@ export function SettingsPage() {
   async function saveSettings() {
     if (!draft) return;
     const saved = await updateSettings.mutateAsync(draft);
+    saveBrowserObsidianVaultName(browserVaultName);
     setDraft(saved);
     setToast("Settings saved");
   }
@@ -330,10 +341,11 @@ export function SettingsPage() {
                 <Divider />
                 <TextField
                   size="small"
-                  label="Obsidian vault name"
+                  label="Obsidian vault name (this browser)"
                   placeholder="MyVault"
-                  value={draft?.obsidian?.vault_name || ""}
-                  onChange={(event) => updateSection("obsidian", { vault_name: event.target.value })}
+                  value={browserVaultName}
+                  onChange={(event) => setBrowserVaultName(event.target.value)}
+                  helperText="Saved permanently in this browser. Clear it to use the vault currently open in Obsidian."
                 />
                 <TextField
                   size="small"

@@ -31,7 +31,11 @@ import {
 } from "../api/transcription";
 import type { TranscriptionJob, TranscriptionRecord } from "../types/transcription";
 import { DEFAULT_AI_TITLE_SYSTEM_PROMPT, fallbackAiTitle, normalizeAiTitle } from "../utils/aiTitle";
-import { buildTranscriptObsidianDraft, openObsidianDraft } from "../utils/obsidian";
+import {
+  buildTranscriptObsidianDraft,
+  effectiveObsidianVaultName,
+  openObsidianDraft
+} from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
 const V_TO_TEXT_STATE_KEY = "airtype:v-to-text:state";
@@ -363,7 +367,7 @@ export function VToTextPage() {
       return;
     }
     openObsidianDraft(obsidianDraft, {
-      vaultName: settingsQuery.data?.obsidian?.vault_name,
+      vaultName: effectiveObsidianVaultName(settingsQuery.data?.obsidian?.vault_name),
       defaultFolder: settingsQuery.data?.obsidian?.default_folder
     });
     setToast("Opening Obsidian to create the note");
