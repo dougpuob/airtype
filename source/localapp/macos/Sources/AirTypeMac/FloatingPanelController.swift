@@ -3,6 +3,8 @@ import SwiftUI
 
 @MainActor
 final class FloatingPanelController {
+    private let normalSize = NSSize(width: 144, height: 32)
+    private let errorSize = NSSize(width: 220, height: 32)
     private let configStore: ConfigStore
     private let onMove: (Double, Double) -> Void
     private let model = FloatingPanelModel()
@@ -14,6 +16,7 @@ final class FloatingPanelController {
     }
 
     func showPreparing() {
+        panel.setContentSize(normalSize)
         model.reset()
         model.prepare()
         positionPanel()
@@ -21,6 +24,7 @@ final class FloatingPanelController {
     }
 
     func showRecording() {
+        panel.setContentSize(normalSize)
         model.reset()
         positionPanel()
         panel.orderFrontRegardless()
@@ -32,16 +36,28 @@ final class FloatingPanelController {
         panel.orderOut(nil)
     }
 
+    func showMicrophoneError(_ message: String) {
+        panel.setContentSize(errorSize)
+        model.showError(message)
+        positionPanel()
+        panel.orderFrontRegardless()
+    }
+
+    func clearMicrophoneError() {
+        guard model.errorText != nil else { return }
+        hide()
+    }
+
     func setLevel(_ level: Double) {
         model.setLevel(level)
     }
 
     private func makePanel() -> NSPanel {
         let rootView = FloatingPanelView(model: model)
-            .frame(width: 144, height: 32)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
         let panel = MovablePanel(
-            contentRect: NSRect(x: 0, y: 0, width: 144, height: 32),
+            contentRect: NSRect(origin: .zero, size: normalSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -96,6 +112,7 @@ final class FloatingPanelController {
 final class FloatingPanelModel: ObservableObject {
     @Published var elapsedText = "00:00"
     @Published var levels = Array(repeating: 0.08, count: 24)
+    @Published var errorText: String?
 
     private var startedAt = Date()
     private var timer: Timer?
@@ -116,6 +133,13 @@ final class FloatingPanelModel: ObservableObject {
         levels = Array(repeating: 0.08, count: 24)
     }
 
+    func showError(_ message: String) {
+        timer?.invalidate()
+        timer = nil
+        errorText = message
+        levels = Array(repeating: 0.08, count: 24)
+    }
+
     func stop() {
         timer?.invalidate()
         timer = nil
@@ -123,6 +147,7 @@ final class FloatingPanelModel: ObservableObject {
     }
 
     func reset() {
+        errorText = nil
         elapsedText = "00:00"
         levels = Array(repeating: 0.08, count: 24)
     }
@@ -142,25 +167,42 @@ struct FloatingPanelView: View {
     @ObservedObject var model: FloatingPanelModel
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text(model.elapsedText)
+        Group {
+            if let errorText = model.errorText {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text(errorText)
+                        .lineLimit(1)
+                }
                 .font(.system(size: 12, weight: .bold, design: .default))
-                .foregroundStyle(.white)
-                .frame(minWidth: 42)
+                .foregroundStyle(.red)
+            } else {
+                HStack(spacing: 6) {
+                    Text(model.elapsedText)
+                        .font(.system(size: 12, weight: .bold, design: .default))
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 42)
 
-            WaveformView(levels: model.levels)
-                .frame(width: 70, height: 18)
+                    WaveformView(levels: model.levels)
+                        .frame(width: 70, height: 18)
+                }
+            }
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
-        .frame(width: 144, height: 32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
             Capsule()
                 .fill(Color(red: 0.09, green: 0.11, blue: 0.13))
         )
         .overlay(
             Capsule()
-                .stroke(Color(red: 0.33, green: 0.91, blue: 0.60), lineWidth: 1)
+                .stroke(
+                    model.errorText == nil
+                        ? Color(red: 0.33, green: 0.91, blue: 0.60)
+                        : .red,
+                    lineWidth: 1
+                )
         )
     }
 }
