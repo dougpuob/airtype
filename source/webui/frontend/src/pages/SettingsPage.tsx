@@ -15,10 +15,6 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useSettingsQuery, useUpdateSettingsMutation } from "../api/settings";
 import type { AppSettings } from "../types/settings";
-import {
-  browserObsidianVaultName,
-  saveBrowserObsidianVaultName
-} from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
 const languageOptions = [
@@ -51,13 +47,11 @@ export function SettingsPage() {
   const settingsQuery = useSettingsQuery();
   const updateSettings = useUpdateSettingsMutation();
   const [draft, setDraft] = useState<AppSettings | null>(null);
-  const [browserVaultName, setBrowserVaultName] = useState("");
   const [toast, setToast] = useState("");
 
   useEffect(() => {
     if (settingsQuery.data) {
       setDraft(settingsQuery.data);
-      setBrowserVaultName(browserObsidianVaultName() ?? "");
     }
   }, [settingsQuery.data]);
 
@@ -77,7 +71,6 @@ export function SettingsPage() {
   async function saveSettings() {
     if (!draft) return;
     const saved = await updateSettings.mutateAsync(draft);
-    saveBrowserObsidianVaultName(browserVaultName);
     setDraft(saved);
     setToast("Settings saved");
   }
@@ -334,23 +327,16 @@ export function SettingsPage() {
               <Stack spacing={1.5} sx={settingsPanelSx}>
                 <Typography variant="h3">Obsidian and Downloads</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Note export uses Obsidian URI links; media URL imports use yt-dlp.
+                  Note export opens the currently active Obsidian vault with Obsidian URI links; media URL imports use yt-dlp.
                 </Typography>
                 <Divider />
-                <TextField
-                  size="small"
-                  label="Obsidian vault name (this browser)"
-                  placeholder="MyVault"
-                  value={browserVaultName}
-                  onChange={(event) => setBrowserVaultName(event.target.value)}
-                  helperText="Saved permanently in this browser. Clear it to use the vault currently open in Obsidian."
-                />
                 <TextField
                   size="small"
                   label="Obsidian default folder"
                   placeholder="Inbox/AirType"
                   value={draft?.obsidian?.default_folder || ""}
                   onChange={(event) => updateSection("obsidian", { default_folder: event.target.value })}
+                  helperText="Saved notes are created in this folder inside the currently open Obsidian vault."
                 />
                 <TextField
                   size="small"

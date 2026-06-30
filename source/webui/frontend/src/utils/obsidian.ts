@@ -98,40 +98,13 @@ export function buildTranscriptObsidianDraft(
 }
 
 type ObsidianOpenOptions = {
-  vaultName?: string;
   defaultFolder?: string;
 };
 
-const OBSIDIAN_VAULT_STORAGE_KEY = "airtype:obsidian:vault-name";
-
-export function browserObsidianVaultName() {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(OBSIDIAN_VAULT_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-export function saveBrowserObsidianVaultName(vaultName: string) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(OBSIDIAN_VAULT_STORAGE_KEY, String(vaultName).trim());
-  } catch {
-    // Browsers may disable local storage; the server default remains available.
-  }
-}
-
-export function effectiveObsidianVaultName() {
-  return browserObsidianVaultName() ?? "";
-}
-
 export function openObsidianDraft(draft: { noteTitle: string; note: string }, options: ObsidianOpenOptions = {}) {
-  const vaultName = String(options.vaultName || "").trim();
-  const noteName = obsidianNotePath(options.defaultFolder || "", draft.noteTitle);
+  const notePath = obsidianNotePath(options.defaultFolder || "", draft.noteTitle);
   const query = [
-    ...(vaultName ? [["vault", vaultName]] : []),
-    ["name", noteName],
+    ["file", notePath],
     ["content", draft.note]
   ]
     .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)

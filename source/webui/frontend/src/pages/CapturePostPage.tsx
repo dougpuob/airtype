@@ -26,7 +26,6 @@ import type { ThreadsChainResponse, WovenPost } from "../types/postWeaver";
 import { DEFAULT_AI_TITLE_SYSTEM_PROMPT, fallbackAiTitle, normalizeAiTitle } from "../utils/aiTitle";
 import {
   buildPostObsidianDraft,
-  effectiveObsidianVaultName,
   openObsidianDraft
 } from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
@@ -229,7 +228,6 @@ export function CapturePostPage() {
       return;
     }
     openObsidianDraft(draft, {
-      vaultName: effectiveObsidianVaultName(),
       defaultFolder: settingsQuery.data?.obsidian?.default_folder
     });
     setToast("Opening Obsidian to create the note");
