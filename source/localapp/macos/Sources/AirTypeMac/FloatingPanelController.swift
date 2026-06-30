@@ -148,6 +148,7 @@ final class FloatingPanelController {
 
 final class FloatingPanelModel: ObservableObject {
     @Published var elapsedText = "00:00"
+    @Published var transcribingDots = ""
     @Published var levels = Array(repeating: 0.08, count: 24)
     @Published var errorText: String?
     @Published var isTranscribing = false
@@ -157,6 +158,7 @@ final class FloatingPanelModel: ObservableObject {
 
     func start() {
         isTranscribing = false
+        transcribingDots = ""
         startedAt = Date()
         elapsedText = "00:00"
         timer?.invalidate()
@@ -167,6 +169,7 @@ final class FloatingPanelModel: ObservableObject {
 
     func prepare() {
         isTranscribing = false
+        transcribingDots = ""
         timer?.invalidate()
         timer = nil
         elapsedText = "..."
@@ -176,17 +179,19 @@ final class FloatingPanelModel: ObservableObject {
     func transcribe() {
         var dotCount = 0
         isTranscribing = true
+        transcribingDots = "..."
         timer?.invalidate()
-        elapsedText = "Transcribing..."
+        elapsedText = "Transcribing"
         levels = Array(repeating: 0.08, count: 24)
         timer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in
             dotCount = (dotCount % 3) + 1
-            self?.elapsedText = "Transcribing" + String(repeating: ".", count: dotCount)
+            self?.transcribingDots = String(repeating: ".", count: dotCount)
         }
     }
 
     func showError(_ message: String) {
         isTranscribing = false
+        transcribingDots = ""
         timer?.invalidate()
         timer = nil
         errorText = message
@@ -201,6 +206,7 @@ final class FloatingPanelModel: ObservableObject {
 
     func reset() {
         isTranscribing = false
+        transcribingDots = ""
         errorText = nil
         elapsedText = "00:00"
         levels = Array(repeating: 0.08, count: 24)
@@ -232,10 +238,21 @@ struct FloatingPanelView: View {
                 .foregroundStyle(.red)
             } else {
                 HStack(spacing: 6) {
-                    Text(model.elapsedText)
+                    if model.isTranscribing {
+                        HStack(spacing: 0) {
+                            Text(model.elapsedText)
+                            Text(model.transcribingDots)
+                                .frame(width: 14, alignment: .leading)
+                        }
                         .font(.system(size: 12, weight: .bold, design: .default))
                         .foregroundStyle(.white)
-                        .frame(minWidth: model.isTranscribing ? 112 : 42)
+                        .frame(minWidth: 112)
+                    } else {
+                        Text(model.elapsedText)
+                            .font(.system(size: 12, weight: .bold, design: .default))
+                            .foregroundStyle(.white)
+                            .frame(minWidth: 42)
+                    }
 
                     if !model.isTranscribing {
                         WaveformView(levels: model.levels)
