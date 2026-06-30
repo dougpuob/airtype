@@ -344,9 +344,9 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             scheduleTimedMicrophoneRelease(reason: "recording_stopped")
         }
         statusItem?.button?.image = StatusIcon.make(recording: false)
-        floatingPanel?.hide()
 
         if !wasRecording {
+            floatingPanel?.hide()
             if configStore.config.microphone.mode == "on_demand" {
                 audioRecorder.stop()
             }
@@ -356,6 +356,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         }
 
         guard let wavData = audioRecorder.stopAndMakeWav() else {
+            floatingPanel?.hide()
             Logger.shared.log("\(inputLogPrefix(inputID))recording skipped: no wav data")
             if configStore.config.microphone.mode == "on_demand" {
                 audioRecorder.stop()
@@ -370,6 +371,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
 
         let config = configStore.config
         let targetApp = targetApp
+        floatingPanel?.showTranscribing()
         Logger.shared.log("\(inputLogPrefix(inputID))recording stopped; wav_bytes=\(wavData.count)")
         Logger.shared.log("\(inputLogPrefix(inputID))submitting ASR: endpoint=\(config.backend.selectedEndpoint), language=\(config.chineseMode.mode), wav_bytes=\(wavData.count)")
         Task {
@@ -384,6 +386,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                 await MainActor.run {
                     Logger.shared.log("\(self.inputLogPrefix(inputID))ASR completed; paste requested")
                     self.pasteController.paste(text, to: targetApp) { ok in
+                        self.floatingPanel?.hide()
                         let result = ok ? "COMPLETE" : "FAILED"
                         let details = "paste=\(ok ? "ok" : "failed"), chars=\(text.count)"
                         self.finishInput(inputID, startedAt: inputStartedAt, result: result, details: details)
@@ -392,6 +395,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             } catch {
                 Logger.shared.log("\(self.inputLogPrefix(inputID))ASR failed: \(error)")
                 await MainActor.run {
+                    self.floatingPanel?.hide()
                     self.finishInput(inputID, startedAt: inputStartedAt, result: "FAILED", details: "reason=asr_failed")
                 }
             }

@@ -19,16 +19,28 @@ final class FloatingPanelController {
         panel.setContentSize(normalSize)
         model.reset()
         model.prepare()
-        positionPanel()
+        positionPanelBelowCursor()
         panel.orderFrontRegardless()
     }
 
     func showRecording() {
         panel.setContentSize(normalSize)
         model.reset()
-        positionPanel()
+        if !panel.isVisible {
+            positionPanelBelowCursor()
+        }
         panel.orderFrontRegardless()
         model.start()
+    }
+
+    func showTranscribing() {
+        panel.setContentSize(normalSize)
+        model.reset()
+        model.transcribe()
+        if !panel.isVisible {
+            positionPanelBelowCursor()
+        }
+        panel.orderFrontRegardless()
     }
 
     func hide() {
@@ -88,23 +100,42 @@ final class FloatingPanelController {
     }
 
     private func positionPanel() {
-        let desktop = NSScreen.screens
-            .map(\.frame)
-            .reduce(NSScreen.main?.frame ?? .zero) { $0.union($1) }
+        let desktop = desktopFrame()
         let x = desktop.minX + desktop.width * configStore.config.floatingDialog.positionXRatio
         let y = desktop.minY + desktop.height * configStore.config.floatingDialog.positionYRatio
         let origin = NSPoint(x: x - panel.frame.width / 2, y: y - panel.frame.height / 2)
         panel.setFrameOrigin(clamped(origin, desktop: desktop))
     }
 
+    private func positionPanelBelowCursor() {
+        let cursor = NSEvent.mouseLocation
+        let screenFrame = screenFrame(containing: cursor)
+        let gap: CGFloat = 18
+        let origin = NSPoint(
+            x: cursor.x - panel.frame.width / 2,
+            y: cursor.y - panel.frame.height - gap
+        )
+        panel.setFrameOrigin(clamped(origin, desktop: screenFrame))
+    }
+
     private func save(frame: NSRect) {
-        let desktop = NSScreen.screens
-            .map(\.frame)
-            .reduce(NSScreen.main?.frame ?? .zero) { $0.union($1) }
+        let desktop = desktopFrame()
         let center = NSPoint(x: frame.midX, y: frame.midY)
         let xRatio = (center.x - desktop.minX) / max(1, desktop.width)
         let yRatio = (center.y - desktop.minY) / max(1, desktop.height)
         onMove(xRatio, yRatio)
+    }
+
+    private func desktopFrame() -> NSRect {
+        NSScreen.screens
+            .map(\.frame)
+            .reduce(NSScreen.main?.frame ?? .zero) { $0.union($1) }
+    }
+
+    private func screenFrame(containing point: NSPoint) -> NSRect {
+        NSScreen.screens.first { $0.frame.contains(point) }?.visibleFrame
+            ?? NSScreen.main?.visibleFrame
+            ?? desktopFrame()
     }
 
     private func clamped(_ point: NSPoint, desktop: NSRect) -> NSPoint {
@@ -119,11 +150,13 @@ final class FloatingPanelModel: ObservableObject {
     @Published var elapsedText = "00:00"
     @Published var levels = Array(repeating: 0.08, count: 24)
     @Published var errorText: String?
+    @Published var isTranscribing = false
 
     private var startedAt = Date()
     private var timer: Timer?
 
     func start() {
+        isTranscribing = false
         startedAt = Date()
         elapsedText = "00:00"
         timer?.invalidate()
@@ -133,13 +166,27 @@ final class FloatingPanelModel: ObservableObject {
     }
 
     func prepare() {
+        isTranscribing = false
         timer?.invalidate()
         timer = nil
         elapsedText = "..."
         levels = Array(repeating: 0.08, count: 24)
     }
 
+    func transcribe() {
+        var dotCount = 0
+        isTranscribing = true
+        timer?.invalidate()
+        elapsedText = "Transcribing..."
+        levels = Array(repeating: 0.08, count: 24)
+        timer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in
+            dotCount = (dotCount % 3) + 1
+            self?.elapsedText = "Transcribing" + String(repeating: ".", count: dotCount)
+        }
+    }
+
     func showError(_ message: String) {
+        isTranscribing = false
         timer?.invalidate()
         timer = nil
         errorText = message
@@ -153,6 +200,7 @@ final class FloatingPanelModel: ObservableObject {
     }
 
     func reset() {
+        isTranscribing = false
         errorText = nil
         elapsedText = "00:00"
         levels = Array(repeating: 0.08, count: 24)
@@ -187,10 +235,12 @@ struct FloatingPanelView: View {
                     Text(model.elapsedText)
                         .font(.system(size: 12, weight: .bold, design: .default))
                         .foregroundStyle(.white)
-                        .frame(minWidth: 42)
+                        .frame(minWidth: model.isTranscribing ? 112 : 42)
 
-                    WaveformView(levels: model.levels)
-                        .frame(width: 70, height: 18)
+                    if !model.isTranscribing {
+                        WaveformView(levels: model.levels)
+                            .frame(width: 70, height: 18)
+                    }
                 }
             }
         }
