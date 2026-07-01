@@ -24,6 +24,7 @@ import { useLlmApiKey } from "../hooks/useLlmApiKey";
 import { useGuardedWork } from "../hooks/useWorkGuard";
 import type { ThreadsChainResponse, WovenPost } from "../types/postWeaver";
 import { DEFAULT_AI_TITLE_SYSTEM_PROMPT, fallbackAiTitle, normalizeAiTitle } from "../utils/aiTitle";
+import { readFirstClipboardUrl } from "../utils/clipboardUrl";
 import {
   buildPostObsidianDraft,
   openObsidianDraft
@@ -109,6 +110,15 @@ export function CapturePostPage() {
     window.addEventListener("pagehide", handlePageHide);
     return () => window.removeEventListener("pagehide", handlePageHide);
   }, [aiTags, capturedTitle, capturedUrl, error, isWorking, polishedContent, postUrl, posts]);
+
+  async function pasteClipboardUrl() {
+    try {
+      setPostUrl(await readFirstClipboardUrl());
+      setToast("URL pasted from clipboard");
+    } catch (caught) {
+      setToast(caught instanceof Error ? caught.message : "Could not read the clipboard");
+    }
+  }
 
   async function capturePost() {
     const url = postUrl.trim();
@@ -272,14 +282,24 @@ export function CapturePostPage() {
                 </Stack>
                 <LinearProgress value={activeProgress} variant="determinate" />
               </Stack>
-              <Button
-                variant="contained"
-                disabled={isWorking}
-                onClick={capturePost}
-                sx={{ alignSelf: "end", height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
-              >
-                Capture
-              </Button>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignSelf: "end", minWidth: 0 }}>
+                <Button
+                  variant="outlined"
+                  disabled={isWorking}
+                  onClick={pasteClipboardUrl}
+                  sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
+                >
+                  Paste
+                </Button>
+                <Button
+                  variant="contained"
+                  disabled={isWorking}
+                  onClick={capturePost}
+                  sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
+                >
+                  Capture
+                </Button>
+              </Stack>
               <TextField
                 fullWidth
                 size="small"
