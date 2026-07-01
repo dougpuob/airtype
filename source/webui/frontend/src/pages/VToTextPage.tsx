@@ -31,6 +31,7 @@ import {
 } from "../api/transcription";
 import type { TranscriptionJob, TranscriptionRecord } from "../types/transcription";
 import { DEFAULT_AI_TITLE_SYSTEM_PROMPT, fallbackAiTitle, normalizeAiTitle } from "../utils/aiTitle";
+import { readFirstClipboardUrl } from "../utils/clipboardUrl";
 import {
   buildTranscriptObsidianDraft,
   openObsidianDraft
@@ -161,6 +162,15 @@ export function VToTextPage() {
     window.addEventListener("pagehide", handlePageHide);
     return () => window.removeEventListener("pagehide", handlePageHide);
   }, [activeJobId, aiTitle, aiTitleSourceKey, aiTags, aiTagsSourceKey, isWorking, selectedRecordId, sourceUrl]);
+
+  async function pasteClipboardUrl() {
+    try {
+      setSourceUrl(await readFirstClipboardUrl());
+      setToast("URL pasted from clipboard");
+    } catch (caught) {
+      setToast(caught instanceof Error ? caught.message : "Could not read the clipboard");
+    }
+  }
 
   useEffect(() => {
     if (!activeJob) return;
@@ -408,6 +418,14 @@ export function VToTextPage() {
                 <LinearProgress value={Math.min(100, activeProgress)} variant="determinate" />
               </Stack>
               <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignSelf: "end", minWidth: 0 }}>
+                <Button
+                  variant="outlined"
+                  disabled={isWorking}
+                  onClick={pasteClipboardUrl}
+                  sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
+                >
+                  Paste
+                </Button>
                 <Button
                   variant="contained"
                   color={isWorking ? "error" : "primary"}
