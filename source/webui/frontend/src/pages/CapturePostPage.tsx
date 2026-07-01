@@ -4,6 +4,10 @@ import {
   Box,
   Button,
   Divider,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   LinearProgress,
   Snackbar,
   Stack,
@@ -57,6 +61,9 @@ export function CapturePostPage() {
   const [step, setStep] = useState<CaptureStep>(restoredState.step);
   const [toast, setToast] = useState("");
   const [error, setError] = useState(restoredState.error);
+  const [hasCompletedCaptureThisPage, setHasCompletedCaptureThisPage] = useState(false);
+  const [hasUnsavedCapture, setHasUnsavedCapture] = useState(false);
+  const [pendingCaptureUrl, setPendingCaptureUrl] = useState<string | null>(null);
 
   const settingsQuery = useSettingsQuery();
   const importPost = useImportPostMutation();
@@ -120,13 +127,24 @@ export function CapturePostPage() {
     }
   }
 
-  async function capturePost() {
+  function requestCapturePost() {
     const url = postUrl.trim();
     if (!url) {
       setToast("Paste a public post URL first");
       return;
     }
 
+    if (hasUnsavedCapture && url !== capturedUrl.trim()) {
+      setPendingCaptureUrl(url);
+      return;
+    }
+
+    void capturePost(url);
+  }
+
+  async function capturePost(url: string) {
+    setHasCompletedCaptureThisPage(false);
+    setHasUnsavedCapture(false);
     setError("");
     setPosts([]);
     setPolishedContent("");
@@ -160,6 +178,8 @@ export function CapturePostPage() {
       setAiTags(generatedTags);
 
       setStep("complete");
+      setHasCompletedCaptureThisPage(true);
+      setHasUnsavedCapture(true);
       setToast("Post ready for Obsidian");
     } catch (caught) {
       setStep("error");
@@ -240,6 +260,7 @@ export function CapturePostPage() {
     openObsidianDraft(draft, {
       defaultFolder: settingsQuery.data?.obsidian?.default_folder
     });
+    setHasUnsavedCapture(false);
     setToast("Opening Obsidian to create the note");
   }
 
@@ -294,7 +315,7 @@ export function CapturePostPage() {
                 <Button
                   variant="contained"
                   disabled={isWorking}
-                  onClick={capturePost}
+                  onClick={requestCapturePost}
                   sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
                 >
                   Capture
@@ -322,7 +343,12 @@ export function CapturePostPage() {
         <Stack spacing={1.5}>
           <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1}>
             <Typography variant="h3">Obsidian Preview</Typography>
-            <Button variant="contained" disabled={!draft} onClick={saveToObsidian} sx={{ whiteSpace: "nowrap" }}>
+            <Button
+              variant="contained"
+              disabled={!draft || !hasCompletedCaptureThisPage}
+              onClick={saveToObsidian}
+              sx={{ whiteSpace: "nowrap" }}
+            >
               Save to Obsidian
             </Button>
           </Stack>
@@ -338,6 +364,32 @@ export function CapturePostPage() {
         message={toast}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       />
+      <Dialog
+        open={Boolean(pendingCaptureUrl)}
+        onClose={() => setPendingCaptureUrl(null)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>Capture a new post?</DialogTitle>
+        <DialogContent>
+          <Typography color="text.secondary">
+            The current capture has not been saved to Obsidian. Are you sure you want to replace it?
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingCaptureUrl(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              const nextUrl = pendingCaptureUrl;
+              setPendingCaptureUrl(null);
+              if (nextUrl) void capturePost(nextUrl);
+            }}
+          >
+            Capture New
+          </Button>
+        </DialogActions>
+      </Dialog>
       <LlmApiKeyDialog
         open={Boolean(llmApiKey.pendingRequest)}
         endpoint={llmApiKey.pendingRequest?.endpoint}
