@@ -292,7 +292,7 @@ export function SettingsPage() {
               <Stack spacing={1.5} sx={settingsPanelSx}>
                 <Typography variant="h3">AI Titles</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Configure AI-generated note titles for Capture Post and Voice to Text.
+                  Configure AI-generated note titles for Obsidian Clipper.
                 </Typography>
                 <Divider />
                 <FormControlLabel

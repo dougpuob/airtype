@@ -1,4 +1,3 @@
-import ArticleOutlinedIcon from "@mui/icons-material/ArticleOutlined";
 import DashboardOutlinedIcon from "@mui/icons-material/DashboardOutlined";
 import GraphicEqOutlinedIcon from "@mui/icons-material/GraphicEqOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
@@ -16,8 +15,7 @@ type NavItem = {
 
 export const navItems: NavItem[] = [
   { label: "Dashboard", path: "/", icon: <DashboardOutlinedIcon /> },
-  { label: "Voice to Text", path: "/v-to-text", icon: <GraphicEqOutlinedIcon /> },
-  { label: "Capture Post", path: "/capture-post", icon: <ArticleOutlinedIcon /> },
+  { label: "Obsidian Clipper", path: "/v-to-text", icon: <GraphicEqOutlinedIcon /> },
   { label: "IME History", path: "/ime-history", icon: <HistoryOutlinedIcon /> }
 ];
 
