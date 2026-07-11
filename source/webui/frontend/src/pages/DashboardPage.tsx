@@ -10,7 +10,7 @@ export function DashboardPage() {
       eyebrow="Overview"
       actions={
         <Button component={RouterLink} to="/v-to-text" variant="contained" startIcon={<AddCircleOutlineIcon />}>
-          New Voice to Text
+          New Obsidian Clipper
         </Button>
       }
     >
