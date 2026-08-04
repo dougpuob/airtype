@@ -79,7 +79,6 @@ CONFIG_PATH = _find_config_path()
 WEBUI_DATA_DIR = read_webui_data_dir(CONFIG_PATH)
 RECORDS_DIR = os.path.join(WEBUI_DATA_DIR, "records")
 RECORD_ID_PATTERN = re.compile(r"\d{8}-\d{6}")
-IME_CORRECTION_SYSTEM_PROMPT = "你是一個很棒的語音輸入法錯誤校正器。下方是一個語音輸入的原始結果，修正錯誤最後的只需要回我修正誤的結果。"
 AUTH_SESSION_COOKIE = "airtype_session"
 AUTH_PASSWORD_SCHEME = "pbkdf2_sha256"
 AUTH_PASSWORD_ITERATIONS = 310_000
@@ -622,7 +621,7 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
             "correction_enabled": bool(
                 ime_input.get(
                     "correction_enabled",
-                    current_ime.get("correction_enabled", True),
+                    current_ime.get("correction_enabled", False),
                 )
             ),
         },
@@ -864,7 +863,7 @@ async def transcribe_audio(
             **options,
         )
         if selected_record_type == IME_RECORD_TYPE:
-            result = _correct_ime_transcription_result(result)
+            result = _mark_ime_transcription_as_raw_asr(result)
         transcribe_ms = _elapsed_ms(transcribe_started_at)
         timing = result.setdefault("debug", {}).setdefault("timing_ms", {})
         timing.update(
@@ -2503,63 +2502,19 @@ def _configured_llm_request(
     )
 
 
-def _correct_ime_transcription_result(result: Dict[str, Any]) -> Dict[str, Any]:
+def _mark_ime_transcription_as_raw_asr(result: Dict[str, Any]) -> Dict[str, Any]:
     raw_text = str(result.get("text") or "").strip()
     if not raw_text:
         return result
 
-    # Check if ime correction is enabled
-    settings = _read_app_settings()
-    ime_settings = settings.get("ime", {})
-    if not bool(ime_settings.get("correction_enabled", True)):
-        debug = result.setdefault("debug", {})
-        debug["ime_correction"] = {
-            "enabled": False,
-            "original_text": raw_text,
-            "skipped": True,
-        }
-        return result
-
-    corrected_result = dict(result)
-    debug = corrected_result.setdefault("debug", {})
+    debug = result.setdefault("debug", {})
     debug["ime_correction"] = {
-        "enabled": True,
+        "enabled": False,
         "original_text": raw_text,
-        "success": False,
+        "skipped": True,
+        "reason": "IME mode returns raw ASR text without LLM polishing.",
     }
-
-    try:
-        request, server_name = _configured_llm_request(
-            system=IME_CORRECTION_SYSTEM_PROMPT,
-            prompt=raw_text,
-            temperature=0,
-            disable_thinking=True,
-        )
-        append_service_log(
-            "webui",
-            "requesting IME correction: "
-            f"server={server_name} provider={request.provider} "
-            f"endpoint={_llm_base_endpoint(request.endpoint)} model={request.model} chars={len(raw_text)}",
-        )
-        corrected_text = _local_chat_response(request).strip()
-        if not corrected_text:
-            raise RuntimeError("Local LLM returned an empty IME correction")
-
-        corrected_result["text"] = corrected_text
-        debug["ime_correction"].update(
-            {
-                "success": True,
-                "provider": request.provider,
-                "model": request.model,
-                "server": server_name,
-                "corrected_text_length": len(corrected_text),
-            }
-        )
-        return corrected_result
-    except Exception as error:
-        debug["ime_correction"]["error"] = str(error)
-        append_service_log("webui", f"IME correction failed; using raw ASR text: error={error}")
-        return corrected_result
+    return result
 
 
 def _ollama_model_details(endpoint: str, model: str, api_key: Optional[str] = None) -> Dict[str, Any]:

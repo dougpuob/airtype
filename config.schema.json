@@ -197,8 +197,8 @@
           "properties": {
             "correction_enabled": {
               "type": "boolean",
-              "default": true,
-              "description": "Apply LLM-based correction to speech-to-text results in IME mode."
+              "default": false,
+              "description": "Reserved. IME mode returns raw speech-to-text results without LLM polishing."
             }
           }
         },

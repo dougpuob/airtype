@@ -44,7 +44,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "title_system_prompt": "你是擅長提煉文章重點的繁體中文標題編輯。請根據使用者提供的文章產生一個約 30 個字的標題；不要使用冒號、不要提供多個選項、不要加入引號或解釋，只輸出標題。",
     },
     "ime": {
-        "correction_enabled": True,
+        "correction_enabled": False,
     },
     "auth": {
         "enabled": False,
@@ -62,6 +62,7 @@ WEBUI_SECTION_ALIASES = {
     "ytdlp": ("yt-dlp", "ytdlp"),
     "obsidian": ("obsidian",),
     "capture_post": ("capture-post", "capture_post"),
+    "ime": ("ime",),
     "auth": ("auth",),
 }
 

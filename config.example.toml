@@ -61,6 +61,10 @@ temperature = 0
 cookies = ""
 cookies_from_browser = ""
 
+[webui.ime]
+# IME mode returns raw speech-to-text results without LLM polishing.
+correction_enabled = false
+
 [[webui.llm-server]]
 # Unique name for this LLM server.
 name = "llama.cpp"

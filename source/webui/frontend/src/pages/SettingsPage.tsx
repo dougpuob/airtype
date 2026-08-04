@@ -203,7 +203,7 @@ export function SettingsPage() {
               <Stack spacing={1.5} sx={settingsPanelSx}>
                 <Typography variant="h3">Local LLM Model</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Default model used for transcript polishing, tags, and IME correction.
+                  Default model used for transcript polishing, tags, and generated titles.
                 </Typography>
                 <Divider />
                 <TextField
@@ -290,24 +290,13 @@ export function SettingsPage() {
           <Grid size={{ xs: 12, lg: 6 }}>
             <WorkspacePanel>
               <Stack spacing={1.5} sx={settingsPanelSx}>
-                <Typography variant="h3">IME Correction</Typography>
+                <Typography variant="h3">IME Transcription</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Apply LLM-based correction to speech-to-text results in IME mode.
+                  IME mode pastes the raw speech-to-text result without sending it to the local LLM.
                 </Typography>
                 <Divider />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={draft?.ime?.correction_enabled ?? true}
-                      onChange={(event) =>
-                        updateSection("ime", { correction_enabled: event.target.checked })
-                      }
-                    />
-                  }
-                  label="Enable LLM correction for IME transcription"
-                />
                 <Alert severity="info">
-                  When enabled, IME transcription results will be sent to the local LLM for polishing before pasting.
+                  LLM polishing is disabled for IME transcription. Capture Post and Voice to Text can still use the configured LLM.
                 </Alert>
               </Stack>
             </WorkspacePanel>
