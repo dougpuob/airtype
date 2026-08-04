@@ -546,6 +546,7 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     ytdlp_input = incoming.get("ytdlp", {}) if isinstance(incoming.get("ytdlp"), dict) else {}
     obsidian_input = incoming.get("obsidian", {}) if isinstance(incoming.get("obsidian"), dict) else {}
     capture_post_input = incoming.get("capture_post", {}) if isinstance(incoming.get("capture_post"), dict) else {}
+    ime_input = incoming.get("ime", {}) if isinstance(incoming.get("ime"), dict) else {}
     auth_input = incoming.get("auth", {}) if isinstance(incoming.get("auth"), dict) else {}
     current_settings = _read_backend_config_settings()
     current_whisper = current_settings.get("whisper", {})
@@ -556,6 +557,8 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     current_obsidian = current_obsidian if isinstance(current_obsidian, dict) else {}
     current_capture_post = current_settings.get("capture_post", {})
     current_capture_post = current_capture_post if isinstance(current_capture_post, dict) else {}
+    current_ime = current_settings.get("ime", {})
+    current_ime = current_ime if isinstance(current_ime, dict) else {}
     current_auth = current_settings.get("auth", {})
     current_auth = current_auth if isinstance(current_auth, dict) else {}
     model_dir, model_filename = _split_whisper_model_settings(whisper_input)
@@ -613,6 +616,14 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
                     "title_system_prompt",
                     DEFAULT_APP_SETTINGS["capture_post"]["title_system_prompt"],
                 ),
+            ),
+        },
+        "ime": {
+            "correction_enabled": bool(
+                ime_input.get(
+                    "correction_enabled",
+                    current_ime.get("correction_enabled", True),
+                )
             ),
         },
         "auth": {
@@ -1628,6 +1639,7 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
     ytdlp = normalized["ytdlp"]
     obsidian = normalized["obsidian"]
     capture_post = normalized["capture_post"]
+    ime = normalized["ime"]
     auth = normalized["auth"]
     selected_llm = normalized["llm"]
     default_name = str(settings.get("default_llm_server_name") or selected_llm.get("name") or "default")
@@ -1657,6 +1669,9 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
         "[webui.capture-post]",
         f"ai_title_enabled = {'true' if capture_post.get('ai_title_enabled') else 'false'}",
         f"title_system_prompt = {_toml_string(capture_post.get('title_system_prompt', ''))}",
+        "",
+        "[webui.ime]",
+        f"correction_enabled = {'true' if ime.get('correction_enabled') else 'false'}",
         "",
         "[webui.auth]",
         f"enabled = {'true' if auth.get('enabled') else 'false'}",
@@ -2491,6 +2506,18 @@ def _configured_llm_request(
 def _correct_ime_transcription_result(result: Dict[str, Any]) -> Dict[str, Any]:
     raw_text = str(result.get("text") or "").strip()
     if not raw_text:
+        return result
+
+    # Check if ime correction is enabled
+    settings = _read_app_settings()
+    ime_settings = settings.get("ime", {})
+    if not bool(ime_settings.get("correction_enabled", True)):
+        debug = result.setdefault("debug", {})
+        debug["ime_correction"] = {
+            "enabled": False,
+            "original_text": raw_text,
+            "skipped": True,
+        }
         return result
 
     corrected_result = dict(result)

@@ -191,6 +191,17 @@
             }
           }
         },
+        "ime": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "correction_enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Apply LLM-based correction to speech-to-text results in IME mode."
+            }
+          }
+        },
         "default-llm-server-name": {
           "type": "string",
           "default": "llama.cpp",

@@ -290,6 +290,32 @@ export function SettingsPage() {
           <Grid size={{ xs: 12, lg: 6 }}>
             <WorkspacePanel>
               <Stack spacing={1.5} sx={settingsPanelSx}>
+                <Typography variant="h3">IME Correction</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Apply LLM-based correction to speech-to-text results in IME mode.
+                </Typography>
+                <Divider />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={draft?.ime?.correction_enabled ?? true}
+                      onChange={(event) =>
+                        updateSection("ime", { correction_enabled: event.target.checked })
+                      }
+                    />
+                  }
+                  label="Enable LLM correction for IME transcription"
+                />
+                <Alert severity="info">
+                  When enabled, IME transcription results will be sent to the local LLM for polishing before pasting.
+                </Alert>
+              </Stack>
+            </WorkspacePanel>
+          </Grid>
+
+          <Grid size={{ xs: 12, lg: 6 }}>
+            <WorkspacePanel>
+              <Stack spacing={1.5} sx={settingsPanelSx}>
                 <Typography variant="h3">AI Titles</Typography>
                 <Typography variant="body2" color="text.secondary">
                   Configure AI-generated note titles for Obsidian Clipper.

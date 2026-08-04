@@ -41,6 +41,9 @@ export type AppSettings = {
     ai_title_enabled?: boolean;
     title_system_prompt?: string;
   };
+  ime?: {
+    correction_enabled?: boolean;
+  };
   llm_servers?: AppSettings["llm"][];
   default_llm_server_name?: string;
 };
