@@ -7,6 +7,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { ImeHistoryPage } from "./pages/ImeHistoryPage";
 import { LoginPage } from "./pages/LoginPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { ThreadsLoginPage } from "./pages/ThreadsLoginPage";
 import { VToTextPage } from "./pages/VToTextPage";
 
 export default function App() {
@@ -51,6 +52,7 @@ export default function App() {
         <Route path="/v-to-text" element={<VToTextPage />} />
         <Route path="/capture-post" element={<Navigate to="/v-to-text" replace />} />
         <Route path="/ime-history" element={<ImeHistoryPage />} />
+        <Route path="/threads-login" element={<ThreadsLoginPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

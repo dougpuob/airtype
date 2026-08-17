@@ -78,10 +78,19 @@ IME_RECORD_TYPE = "ime"
 CONFIG_PATH = _find_config_path()
 WEBUI_DATA_DIR = read_webui_data_dir(CONFIG_PATH)
 RECORDS_DIR = os.path.join(WEBUI_DATA_DIR, "records")
+THREADS_AUTH_DIR = os.path.join(WEBUI_DATA_DIR, "threads-auth")
+THREADS_BROWSER_PROFILE_DIR = os.path.join(THREADS_AUTH_DIR, "browser-profile")
+THREADS_STORAGE_STATE_PATH = os.path.join(THREADS_AUTH_DIR, "storage-state.json")
 RECORD_ID_PATTERN = re.compile(r"\d{8}-\d{6}")
 AUTH_SESSION_COOKIE = "airtype_session"
 AUTH_PASSWORD_SCHEME = "pbkdf2_sha256"
 AUTH_PASSWORD_ITERATIONS = 310_000
+THREADS_LOGIN_URL = "https://www.threads.com/login"
+THREADS_LOGIN_VIEWPORT = {"width": 1280, "height": 820}
+_threads_browser_lock = threading.RLock()
+_threads_playwright = None
+_threads_browser_context = None
+_threads_browser_page = None
 
 
 def _webui_auth_settings() -> Dict[str, Any]:
@@ -250,6 +259,165 @@ def _public_auth_path(path: str) -> bool:
     )
 
 
+def _threads_domain_matches(host: str, domain: str) -> bool:
+    normalized = domain.lstrip(".").casefold()
+    return host == normalized or host.endswith(f".{normalized}")
+
+
+def _threads_storage_cookie_header(url: str) -> str:
+    if not os.path.exists(THREADS_STORAGE_STATE_PATH):
+        return ""
+
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").casefold()
+    request_path = parsed.path or "/"
+    now = time.time()
+    try:
+        with open(THREADS_STORAGE_STATE_PATH, "r", encoding="utf-8") as state_file:
+            state = json.load(state_file)
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+    cookies = []
+    for cookie in state.get("cookies", []):
+        if not isinstance(cookie, dict):
+            continue
+        domain = str(cookie.get("domain") or "")
+        path = str(cookie.get("path") or "/")
+        name = str(cookie.get("name") or "")
+        value = str(cookie.get("value") or "")
+        expires = cookie.get("expires")
+        if not name or not _threads_domain_matches(host, domain):
+            continue
+        if path and not request_path.startswith(path):
+            continue
+        if isinstance(expires, (int, float)) and expires > 0 and expires < now:
+            continue
+        cookies.append(f"{name}={value}")
+    return "; ".join(cookies)
+
+
+def _threads_saved_cookie_count() -> int:
+    if not os.path.exists(THREADS_STORAGE_STATE_PATH):
+        return 0
+    try:
+        with open(THREADS_STORAGE_STATE_PATH, "r", encoding="utf-8") as state_file:
+            state = json.load(state_file)
+    except (OSError, json.JSONDecodeError):
+        return 0
+    return sum(
+        1
+        for cookie in state.get("cookies", [])
+        if isinstance(cookie, dict) and _threads_domain_matches("www.threads.com", str(cookie.get("domain") or ""))
+    )
+
+
+def _threads_browser_status() -> Dict[str, Any]:
+    with _threads_browser_lock:
+        running = _threads_browser_context is not None and _threads_browser_page is not None
+        url = ""
+        if running:
+            try:
+                url = str(_threads_browser_page.url)
+            except Exception:
+                url = ""
+        return {
+            "running": running,
+            "url": url,
+            "storage_state_exists": os.path.exists(THREADS_STORAGE_STATE_PATH),
+            "cookie_count": _threads_saved_cookie_count(),
+        }
+
+
+def _threads_browser_page_or_error():
+    if _threads_browser_page is None:
+        raise RuntimeError("Threads login browser is not running.")
+    return _threads_browser_page
+
+
+def _start_threads_browser() -> Dict[str, Any]:
+    global _threads_playwright, _threads_browser_context, _threads_browser_page
+    with _threads_browser_lock:
+        if _threads_browser_context is None:
+            try:
+                from playwright.sync_api import sync_playwright
+            except ImportError as error:
+                raise RuntimeError(
+                    "Playwright is not installed. Install WebUI requirements, then run `python -m playwright install chromium`."
+                ) from error
+
+            os.makedirs(THREADS_BROWSER_PROFILE_DIR, exist_ok=True)
+            _threads_playwright = sync_playwright().start()
+            try:
+                _threads_browser_context = _threads_playwright.chromium.launch_persistent_context(
+                    THREADS_BROWSER_PROFILE_DIR,
+                    headless=True,
+                    viewport=THREADS_LOGIN_VIEWPORT,
+                    locale="en-US",
+                )
+            except Exception as error:
+                _threads_playwright.stop()
+                _threads_playwright = None
+                raise RuntimeError(
+                    "Could not start the server-side browser. Run `python -m playwright install chromium` "
+                    "on the server and try again."
+                ) from error
+            _threads_browser_page = (
+                _threads_browser_context.pages[0]
+                if _threads_browser_context.pages
+                else _threads_browser_context.new_page()
+            )
+
+        page = _threads_browser_page_or_error()
+        if not str(page.url).startswith("https://www.threads.com"):
+            page.goto(THREADS_LOGIN_URL, wait_until="domcontentloaded", timeout=30_000)
+        return _threads_browser_status()
+
+
+def _stop_threads_browser() -> Dict[str, Any]:
+    global _threads_playwright, _threads_browser_context, _threads_browser_page
+    with _threads_browser_lock:
+        if _threads_browser_context is not None:
+            try:
+                _threads_browser_context.close()
+            except Exception:
+                pass
+        if _threads_playwright is not None:
+            try:
+                _threads_playwright.stop()
+            except Exception:
+                pass
+        _threads_browser_context = None
+        _threads_browser_page = None
+        _threads_playwright = None
+        return _threads_browser_status()
+
+
+def _threads_browser_screenshot() -> Dict[str, Any]:
+    with _threads_browser_lock:
+        page = _threads_browser_page_or_error()
+        page.wait_for_timeout(250)
+        if _threads_browser_context is not None:
+            os.makedirs(THREADS_AUTH_DIR, exist_ok=True)
+            _threads_browser_context.storage_state(path=THREADS_STORAGE_STATE_PATH)
+        image = page.screenshot(type="png", full_page=False)
+        return {
+            **_threads_browser_status(),
+            "image": "data:image/png;base64," + base64.b64encode(image).decode("ascii"),
+            "width": THREADS_LOGIN_VIEWPORT["width"],
+            "height": THREADS_LOGIN_VIEWPORT["height"],
+        }
+
+
+def _save_threads_browser_state() -> Dict[str, Any]:
+    with _threads_browser_lock:
+        if _threads_browser_context is None:
+            raise RuntimeError("Threads login browser is not running.")
+        os.makedirs(THREADS_AUTH_DIR, exist_ok=True)
+        _threads_browser_context.storage_state(path=THREADS_STORAGE_STATE_PATH)
+        return _threads_browser_status()
+
+
 @app.middleware("http")
 async def require_webui_auth(request: Request, call_next: Callable):
     if request.method == "OPTIONS" or _public_auth_path(request.url.path):
@@ -370,6 +538,7 @@ def startup_managed_processes() -> None:
 
 @app.on_event("shutdown")
 def shutdown_managed_processes() -> None:
+    _stop_threads_browser()
     transcriber.shutdown()
     executor.shutdown(wait=False, cancel_futures=True)
 
@@ -397,6 +566,19 @@ class ArticleRequest(BaseModel):
 
 class PostImportRequest(BaseModel):
     url: str
+
+
+class ThreadsLoginClickRequest(BaseModel):
+    x: float
+    y: float
+
+
+class ThreadsLoginTypeRequest(BaseModel):
+    text: str
+
+
+class ThreadsLoginKeyRequest(BaseModel):
+    key: str
 
 
 class LocalModelsRequest(BaseModel):
@@ -1476,10 +1658,97 @@ async def import_social_post(request: PostImportRequest):
     return {"url": request.url, "title": title, "text": text, "media_urls": media_urls}
 
 
+@app.get("/api/threads-login/status")
+async def threads_login_status():
+    return await asyncio.to_thread(_threads_browser_status)
+
+
+@app.post("/api/threads-login/start")
+async def threads_login_start():
+    try:
+        return await asyncio.to_thread(_start_threads_browser)
+    except RuntimeError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/api/threads-login/screenshot")
+async def threads_login_screenshot():
+    try:
+        return await asyncio.to_thread(_threads_browser_screenshot)
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post("/api/threads-login/click")
+async def threads_login_click(request: ThreadsLoginClickRequest):
+    try:
+        def click() -> Dict[str, Any]:
+            with _threads_browser_lock:
+                page = _threads_browser_page_or_error()
+                page.mouse.click(request.x, request.y)
+                return _threads_browser_status()
+
+        return await asyncio.to_thread(click)
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post("/api/threads-login/type")
+async def threads_login_type(request: ThreadsLoginTypeRequest):
+    try:
+        def type_text() -> Dict[str, Any]:
+            with _threads_browser_lock:
+                page = _threads_browser_page_or_error()
+                page.keyboard.type(request.text, delay=20)
+                return _threads_browser_status()
+
+        return await asyncio.to_thread(type_text)
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post("/api/threads-login/key")
+async def threads_login_key(request: ThreadsLoginKeyRequest):
+    key = str(request.key or "").strip()
+    if not key or len(key) > 40:
+        raise HTTPException(status_code=400, detail="Invalid key.")
+    try:
+        def press_key() -> Dict[str, Any]:
+            with _threads_browser_lock:
+                page = _threads_browser_page_or_error()
+                page.keyboard.press(key)
+                return _threads_browser_status()
+
+        return await asyncio.to_thread(press_key)
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post("/api/threads-login/save")
+async def threads_login_save():
+    try:
+        return await asyncio.to_thread(_save_threads_browser_state)
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post("/api/threads-login/stop")
+async def threads_login_stop():
+    return await asyncio.to_thread(_stop_threads_browser)
+
+
 @app.post("/api/post-weaver/threads-chain")
 async def import_threads_chain(request: PostImportRequest):
     try:
-        return await asyncio.to_thread(collect_threads_chain, request.url)
+        ytdlp_settings = _read_backend_config_settings().get("ytdlp", {})
+        cookies_path = str(ytdlp_settings.get("cookies") or "").strip()
+        cookie_header = "" if cookies_path else _threads_storage_cookie_header(request.url)
+        return await asyncio.to_thread(
+            collect_threads_chain,
+            request.url,
+            cookies_path=cookies_path,
+            cookie_header=cookie_header,
+        )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except RuntimeError as error:

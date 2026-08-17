@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 import html
 import json
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -44,9 +45,18 @@ class ThreadsChainCollector:
     parser without another request authorised by Threads.
     """
 
-    def __init__(self, *, max_posts: int = 100, timeout_seconds: int = 20) -> None:
+    def __init__(
+        self,
+        *,
+        max_posts: int = 100,
+        timeout_seconds: int = 20,
+        cookies_path: str = "",
+        cookie_header: str = "",
+    ) -> None:
         self.max_posts = max(1, min(int(max_posts), 500))
         self.timeout_seconds = timeout_seconds
+        self.cookies_path = cookies_path
+        self.cookie_header = cookie_header
 
     def collect(self, url: str) -> dict[str, Any]:
         canonical_url, _, _ = self._normalize_url(url)
@@ -99,6 +109,9 @@ class ThreadsChainCollector:
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131 Safari/537.36"
             ),
         }
+        cookie_header = self.cookie_header or _cookies_header_for_url(self.cookies_path, url)
+        if cookie_header:
+            headers["Cookie"] = cookie_header
         try:
             from curl_cffi import requests as curl_requests
 
@@ -328,6 +341,41 @@ def _meta_content(page: str, name: str) -> str:
     return html.unescape(match.group(1)).strip() if match else ""
 
 
-def collect_threads_chain(url: str) -> dict[str, Any]:
+def _cookies_header_for_url(cookies_path: str, url: str) -> str:
+    path = os.path.expanduser(str(cookies_path or "").strip())
+    if not path:
+        return ""
+    if not os.path.exists(path):
+        raise RuntimeError(f"Configured Threads cookies file does not exist: {path}")
+
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").casefold()
+    request_path = parsed.path or "/"
+    cookies: list[str] = []
+
+    with open(path, "r", encoding="utf-8", errors="replace") as cookie_file:
+        for line in cookie_file:
+            line = line.strip()
+            if not line or (line.startswith("#") and not line.startswith("#HttpOnly_")):
+                continue
+            if line.startswith("#HttpOnly_"):
+                line = line.removeprefix("#HttpOnly_")
+            parts = line.split("\t")
+            if len(parts) < 7:
+                continue
+
+            domain, _, cookie_path, _, _, name, value = parts[:7]
+            domain = domain.lstrip(".").casefold()
+            if host != domain and not host.endswith(f".{domain}"):
+                continue
+            if cookie_path and not request_path.startswith(cookie_path):
+                continue
+            if name:
+                cookies.append(f"{name}={value}")
+
+    return "; ".join(cookies)
+
+
+def collect_threads_chain(url: str, *, cookies_path: str = "", cookie_header: str = "") -> dict[str, Any]:
     """Backward-compatible function used by the FastAPI route."""
-    return ThreadsChainCollector().collect(url)
+    return ThreadsChainCollector(cookies_path=cookies_path, cookie_header=cookie_header).collect(url)
