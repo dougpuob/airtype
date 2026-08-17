@@ -26,6 +26,23 @@ class ThreadsPostWeaverTests(unittest.TestCase):
             case["expected_post_texts"],
         )
 
+    def test_threads_share_url_resolves_before_fetching(self) -> None:
+        case = json.loads(CASE_PATH.read_text())
+
+        class ShareCollector(ThreadsChainCollector):
+            def _resolve_share_url(self, url: str) -> str:
+                return case["input_url"]
+
+            def _fetch(self, url: str) -> str:
+                self.fetched_url = url
+                return case["page"]
+
+        collector = ShareCollector()
+        output = collector.collect("https://www.threads.com/share/HjFW63xVh/")
+
+        self.assertEqual(collector.fetched_url, "https://www.threads.com/@largitdata/post/DZ7jXhqj-rV")
+        self.assertEqual(len(output["posts"]), case["expected_post_count"])
+
     def test_cookies_header_reads_threads_cookies(self) -> None:
         cookie_text = "\n".join(
             [

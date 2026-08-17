@@ -20,6 +20,7 @@ from typing import Any, Iterable
 
 _THREADS_HOSTS = {"threads.com", "www.threads.com", "threads.net", "www.threads.net"}
 _POST_PATH = re.compile(r"^/@(?P<author>[^/?#]+)/post/(?P<code>[A-Za-z0-9_-]+)", re.IGNORECASE)
+_SHARE_PATH = re.compile(r"^/share/(?P<share_id>[A-Za-z0-9_-]+)/?", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -59,9 +60,9 @@ class ThreadsChainCollector:
         self.cookie_header = cookie_header
 
     def collect(self, url: str) -> dict[str, Any]:
-        canonical_url, _, _ = self._normalize_url(url)
+        canonical_url, _, _ = self._normalize_or_resolve_url(url)
         page = self._fetch(canonical_url)
-        return self.collect_page(url, page)
+        return self.collect_page(canonical_url, page)
 
     def collect_page(self, url: str, page: str) -> dict[str, Any]:
         """Collect a chain from an already fetched public Threads page.
@@ -99,19 +100,42 @@ class ThreadsChainCollector:
             match.group("code"),
         )
 
+    def _normalize_or_resolve_url(self, url: str) -> tuple[str, str, str]:
+        parsed = urllib.parse.urlparse(str(url or "").strip())
+        if parsed.scheme not in {"http", "https"} or parsed.hostname not in _THREADS_HOSTS:
+            raise ValueError("URL must be a public threads.com or threads.net post URL")
+        if _SHARE_PATH.match(parsed.path):
+            return self._normalize_url(self._resolve_share_url(url))
+        return self._normalize_url(url)
+
+    def _resolve_share_url(self, url: str) -> str:
+        headers = self._headers(url)
+        try:
+            from curl_cffi import requests as curl_requests
+
+            response = curl_requests.get(
+                url,
+                headers=headers,
+                impersonate="chrome131",
+                timeout=self.timeout_seconds,
+                allow_redirects=True,
+            )
+            response.raise_for_status()
+            resolved = str(response.url)
+        except ImportError:
+            request = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                resolved = response.geturl()
+        except Exception as error:
+            raise RuntimeError(f"Could not resolve the Threads share URL: {error}") from error
+
+        if resolved.rstrip("/") == url.rstrip("/"):
+            raise RuntimeError("Threads share URL did not redirect to a post URL.")
+        return resolved
+
     def _fetch(self, url: str) -> str:
         """Fetch with Chrome TLS impersonation when curl-cffi is available."""
-        headers = {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131 Safari/537.36"
-            ),
-        }
-        cookie_header = self.cookie_header or _cookies_header_for_url(self.cookies_path, url)
-        if cookie_header:
-            headers["Cookie"] = cookie_header
+        headers = self._headers(url)
         try:
             from curl_cffi import requests as curl_requests
 
@@ -124,6 +148,20 @@ class ThreadsChainCollector:
                 return response.read(3_000_000).decode("utf-8", errors="replace")
         except Exception as error:
             raise RuntimeError(f"Could not open the public Threads post: {error}") from error
+
+    def _headers(self, url: str) -> dict[str, str]:
+        headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131 Safari/537.36"
+            ),
+        }
+        cookie_header = self.cookie_header or _cookies_header_for_url(self.cookies_path, url)
+        if cookie_header:
+            headers["Cookie"] = cookie_header
+        return headers
 
     def _posts_from_payloads(
         self,

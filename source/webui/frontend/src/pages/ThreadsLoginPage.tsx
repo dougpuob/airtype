@@ -177,6 +177,15 @@ export function ThreadsLoginPage() {
               <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.72)" }}>
                 Threads login session is inactive.
               </Typography>
+              <Button
+                startIcon={<LoginOutlinedIcon />}
+                variant="contained"
+                onClick={start}
+                disabled={busy}
+                sx={{ mt: 1 }}
+              >
+                Start
+              </Button>
             </Stack>
           )}
         </Paper>
