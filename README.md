@@ -98,7 +98,7 @@ Then run the setup script:
 
 The setup script creates `~/.airtype/config.toml` if it does not exist. AirType will not start without that file.
 
-YouTube URL transcription needs a JavaScript runtime because yt-dlp must solve YouTube's player challenges. AirType looks for Deno first (the runtime yt-dlp enables by default), then Node.js 22+, including Homebrew paths that GUI apps often omit from `PATH`. If Deno is missing, install it and restart AirType:
+YouTube URL transcription needs two things: a JavaScript runtime, and the EJS challenge-solver scripts. AirType looks for Deno first (the runtime yt-dlp enables by default), then Node.js 22+, including Homebrew paths that GUI apps often omit from `PATH`. It also passes `--remote-components ejs:github` and installs `yt-dlp-ejs` into the WebUI venv. If Deno is missing, install it and restart AirType:
 
 ```bash
 brew install deno

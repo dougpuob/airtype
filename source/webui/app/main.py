@@ -2191,7 +2191,7 @@ def _download_media_page(
         if (
             process.returncode != 0
             and _is_youtube_url(url)
-            and "HTTP Error 403" in (process.stderr or process.stdout or "")
+            and _youtube_media_http_403(process.stderr or process.stdout or "")
         ):
             append_service_log("webui", "YouTube download HTTP 403; retrying with player_client=mweb")
             process = _run_media_downloader(
@@ -2504,7 +2504,7 @@ def _media_downloader_youtube_args(
 ) -> list[str]:
     if not _is_youtube_url(url):
         return []
-    args: list[str] = []
+    args: list[str] = ["--remote-components", "ejs:github"]
     if download:
         args.append("--check-formats")
     args.extend(
@@ -2682,6 +2682,20 @@ def _media_downloader_cookie_args() -> list[str]:
     return []
 
 
+def _youtube_media_http_403(detail: str) -> bool:
+    return "unable to download video data: HTTP Error 403" in detail
+
+
+def _youtube_ejs_scripts_missing(detail: str) -> bool:
+    return (
+        "Remote components" in detail
+        or "n challenge solving failed" in detail
+        or "challenge solver script" in detail
+        or "Only images are available" in detail
+        or "Requested format is not available" in detail
+    )
+
+
 def _youtube_js_runtime_hint() -> str:
     runtime = _find_js_runtime()
     if runtime:
@@ -2689,7 +2703,6 @@ def _youtube_js_runtime_hint() -> str:
         return (
             f" AirType already passed --js-runtimes {name}:{path}. "
             "HTTP 403 on video data means YouTube rejected the media CDN URL after extraction. "
-            "AirType retries with player_client=mweb and skips formats that 403. "
             "If it still fails, this WebUI host's IP may be blocked by YouTube "
             "(common for servers), or the video may need cookies in [webui.yt-dlp]."
         )
@@ -2697,6 +2710,15 @@ def _youtube_js_runtime_hint() -> str:
         " YouTube extraction requires Deno 2.3+ (recommended) or Node.js 22+ so yt-dlp can "
         "solve the player JavaScript challenge. Install Deno with: brew install deno "
         "then restart AirType. Updating yt-dlp or setting cookies does not replace the JavaScript runtime."
+    )
+
+
+def _youtube_ejs_scripts_hint() -> str:
+    return (
+        " Deno is present, but yt-dlp could not load the EJS challenge-solver scripts, "
+        "so n-parameter solving failed and only images remained. "
+        "AirType now passes --remote-components ejs:github so yt-dlp can fetch those scripts. "
+        "Also install yt-dlp-ejs into the WebUI venv: python -m pip install -U yt-dlp-ejs"
     )
 
 
@@ -2712,15 +2734,17 @@ def _media_downloader_failure_hint(url: str, detail: str) -> str:
             "[webui.yt-dlp] with cookies = \"/path/to/cookies.txt\" or cookies_from_browser = \"chrome\"."
         )
 
-    missing_js = (
+    missing_runtime = (
         "No supported JavaScript runtime could be found" in detail
         or "YouTube extraction without a JS runtime" in detail
-        or "wiki/EJS" in detail
     )
-    if is_youtube and missing_js and _find_js_runtime() is None:
+    if is_youtube and missing_runtime and _find_js_runtime() is None:
         return _youtube_js_runtime_hint()
 
-    if is_youtube and "HTTP Error 403" in detail:
+    if is_youtube and _youtube_ejs_scripts_missing(detail):
+        return _youtube_ejs_scripts_hint()
+
+    if is_youtube and _youtube_media_http_403(detail):
         return _youtube_js_runtime_hint()
 
     return ""

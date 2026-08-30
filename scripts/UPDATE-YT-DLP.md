@@ -5,7 +5,8 @@
 yt-dlp 頻繁更新以支援新的網站和修復相容性問題。請先分清這兩類錯誤：
 
 - `No supported JavaScript runtime could be found` — 缺少 Deno（或 Node.js 22+）。這不是 yt-dlp 過舊，也不是 cookies 能解的。安裝：`brew install deno`，然後重啟 AirType。
-- `HTTP Error 403: Forbidden` — 若前面已出現 JS runtime 警告，通常是簽名解不開的後續失敗。先裝 Deno。若 Deno 已裝仍 403，再更新 yt-dlp。
+- `Remote components ... were skipped` / `n challenge solving failed` / `Only images are available` — Deno 已找到，但 EJS 解題腳本沒載入。AirType 會傳 `--remote-components ejs:github`。伺服器上也要安裝：`.venv/bin/python -m pip install -U yt-dlp-ejs`。
+- `unable to download video data: HTTP Error 403` — 簽名解完後 CDN 仍拒絕。先確認 EJS 腳本有載入。若仍 403，才是 IP 被擋或該影片需要 cookies。
 
 **YouTube Shorts 通常需要 yt-dlp 版本 2026.08 或更高版本，以及 Deno 2.3+。**
 

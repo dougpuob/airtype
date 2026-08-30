@@ -63,19 +63,49 @@ class MediaDownloaderJsRuntimeTests(unittest.TestCase):
                 "ERROR: unable to download video data: HTTP Error 403: Forbidden",
             )
         self.assertIn("media CDN URL", hint)
-        self.assertIn("player_client=mweb", hint)
         self.assertIn("[webui.yt-dlp]", hint)
         self.assertNotIn("brew install deno", hint)
+        self.assertNotIn("EJS challenge-solver", hint)
+
+    def test_n_challenge_failure_explains_ejs_scripts(self) -> None:
+        detail = (
+            "WARNING: [youtube] [jsc] Remote components challenge solver script (deno) "
+            "and NPM package (deno) were skipped. "
+            "WARNING: [youtube] zBstQ3x3WZE: n challenge solving failed: Some formats may be missing. "
+            "WARNING: [youtube] zBstQ3x3WZE: mweb client https formats require a GVS PO Token "
+            "which was not provided. They will be skipped as they may yield HTTP Error 403. "
+            "WARNING: Only images are available for download. "
+            "ERROR: [youtube] zBstQ3x3WZE: Requested format is not available."
+        )
+        with patch.object(webui, "_find_js_runtime", return_value=("deno", "/opt/homebrew/bin/deno")):
+            hint = webui._media_downloader_failure_hint(
+                "https://www.youtube.com/shorts/zBstQ3x3WZE",
+                detail,
+            )
+        self.assertIn("--remote-components ejs:github", hint)
+        self.assertIn("yt-dlp-ejs", hint)
+        self.assertNotIn("media CDN URL", hint)
+
+    def test_po_token_warning_alone_is_not_treated_as_cdn_403(self) -> None:
+        hint = webui._media_downloader_failure_hint(
+            "https://www.youtube.com/watch?v=abc",
+            "WARNING: mweb client https formats require a GVS PO Token. "
+            "They will be skipped as they may yield HTTP Error 403.",
+        )
+        self.assertEqual(hint, "")
 
     def test_youtube_args_check_formats_and_mweb_client(self) -> None:
         args = webui._media_downloader_youtube_args("https://www.youtube.com/watch?v=abc")
         self.assertIn("--check-formats", args)
+        self.assertIn("--remote-components", args)
+        self.assertIn("ejs:github", args)
         self.assertIn("youtube:player_client=default,mweb", args)
         preview_args = webui._media_downloader_youtube_args(
             "https://youtu.be/abc",
             download=False,
         )
         self.assertNotIn("--check-formats", preview_args)
+        self.assertIn("ejs:github", preview_args)
         self.assertEqual(
             webui._media_downloader_youtube_args("https://www.bilibili.com/video/BV1"),
             [],
