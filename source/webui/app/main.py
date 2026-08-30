@@ -2474,17 +2474,22 @@ def _bilibili_referer(url: str) -> str:
 
 
 def _media_downloader_browser_args(downloader_command: tuple[str, ...], url: str) -> list[str]:
-    if not _is_bilibili_url(url):
-        return []
+    if _is_bilibili_url(url):
+        impersonate_target = _best_impersonate_target(downloader_command)
+        if impersonate_target:
+            return ["--impersonate", impersonate_target]
+        return [
+            "--user-agent",
+            _bilibili_user_agent(),
+        ]
 
+    # For YouTube and other sites, use impersonate if available
+    # This avoids JS runtime requirements and 403 errors
     impersonate_target = _best_impersonate_target(downloader_command)
     if impersonate_target:
         return ["--impersonate", impersonate_target]
 
-    return [
-        "--user-agent",
-        _bilibili_user_agent(),
-    ]
+    return []
 
 
 @functools.lru_cache(maxsize=8)
@@ -2549,13 +2554,14 @@ def _media_downloader_failure_hint(url: str, detail: str) -> str:
             "Alternatively, you can configure cookies in [webui.yt-dlp] with cookies_from_browser = \"chrome\"."
         )
     
-    # Check for JavaScript runtime warning which indicates outdated yt-dlp
+    # Check for JavaScript runtime warning - fixed by using --impersonate (no JS needed)
+    # The --impersonate parameter is now added by default for YouTube downloads
     if "No supported JavaScript runtime could be found" in detail or "EJS" in detail:
         return (
-            " YouTube requires a JavaScript runtime (like deno) for some URLs. "
-            "Please update yt-dlp to the latest version by running: pip install --upgrade yt-dlp "
-            "(add --break-system-packages if needed). "
-            "Make sure deno is installed: brew install deno (on macOS)."
+            " YouTube extraction requires browser impersonation. "
+            "AirType now automatically adds --impersonate for YouTube downloads. "
+            "If you still see this error, the issue may be with your yt-dlp configuration. "
+            "You can also try using cookies: configure cookies_from_browser = \"chrome\" in [webui.yt-dlp]."
         )
     
     return ""
