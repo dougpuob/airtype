@@ -51,6 +51,13 @@ from .post_weaver import collect_threads_chain
 
 app = FastAPI(title="AirType API", description="Aircraft Cabin Configuration & Speech Recognition API")
 
+
+@app.on_event("startup")
+async def startup_event():
+    """Run on FastAPI startup - check and update yt-dlp"""
+    _ensure_yt_dlp_updated()
+
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -2318,49 +2325,10 @@ def _destination_with_media_extension(destination: str, media_path: str) -> str:
 def _media_downloader_command() -> list[str]:
     try:
         import yt_dlp  # noqa: F401
-        
-        # Get current version from module or command line
-        current_version = getattr(yt_dlp, "__version__", "")
-        if not current_version:
-            try:
-                result = subprocess.run(
-                    [sys.executable, "-m", "yt_dlp", "--version"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                current_version = result.stdout.strip() if result.returncode == 0 else ""
-            except Exception:
-                current_version = ""
-        
-        if current_version:
-            latest_version = _get_latest_yt_dlp_version()
-            if latest_version and _is_version_older(current_version, latest_version):
-                append_service_log("webui", f"yt-dlp version {current_version} is outdated. Latest: {latest_version}.")
-                append_service_log("webui", "yt-dlp will be checked and updated on WebUI startup.")
-            else:
-                append_service_log("webui", f"yt-dlp version {current_version} is up to date.")
-        
         return [sys.executable, "-m", "yt_dlp"]
     except ImportError:
         downloader = shutil.which("yt-dlp")
-        if downloader:
-            # Check system yt-dlp version
-            try:
-                result = subprocess.run(
-                    [downloader, "--version"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode == 0:
-                    version = result.stdout.strip()
-                    append_service_log("webui", f"System yt-dlp version: {version}")
-                    # Note: system yt-dlp is usually managed by pip/venv, so we don't auto-update it
-            except Exception:
-                pass
-            return [downloader]
-        return []
+        return [downloader] if downloader else []
 
 
 def _run_media_downloader(
@@ -3871,13 +3839,9 @@ def _ensure_yt_dlp_updated() -> None:
     """Check and update yt-dlp to the latest version if needed."""
     try:
         import yt_dlp
-        
-        # Get current version from module or command line
         current_version = getattr(yt_dlp, "__version__", "")
         if not current_version:
-            # Try to get version from command line
             try:
-                import subprocess
                 result = subprocess.run(
                     [sys.executable, "-m", "yt_dlp", "--version"],
                     capture_output=True,
@@ -3887,32 +3851,29 @@ def _ensure_yt_dlp_updated() -> None:
                 current_version = result.stdout.strip() if result.returncode == 0 else ""
             except Exception:
                 current_version = ""
-        
+
         append_service_log("webui", f"yt-dlp current version: {current_version or 'unknown'}")
-        
-        # Get latest version from GitHub API
+
         latest_version = _get_latest_yt_dlp_version()
-        
+
         if latest_version and current_version:
-            # Compare versions
             if _is_version_older(current_version, latest_version):
                 append_service_log("webui", f"yt-dlp is outdated. Current: {current_version}, Latest: {latest_version}")
-                
-                # Try to update yt-dlp using pip
+
+                # Backup current version before update
+                backup_version = current_version
+
+                # Try pip update without --quiet to see output if failed
                 try:
-                    import subprocess
-                    import sys
-                    
-                    # Try pip first
                     result = subprocess.run(
-                        [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp", "--quiet"],
+                        [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
                         capture_output=True,
                         text=True,
-                        timeout=120
+                        timeout=180
                     )
-                    
+
                     if result.returncode == 0:
-                        # Reload yt-dlp module to get updated version
+                        # Reload module to get new version
                         import importlib
                         import yt_dlp as ytdlp_module
                         importlib.reload(ytdlp_module)
@@ -3930,13 +3891,16 @@ def _ensure_yt_dlp_updated() -> None:
                                 new_version = "unknown"
                         append_service_log("webui", f"yt-dlp updated from {current_version} to {new_version}")
                     else:
-                        error_msg = result.stderr or result.stdout or "unknown error"
-                        append_service_log("webui", f"Failed to update yt-dlp: {error_msg}")
+                        # Update failed, log stderr for debugging
+                        error_msg = result.stderr.strip() if result.stderr else (result.stdout.strip() if result.stdout else "unknown error")
+                        append_service_log("webui", f"Failed to update yt-dlp from {backup_version} to {latest_version}: {error_msg}")
+                        append_service_log("webui", "Please update manually: python -m pip install --upgrade yt-dlp")
                 except Exception as e:
                     append_service_log("webui", f"Error updating yt-dlp: {e}")
+                    append_service_log("webui", "Please update manually: python -m pip install --upgrade yt-dlp")
             else:
                 append_service_log("webui", f"yt-dlp is up to date (version {current_version})")
-        
+
     except ImportError:
         append_service_log("webui", "yt-dlp not installed, will try to use system yt-dlp")
     except Exception as e:
