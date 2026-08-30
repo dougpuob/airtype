@@ -2,13 +2,12 @@
 
 ## 為什麼需要更新 yt-dlp？
 
-yt-dlp 頻繁更新以支援新的網站和修復相容性問題。如果您遇到以下錯誤，通常表示 yt-dlp 版本過舊：
+yt-dlp 頻繁更新以支援新的網站和修復相容性問題。請先分清這兩類錯誤：
 
-- `HTTP Error 403: Forbidden` - 無法下載 YouTube Shorts 或其他媒體
-- `No supported JavaScript runtime could be found` - 缺少 JavaScript 執行環境
-- 某些格式無法下載
+- `No supported JavaScript runtime could be found` — 缺少 Deno（或 Node.js 22+）。這不是 yt-dlp 過舊，也不是 cookies 能解的。安裝：`brew install deno`，然後重啟 AirType。
+- `HTTP Error 403: Forbidden` — 若前面已出現 JS runtime 警告，通常是簽名解不開的後續失敗。先裝 Deno。若 Deno 已裝仍 403，再更新 yt-dlp。
 
-**YouTube Shorts 通常需要 yt-dlp 版本 2026.08 或更高版本。**
+**YouTube Shorts 通常需要 yt-dlp 版本 2026.08 或更高版本，以及 Deno 2.3+。**
 
 ## 更新方法
 
@@ -87,11 +86,16 @@ AirType 現在在 WebUI 啟動時會自動檢查 yt-dlp 版本並嘗試更新。
 
 ## 常見問題
 
+### Q: 出現 `No supported JavaScript runtime could be found`？
+A: 安裝 Deno 2.3+（`brew install deno`）後重啟 AirType。AirType 會自動尋找 `/opt/homebrew/bin/deno` 等路徑，並把 `--js-runtimes deno:/絕對路徑` 傳給 yt-dlp。`--impersonate`、cookies、更新 yt-dlp 都不能取代這個 JS runtime。
+
 ### Q: 更新後仍然有 403 錯誤？
 A: 請確保：
-1. 使用正確的 Python 環境（virtual environment 或系統 Python）
-2. 更新指令沒有被快取（可以加 `--no-cache-dir` 參數）
-3. 檢查是否有其他 yt-dlp 版本被安裝
+1. Deno（或 Node.js 22+）已安裝，且 AirType 重啟後能找到它
+2. 使用正確的 Python 環境（virtual environment 或系統 Python）
+3. 更新指令沒有被快取（可以加 `--no-cache-dir` 參數）
+4. 檢查是否有其他 yt-dlp 版本被安裝
+5. 若是年齡限制或需登入的影片，再設定 `[webui.yt-dlp] cookies_from_browser`
 
 ### Q: 如何檢查目前的 yt-dlp 版本？
 A: 執行 `yt-dlp --version` 或 `python3 -m yt_dlp --version`

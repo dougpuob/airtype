@@ -58,6 +58,8 @@ temperature = 0
 
 [webui.yt-dlp]
 # Optional. Use one of these when a media URL requires logged-in browser cookies.
+# YouTube also needs Deno 2.3+ (or Node.js 22+) so yt-dlp can solve player JS.
+# AirType auto-detects Deno/Node; cookies do not replace that runtime.
 cookies = ""
 cookies_from_browser = ""
 

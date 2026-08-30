@@ -80,13 +80,14 @@ AirType.git/
 - [uv](https://docs.astral.sh/uv/)
 - [whisper.cpp](https://github.com/ggerganov/whisper.cpp) (for local transcription)
 - ffmpeg
+- [Deno](https://deno.com) 2.3+ (YouTube URL transcription; yt-dlp's default JavaScript runtime)
 
 ### First-Time Setup
 
 Install the required tools yourself before running the setup script. On macOS with Homebrew, one option is:
 
 ```bash
-brew install uv whisper-cpp ffmpeg curl
+brew install uv whisper-cpp ffmpeg curl deno
 ```
 
 Then run the setup script:
@@ -97,7 +98,13 @@ Then run the setup script:
 
 The setup script creates `~/.airtype/config.toml` if it does not exist. AirType will not start without that file.
 
-For media URLs that require logged-in browser cookies, configure yt-dlp in `~/.airtype/config.toml`:
+YouTube URL transcription needs a JavaScript runtime because yt-dlp must solve YouTube's player challenges. AirType looks for Deno first (the runtime yt-dlp enables by default), then Node.js 22+, including Homebrew paths that GUI apps often omit from `PATH`. If Deno is missing, install it and restart AirType:
+
+```bash
+brew install deno
+```
+
+Cookies are a separate setting. Use them only when a media URL requires a logged-in browser session, for example age-restricted YouTube or premium Bilibili:
 
 ```toml
 [webui.yt-dlp]
@@ -109,7 +116,7 @@ Use `cookies` for a `cookies.txt` path, or `cookies_from_browser` for a browser 
 
 #### Keeping yt-dlp Up to Date
 
-yt-dlp is frequently updated to support new websites and fix compatibility issues. If you encounter errors like `HTTP Error 403: Forbidden` when downloading YouTube Shorts or other URLs, try updating yt-dlp:
+yt-dlp is frequently updated to support new websites and fix compatibility issues. If YouTube downloads fail with `HTTP Error 403` *after* Deno is installed, update yt-dlp:
 
 **Using the update script:**
 ```bash
@@ -145,7 +152,7 @@ AirType stores the server browser profile and exported Threads cookies under the
 
 Bilibili URL transcription automatically asks yt-dlp for audio first and applies browser-style headers, Chrome impersonation when available, smaller HTTP chunks, and resume-friendly retries. This avoids common `HTTP Error 412: Precondition Failed` failures from Bilibili metadata and CDN requests. Higher-quality Bilibili formats may still require a logged-in or premium account via cookies.
 
-**YouTube Shorts Note:** If you encounter `HTTP Error 403` when transcribing YouTube Shorts URLs, ensure yt-dlp is updated to version 2026.08 or later. The issue is caused by an outdated yt-dlp version that cannot handle YouTube's updated authentication mechanisms. Run `./scripts/update-yt-dlp.sh` to update.
+**YouTube downloads:** `No supported JavaScript runtime could be found` means Deno (or Node 22+) is missing, not that cookies or yt-dlp are outdated. `HTTP Error 403` after that warning is the usual follow-on failure when the player signature was not solved. Install Deno, then restart AirType. Impersonation (`--impersonate`) is used for Bilibili TLS fingerprinting and does not replace the JavaScript runtime.
 
 
 ### Run

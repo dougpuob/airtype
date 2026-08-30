@@ -2106,10 +2106,17 @@ def _preview_url_metadata(url: str) -> Dict[str, Any]:
     ]
     command.extend(_media_downloader_site_args(url))
     command.extend(_media_downloader_browser_args(tuple(downloader_command), url))
+    command.extend(_media_downloader_js_runtime_args())
     command.extend(_media_downloader_cookie_args())
     command.append(url)
     try:
-        process = subprocess.run(command, capture_output=True, text=True, timeout=45)
+        process = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=45,
+            env=_media_downloader_env(),
+        )
     except (OSError, subprocess.TimeoutExpired):
         return {}
 
@@ -2331,6 +2338,100 @@ def _media_downloader_command() -> list[str]:
         return [downloader] if downloader else []
 
 
+_JS_RUNTIME_BIN_DIRS = (
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    os.path.expanduser("~/.deno/bin"),
+    os.path.expanduser("~/.local/bin"),
+)
+_DENO_MIN_VERSION = (2, 3)
+_NODE_MIN_MAJOR = 22
+
+
+def _media_downloader_env() -> Dict[str, str]:
+    env = os.environ.copy()
+    path = env.get("PATH", "")
+    path_parts = path.split(os.pathsep) if path else []
+    prefixes = [
+        directory
+        for directory in _JS_RUNTIME_BIN_DIRS
+        if os.path.isdir(directory) and directory not in path_parts
+    ]
+    if prefixes:
+        env["PATH"] = os.pathsep.join(prefixes + path_parts)
+    return env
+
+
+def _iter_js_runtime_paths(name: str) -> list[str]:
+    seen: set[str] = set()
+    candidates: list[str] = []
+    extra = [os.path.join(directory, name) for directory in _JS_RUNTIME_BIN_DIRS]
+    for candidate in [shutil.which(name), *extra]:
+        if not candidate:
+            continue
+        resolved = os.path.realpath(candidate)
+        if resolved in seen:
+            continue
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            seen.add(resolved)
+            candidates.append(candidate)
+    return candidates
+
+
+def _parse_version_tuple(text: str) -> Optional[tuple[int, ...]]:
+    match = re.search(r"(\d+(?:\.\d+)*)", text)
+    if not match:
+        return None
+    try:
+        return tuple(int(part) for part in match.group(1).split("."))
+    except ValueError:
+        return None
+
+
+def _js_runtime_version_ok(name: str, path: str) -> bool:
+    try:
+        process = subprocess.run(
+            [path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    version = _parse_version_tuple((process.stdout or process.stderr or "").strip())
+    if version is None:
+        return False
+    if name == "deno":
+        return version >= _DENO_MIN_VERSION
+    if name == "node":
+        return version[0] >= _NODE_MIN_MAJOR
+    return False
+
+
+@functools.lru_cache(maxsize=1)
+def _find_js_runtime() -> Optional[tuple[str, str]]:
+    """Return (runtime_name, absolute_path) for yt-dlp's YouTube JS solver.
+
+    yt-dlp only enables Deno by default. GUI-launched AirType often has a
+    stripped PATH that does not include Homebrew, so search well-known
+    locations instead of relying on PATH alone. Node 22+ is a fallback and
+    must be passed explicitly with --js-runtimes.
+    """
+    for name in ("deno", "node"):
+        for path in _iter_js_runtime_paths(name):
+            if _js_runtime_version_ok(name, path):
+                return name, path
+    return None
+
+
+def _media_downloader_js_runtime_args() -> list[str]:
+    runtime = _find_js_runtime()
+    if not runtime:
+        return []
+    name, path = runtime
+    return ["--js-runtimes", f"{name}:{path}"]
+
+
 def _run_media_downloader(
     downloader_command: list[str],
     work_dir: str,
@@ -2357,9 +2458,16 @@ def _run_media_downloader(
         command.extend(["--continue", "--http-chunk-size", "512K", "--sleep-requests", "1"])
     command.extend(_media_downloader_site_args(url))
     command.extend(_media_downloader_browser_args(tuple(downloader_command), url))
+    command.extend(_media_downloader_js_runtime_args())
     command.extend(_media_downloader_cookie_args())
     command.append(url)
-    return subprocess.run(command, capture_output=True, text=True, timeout=60 * 30)
+    return subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=60 * 30,
+        env=_media_downloader_env(),
+    )
 
 
 def _is_bilibili_url(url: str) -> bool:
@@ -2483,8 +2591,8 @@ def _media_downloader_browser_args(downloader_command: tuple[str, ...], url: str
             _bilibili_user_agent(),
         ]
 
-    # For YouTube and other sites, use impersonate if available
-    # This avoids JS runtime requirements and 403 errors
+    # Impersonate helps TLS fingerprinting on some sites. It does not replace
+    # the JavaScript runtime YouTube requires for player signature decryption.
     impersonate_target = _best_impersonate_target(downloader_command)
     if impersonate_target:
         return ["--impersonate", impersonate_target]
@@ -2500,6 +2608,7 @@ def _best_impersonate_target(downloader_command: tuple[str, ...]) -> str:
             capture_output=True,
             text=True,
             timeout=10,
+            env=_media_downloader_env(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""
@@ -2513,6 +2622,10 @@ def _best_impersonate_target(downloader_command: tuple[str, ...]) -> str:
         ("chrome-133:macos-15", "Chrome-133", "Macos-15"),
         ("chrome-131:macos-14", "Chrome-131", "Macos-14"),
         ("chrome-124:macos-14", "Chrome-124", "Macos-14"),
+        ("chrome-136:linux", "Chrome-136", "Linux"),
+        ("chrome-133:linux", "Chrome-133", "Linux"),
+        ("chrome-131:linux", "Chrome-131", "Linux"),
+        ("chrome-124:linux", "Chrome-124", "Linux"),
     ]
     for target, client, os_name in candidates:
         if client in target_output and os_name in target_output:
@@ -2534,9 +2647,25 @@ def _media_downloader_cookie_args() -> list[str]:
     return []
 
 
+def _youtube_js_runtime_hint() -> str:
+    runtime = _find_js_runtime()
+    if runtime:
+        name, path = runtime
+        return (
+            f" AirType will pass --js-runtimes {name}:{path} to yt-dlp. "
+            "If this still fails, install yt-dlp-ejs into the WebUI venv and restart AirType."
+        )
+    return (
+        " YouTube extraction requires Deno 2.3+ (recommended) or Node.js 22+ so yt-dlp can "
+        "solve the player JavaScript challenge. Install Deno with: brew install deno "
+        "then restart AirType. Updating yt-dlp or setting cookies does not replace the JavaScript runtime."
+    )
+
+
 def _media_downloader_failure_hint(url: str, detail: str) -> str:
     parsed = urllib.parse.urlparse(url)
     host = parsed.netloc.lower()
+    is_youtube = "youtube.com" in host or "youtu.be" in host
     if ("bilibili.com" in host or "b23.tv" in host) and "HTTP Error 412" in detail:
         return (
             " BiliBili rejected the metadata request. AirType sends BiliBili browser-style headers "
@@ -2544,26 +2673,23 @@ def _media_downloader_failure_hint(url: str, detail: str) -> str:
             "a compatible curl_cffi package for impersonation, or provide logged-in cookies in "
             "[webui.yt-dlp] with cookies = \"/path/to/cookies.txt\" or cookies_from_browser = \"chrome\"."
         )
-    
-    # Check for YouTube 403 Forbidden which may indicate old yt-dlp version
-    if ("youtube.com" in host or "youtu.be" in host or "youtube.com/shorts" in url) and "HTTP Error 403" in detail:
+
+    missing_js = (
+        "No supported JavaScript runtime could be found" in detail
+        or "YouTube extraction without a JS runtime" in detail
+        or "wiki/EJS" in detail
+    )
+    if is_youtube and missing_js:
+        return _youtube_js_runtime_hint()
+
+    if is_youtube and "HTTP Error 403" in detail:
         return (
-            " YouTube rejected the download request. This may be caused by an outdated yt-dlp version. "
-            "Please update yt-dlp by running: pip install --upgrade yt-dlp "
-            "(add --break-system-packages if needed). "
-            "Alternatively, you can configure cookies in [webui.yt-dlp] with cookies_from_browser = \"chrome\"."
+            " YouTube rejected the download request (HTTP 403). "
+            "This usually means yt-dlp could not solve YouTube's JavaScript player challenge."
+            + _youtube_js_runtime_hint()
+            + " Cookies in [webui.yt-dlp] only help for age-restricted or logged-in videos."
         )
-    
-    # Check for JavaScript runtime warning - fixed by using --impersonate (no JS needed)
-    # The --impersonate parameter is now added by default for YouTube downloads
-    if "No supported JavaScript runtime could be found" in detail or "EJS" in detail:
-        return (
-            " YouTube extraction requires browser impersonation. "
-            "AirType now automatically adds --impersonate for YouTube downloads. "
-            "If you still see this error, the issue may be with your yt-dlp configuration. "
-            "You can also try using cookies: configure cookies_from_browser = \"chrome\" in [webui.yt-dlp]."
-        )
-    
+
     return ""
 
 
@@ -3872,7 +3998,7 @@ def _ensure_yt_dlp_updated() -> None:
                 # Try pip update without --quiet to see output if failed
                 try:
                     result = subprocess.run(
-                        [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
+                        [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp", "yt-dlp-ejs"],
                         capture_output=True,
                         text=True,
                         timeout=180
@@ -3911,6 +4037,39 @@ def _ensure_yt_dlp_updated() -> None:
         append_service_log("webui", "yt-dlp not installed, will try to use system yt-dlp")
     except Exception as e:
         append_service_log("webui", f"Error in yt-dlp version check: {e}")
+
+    _ensure_yt_dlp_ejs()
+
+    runtime = _find_js_runtime()
+    if runtime:
+        append_service_log("webui", f"yt-dlp JS runtime: {runtime[0]}={runtime[1]}")
+    else:
+        append_service_log(
+            "webui",
+            "yt-dlp JS runtime: not found. YouTube downloads need Deno 2.3+ (brew install deno).",
+        )
+
+
+def _ensure_yt_dlp_ejs() -> None:
+    try:
+        import yt_dlp_ejs  # noqa: F401
+        return
+    except ImportError:
+        pass
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "yt-dlp-ejs"],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if result.returncode == 0:
+            append_service_log("webui", "installed yt-dlp-ejs")
+        else:
+            error_msg = result.stderr.strip() or result.stdout.strip() or "unknown error"
+            append_service_log("webui", f"Failed to install yt-dlp-ejs: {error_msg}")
+    except Exception as error:
+        append_service_log("webui", f"Error installing yt-dlp-ejs: {error}")
 
 
 def _get_latest_yt_dlp_version() -> Optional[str]:

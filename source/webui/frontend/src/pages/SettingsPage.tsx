@@ -364,6 +364,7 @@ export function SettingsPage() {
                   label="yt-dlp cookies from browser"
                   value={draft?.ytdlp?.cookies_from_browser || ""}
                   onChange={(event) => updateSection("ytdlp", { cookies_from_browser: event.target.value })}
+                  helperText="Cookies help age-restricted or logged-in videos. YouTube also needs Deno 2.3+ (brew install deno)."
                 />
                 <Alert severity="info">
                   Obsidian notes are opened with the local Obsidian app using the generated note title and Markdown body.

@@ -61,6 +61,39 @@ ensure_uv_python() {
   fi
 }
 
+ensure_deno() {
+  echo
+  echo "Checking Deno (required for YouTube URL transcription)..."
+  if command -v deno >/dev/null 2>&1; then
+    echo "Found Deno: $(command -v deno) ($(deno --version | head -n 1))"
+    return
+  fi
+
+  for candidate in /opt/homebrew/bin/deno /usr/local/bin/deno "$HOME/.deno/bin/deno"; do
+    if [[ -x "$candidate" ]]; then
+      echo "Found Deno: $candidate ($("$candidate" --version | head -n 1))"
+      return
+    fi
+  done
+
+  echo "Deno was not found."
+  echo "yt-dlp needs Deno 2.3+ to solve YouTube's JavaScript player challenges."
+  echo "Node.js 22+ also works, but Deno is the runtime yt-dlp enables by default."
+
+  if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
+    echo "Recommended install command:"
+    echo "  brew install deno"
+    if confirm "Install Deno with Homebrew now?"; then
+      brew install deno
+      return
+    fi
+    echo "Skipping Deno install. YouTube URL transcription will fail until Deno is installed."
+    return
+  fi
+
+  echo "Install Deno from https://deno.com, then run ./scripts/setup.sh again."
+}
+
 ensure_whisper_cpp() {
   echo
   echo "Checking whisper.cpp command-line tools..."
@@ -268,21 +301,23 @@ echo
 echo "This script checks system prerequisites, prepares the project .venv, and creates project config."
 echo "It does not install uv, Homebrew, whisper-cpp, or ffmpeg."
 echo "It may install uv-managed Python 3.11 and Python packages into this project's .venv."
+echo "It may install Deno with Homebrew if you confirm."
 echo
 echo "Planned actions:"
 echo "  1. Check for uv"
 echo "  2. Ensure Python 3.11 is available through uv"
 echo "  3. Check for ffmpeg"
-echo "  4. Create or reuse .venv"
-echo "  5. Install WebUI Python dependencies into .venv"
+echo "  4. Check for Deno (YouTube JS runtime for yt-dlp)"
+echo "  5. Create or reuse .venv"
+echo "  6. Install WebUI Python dependencies into .venv"
 echo "     - fastapi, uvicorn, python-multipart, pydantic"
-echo "     - yt-dlp, curl_cffi, opencc-python-reimplemented"
-echo "  6. Create $CONFIG_PATH from config.schema.json defaults if it does not exist"
-echo "  7. Check for whisper.cpp command-line tools"
-echo "  8. Offer to download the default Whisper model"
+echo "     - yt-dlp, yt-dlp-ejs, curl_cffi, opencc-python-reimplemented"
+echo "  7. Create $CONFIG_PATH from config.schema.json defaults if it does not exist"
+echo "  8. Check for whisper.cpp command-line tools"
+echo "  9. Offer to download the default Whisper model"
 echo "     - $DEFAULT_WHISPER_MODEL_FILE"
 echo "     - stored in $MODEL_DIR"
-echo "  9. Update $CONFIG_PATH Web UI settings to use the downloaded model"
+echo " 10. Update $CONFIG_PATH Web UI settings to use the downloaded model"
 echo
 if ! confirm "Continue with setup?"; then
   echo "Setup cancelled."
@@ -319,6 +354,8 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
   exit 1
 fi
 
+ensure_deno
+
 echo
 if [[ -x "$VENV_DIR/bin/python" ]]; then
   echo "Reusing virtual environment: .venv"
@@ -331,7 +368,7 @@ echo
 echo "Installing WebUI Python dependencies into .venv..."
 "$UV_BIN" pip install --python "$VENV_DIR/bin/python" -r "$ROOT_DIR/source/webui/requirements.txt"
 
-if ! "$VENV_DIR/bin/python" -c 'import fastapi, uvicorn, multipart, pydantic, yt_dlp, opencc' >/dev/null 2>&1; then
+if ! "$VENV_DIR/bin/python" -c 'import fastapi, uvicorn, multipart, pydantic, yt_dlp, yt_dlp_ejs, opencc' >/dev/null 2>&1; then
   echo
   echo "WebUI Python dependencies were not installed correctly in .venv."
   exit 1

@@ -45,6 +45,7 @@ final class BackendProcessManager {
             "--port",
             String(port)
         ]
+        process.environment = backendEnvironment()
 
         do {
             try process.run()
@@ -149,6 +150,20 @@ final class BackendProcessManager {
 
     private func isProcessRunning(_ pid: pid_t) -> Bool {
         kill(pid, 0) == 0
+    }
+
+    private func backendEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let extraDirectories = ["/opt/homebrew/bin", "/usr/local/bin"]
+        let currentPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        let currentParts = currentPath.split(separator: ":").map(String.init)
+        let prefixes = extraDirectories.filter { directory in
+            FileManager.default.fileExists(atPath: directory) && !currentParts.contains(directory)
+        }
+        if !prefixes.isEmpty {
+            environment["PATH"] = (prefixes + [currentPath]).joined(separator: ":")
+        }
+        return environment
     }
 
     private func isLocalEndpoint(_ endpoint: String) -> Bool {

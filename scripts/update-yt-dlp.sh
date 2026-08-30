@@ -97,7 +97,7 @@ echo "正在更新 yt-dlp..."
 echo
 
 # 嘗試使用 pip 更新
-if "$PYTHON_BIN" -m pip install --upgrade yt-dlp 2>/dev/null; then
+if "$PYTHON_BIN" -m pip install --upgrade yt-dlp yt-dlp-ejs 2>/dev/null; then
     echo "yt-dlp 更新成功！"
     echo "當前版本："
     "$PYTHON_BIN" -m yt_dlp --version
