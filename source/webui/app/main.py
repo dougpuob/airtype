@@ -2106,6 +2106,7 @@ def _preview_url_metadata(url: str) -> Dict[str, Any]:
     ]
     command.extend(_media_downloader_site_args(url))
     command.extend(_media_downloader_browser_args(tuple(downloader_command), url))
+    command.extend(_media_downloader_youtube_args(url, download=False))
     command.extend(_media_downloader_js_runtime_args())
     command.extend(_media_downloader_cookie_args())
     command.append(url)
@@ -2187,6 +2188,19 @@ def _download_media_page(
             url,
             "bestaudio/best",
         )
+        if (
+            process.returncode != 0
+            and _is_youtube_url(url)
+            and "HTTP Error 403" in (process.stderr or process.stdout or "")
+        ):
+            append_service_log("webui", "YouTube download HTTP 403; retrying with player_client=mweb")
+            process = _run_media_downloader(
+                downloader_command,
+                work_dir,
+                url,
+                "bestaudio/best",
+                youtube_clients="mweb",
+            )
         if process.returncode != 0:
             detail = (process.stderr or process.stdout).strip()
             hint = _media_downloader_failure_hint(original_url, detail)
@@ -2437,6 +2451,7 @@ def _run_media_downloader(
     work_dir: str,
     url: str,
     format_selector: str,
+    youtube_clients: Optional[str] = None,
 ) -> subprocess.CompletedProcess[str]:
     output_template = os.path.join(work_dir, "source.%(ext)s")
     is_bilibili = _is_bilibili_url(url)
@@ -2458,6 +2473,7 @@ def _run_media_downloader(
         command.extend(["--continue", "--http-chunk-size", "512K", "--sleep-requests", "1"])
     command.extend(_media_downloader_site_args(url))
     command.extend(_media_downloader_browser_args(tuple(downloader_command), url))
+    command.extend(_media_downloader_youtube_args(url, player_clients=youtube_clients))
     command.extend(_media_downloader_js_runtime_args())
     command.extend(_media_downloader_cookie_args())
     command.append(url)
@@ -2473,6 +2489,31 @@ def _run_media_downloader(
 def _is_bilibili_url(url: str) -> bool:
     host = urllib.parse.urlparse(url).netloc.lower()
     return "bilibili.com" in host or "b23.tv" in host
+
+
+def _is_youtube_url(url: str) -> bool:
+    host = urllib.parse.urlparse(url).netloc.lower()
+    return "youtube.com" in host or "youtu.be" in host
+
+
+def _media_downloader_youtube_args(
+    url: str,
+    *,
+    download: bool = True,
+    player_clients: Optional[str] = None,
+) -> list[str]:
+    if not _is_youtube_url(url):
+        return []
+    args: list[str] = []
+    if download:
+        args.append("--check-formats")
+    args.extend(
+        [
+            "--extractor-args",
+            f"youtube:player_client={player_clients or 'default,mweb'}",
+        ]
+    )
+    return args
 
 
 def _resolve_media_url(url: str) -> str:
@@ -2591,12 +2632,6 @@ def _media_downloader_browser_args(downloader_command: tuple[str, ...], url: str
             _bilibili_user_agent(),
         ]
 
-    # Impersonate helps TLS fingerprinting on some sites. It does not replace
-    # the JavaScript runtime YouTube requires for player signature decryption.
-    impersonate_target = _best_impersonate_target(downloader_command)
-    if impersonate_target:
-        return ["--impersonate", impersonate_target]
-
     return []
 
 
@@ -2652,8 +2687,11 @@ def _youtube_js_runtime_hint() -> str:
     if runtime:
         name, path = runtime
         return (
-            f" AirType will pass --js-runtimes {name}:{path} to yt-dlp. "
-            "If this still fails, install yt-dlp-ejs into the WebUI venv and restart AirType."
+            f" AirType already passed --js-runtimes {name}:{path}. "
+            "HTTP 403 on video data means YouTube rejected the media CDN URL after extraction. "
+            "AirType retries with player_client=mweb and skips formats that 403. "
+            "If it still fails, this WebUI host's IP may be blocked by YouTube "
+            "(common for servers), or the video may need cookies in [webui.yt-dlp]."
         )
     return (
         " YouTube extraction requires Deno 2.3+ (recommended) or Node.js 22+ so yt-dlp can "
@@ -2665,7 +2703,7 @@ def _youtube_js_runtime_hint() -> str:
 def _media_downloader_failure_hint(url: str, detail: str) -> str:
     parsed = urllib.parse.urlparse(url)
     host = parsed.netloc.lower()
-    is_youtube = "youtube.com" in host or "youtu.be" in host
+    is_youtube = _is_youtube_url(url)
     if ("bilibili.com" in host or "b23.tv" in host) and "HTTP Error 412" in detail:
         return (
             " BiliBili rejected the metadata request. AirType sends BiliBili browser-style headers "
@@ -2679,16 +2717,11 @@ def _media_downloader_failure_hint(url: str, detail: str) -> str:
         or "YouTube extraction without a JS runtime" in detail
         or "wiki/EJS" in detail
     )
-    if is_youtube and missing_js:
+    if is_youtube and missing_js and _find_js_runtime() is None:
         return _youtube_js_runtime_hint()
 
     if is_youtube and "HTTP Error 403" in detail:
-        return (
-            " YouTube rejected the download request (HTTP 403). "
-            "This usually means yt-dlp could not solve YouTube's JavaScript player challenge."
-            + _youtube_js_runtime_hint()
-            + " Cookies in [webui.yt-dlp] only help for age-restricted or logged-in videos."
-        )
+        return _youtube_js_runtime_hint()
 
     return ""
 

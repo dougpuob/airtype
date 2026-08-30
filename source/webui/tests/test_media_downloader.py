@@ -56,14 +56,41 @@ class MediaDownloaderJsRuntimeTests(unittest.TestCase):
         self.assertIn("does not replace the JavaScript runtime", hint)
         self.assertNotIn("cookies_from_browser", hint)
 
-    def test_youtube_403_with_runtime_mentions_js_runtimes_flag(self) -> None:
+    def test_youtube_403_with_runtime_explains_cdn_rejection(self) -> None:
         with patch.object(webui, "_find_js_runtime", return_value=("deno", "/opt/homebrew/bin/deno")):
             hint = webui._media_downloader_failure_hint(
                 "https://youtu.be/abc",
                 "ERROR: unable to download video data: HTTP Error 403: Forbidden",
             )
-        self.assertIn("--js-runtimes deno:/opt/homebrew/bin/deno", hint)
-        self.assertIn("age-restricted", hint)
+        self.assertIn("media CDN URL", hint)
+        self.assertIn("player_client=mweb", hint)
+        self.assertIn("[webui.yt-dlp]", hint)
+        self.assertNotIn("brew install deno", hint)
+
+    def test_youtube_args_check_formats_and_mweb_client(self) -> None:
+        args = webui._media_downloader_youtube_args("https://www.youtube.com/watch?v=abc")
+        self.assertIn("--check-formats", args)
+        self.assertIn("youtube:player_client=default,mweb", args)
+        preview_args = webui._media_downloader_youtube_args(
+            "https://youtu.be/abc",
+            download=False,
+        )
+        self.assertNotIn("--check-formats", preview_args)
+        self.assertEqual(
+            webui._media_downloader_youtube_args("https://www.bilibili.com/video/BV1"),
+            [],
+        )
+
+    def test_youtube_does_not_use_impersonate(self) -> None:
+        with patch.object(webui, "_best_impersonate_target", return_value="chrome-136:macos-15"):
+            self.assertEqual(
+                webui._media_downloader_browser_args(("yt-dlp",), "https://www.youtube.com/watch?v=abc"),
+                [],
+            )
+            self.assertEqual(
+                webui._media_downloader_browser_args(("yt-dlp",), "https://www.bilibili.com/video/BV1"),
+                ["--impersonate", "chrome-136:macos-15"],
+            )
 
     def test_env_prepends_homebrew_when_missing_from_path(self) -> None:
         with (
