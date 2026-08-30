@@ -107,6 +107,34 @@ cookies_from_browser = "chrome"
 
 Use `cookies` for a `cookies.txt` path, or `cookies_from_browser` for a browser name such as `chrome`, `safari`, `firefox`, or `edge`.
 
+#### Keeping yt-dlp Up to Date
+
+yt-dlp is frequently updated to support new websites and fix compatibility issues. If you encounter errors like `HTTP Error 403: Forbidden` when downloading YouTube Shorts or other URLs, try updating yt-dlp:
+
+**Using the update script:**
+```bash
+./scripts/update-yt-dlp.sh
+```
+
+**Manually:**
+```bash
+# For virtual environment
+.venv/bin/python -m pip install --upgrade yt-dlp
+
+# For system Python
+python3 -m pip install --upgrade yt-dlp
+
+# If you see "Will not install to the site-packages" error:
+python3 -m pip install --upgrade yt-dlp --break-system-packages
+```
+
+**Using Homebrew (macOS):**
+```bash
+brew upgrade yt-dlp
+```
+
+YouTube Shorts URLs often require yt-dlp version 2026.08 or later. Regular updates ensure compatibility with YouTube's changing APIs.
+
 For server-side Threads login, install the Playwright Chromium browser on the server, then open **Threads Login** in the Web UI:
 
 ```bash
@@ -116,6 +144,8 @@ python -m playwright install chromium
 AirType stores the server browser profile and exported Threads cookies under the configured Web UI data directory.
 
 Bilibili URL transcription automatically asks yt-dlp for audio first and applies browser-style headers, Chrome impersonation when available, smaller HTTP chunks, and resume-friendly retries. This avoids common `HTTP Error 412: Precondition Failed` failures from Bilibili metadata and CDN requests. Higher-quality Bilibili formats may still require a logged-in or premium account via cookies.
+
+**YouTube Shorts Note:** If you encounter `HTTP Error 403` when transcribing YouTube Shorts URLs, ensure yt-dlp is updated to version 2026.08 or later. The issue is caused by an outdated yt-dlp version that cannot handle YouTube's updated authentication mechanisms. Run `./scripts/update-yt-dlp.sh` to update.
 
 
 ### Run

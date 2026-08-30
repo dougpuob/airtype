@@ -2318,10 +2318,49 @@ def _destination_with_media_extension(destination: str, media_path: str) -> str:
 def _media_downloader_command() -> list[str]:
     try:
         import yt_dlp  # noqa: F401
+        
+        # Get current version from module or command line
+        current_version = getattr(yt_dlp, "__version__", "")
+        if not current_version:
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "yt_dlp", "--version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                current_version = result.stdout.strip() if result.returncode == 0 else ""
+            except Exception:
+                current_version = ""
+        
+        if current_version:
+            latest_version = _get_latest_yt_dlp_version()
+            if latest_version and _is_version_older(current_version, latest_version):
+                append_service_log("webui", f"yt-dlp version {current_version} is outdated. Latest: {latest_version}.")
+                append_service_log("webui", "yt-dlp will be checked and updated on WebUI startup.")
+            else:
+                append_service_log("webui", f"yt-dlp version {current_version} is up to date.")
+        
+        return [sys.executable, "-m", "yt_dlp"]
     except ImportError:
         downloader = shutil.which("yt-dlp")
-        return [downloader] if downloader else []
-    return [sys.executable, "-m", "yt_dlp"]
+        if downloader:
+            # Check system yt-dlp version
+            try:
+                result = subprocess.run(
+                    [downloader, "--version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    version = result.stdout.strip()
+                    append_service_log("webui", f"System yt-dlp version: {version}")
+                    # Note: system yt-dlp is usually managed by pip/venv, so we don't auto-update it
+            except Exception:
+                pass
+            return [downloader]
+        return []
 
 
 def _run_media_downloader(
@@ -2532,6 +2571,25 @@ def _media_downloader_failure_hint(url: str, detail: str) -> str:
             "a compatible curl_cffi package for impersonation, or provide logged-in cookies in "
             "[webui.yt-dlp] with cookies = \"/path/to/cookies.txt\" or cookies_from_browser = \"chrome\"."
         )
+    
+    # Check for YouTube 403 Forbidden which may indicate old yt-dlp version
+    if ("youtube.com" in host or "youtu.be" in host or "youtube.com/shorts" in url) and "HTTP Error 403" in detail:
+        return (
+            " YouTube rejected the download request. This may be caused by an outdated yt-dlp version. "
+            "Please update yt-dlp by running: pip install --upgrade yt-dlp "
+            "(add --break-system-packages if needed). "
+            "Alternatively, you can configure cookies in [webui.yt-dlp] with cookies_from_browser = \"chrome\"."
+        )
+    
+    # Check for JavaScript runtime warning which indicates outdated yt-dlp
+    if "No supported JavaScript runtime could be found" in detail or "EJS" in detail:
+        return (
+            " YouTube requires a JavaScript runtime (like deno) for some URLs. "
+            "Please update yt-dlp to the latest version by running: pip install --upgrade yt-dlp "
+            "(add --break-system-packages if needed). "
+            "Make sure deno is installed: brew install deno (on macOS)."
+        )
+    
     return ""
 
 
@@ -3809,6 +3867,150 @@ async def serve_app(full_path: str):
     return {"error": "Application not found."}
 
 
+def _ensure_yt_dlp_updated() -> None:
+    """Check and update yt-dlp to the latest version if needed."""
+    try:
+        import yt_dlp
+        
+        # Get current version from module or command line
+        current_version = getattr(yt_dlp, "__version__", "")
+        if not current_version:
+            # Try to get version from command line
+            try:
+                import subprocess
+                result = subprocess.run(
+                    [sys.executable, "-m", "yt_dlp", "--version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                current_version = result.stdout.strip() if result.returncode == 0 else ""
+            except Exception:
+                current_version = ""
+        
+        append_service_log("webui", f"yt-dlp current version: {current_version or 'unknown'}")
+        
+        # Get latest version from GitHub API
+        latest_version = _get_latest_yt_dlp_version()
+        
+        if latest_version and current_version:
+            # Compare versions
+            if _is_version_older(current_version, latest_version):
+                append_service_log("webui", f"yt-dlp is outdated. Current: {current_version}, Latest: {latest_version}")
+                
+                # Try to update yt-dlp using pip
+                try:
+                    import subprocess
+                    import sys
+                    
+                    # Try pip first
+                    result = subprocess.run(
+                        [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp", "--quiet"],
+                        capture_output=True,
+                        text=True,
+                        timeout=120
+                    )
+                    
+                    if result.returncode == 0:
+                        # Reload yt-dlp module to get updated version
+                        import importlib
+                        import yt_dlp as ytdlp_module
+                        importlib.reload(ytdlp_module)
+                        new_version = getattr(ytdlp_module, "__version__", "")
+                        if not new_version:
+                            try:
+                                result = subprocess.run(
+                                    [sys.executable, "-m", "yt_dlp", "--version"],
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=5
+                                )
+                                new_version = result.stdout.strip() if result.returncode == 0 else "unknown"
+                            except Exception:
+                                new_version = "unknown"
+                        append_service_log("webui", f"yt-dlp updated from {current_version} to {new_version}")
+                    else:
+                        error_msg = result.stderr or result.stdout or "unknown error"
+                        append_service_log("webui", f"Failed to update yt-dlp: {error_msg}")
+                except Exception as e:
+                    append_service_log("webui", f"Error updating yt-dlp: {e}")
+            else:
+                append_service_log("webui", f"yt-dlp is up to date (version {current_version})")
+        
+    except ImportError:
+        append_service_log("webui", "yt-dlp not installed, will try to use system yt-dlp")
+    except Exception as e:
+        append_service_log("webui", f"Error in yt-dlp version check: {e}")
+
+
+def _get_latest_yt_dlp_version() -> Optional[str]:
+    """Get the latest yt-dlp version from GitHub API."""
+    import urllib.request
+    import json
+    
+    try:
+        # GitHub API for releases
+        url = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "AirType", "Accept": "application/vnd.github.v3+json"}
+        )
+        
+        with urllib.request.urlopen(request, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            tag_name = data.get("tag_name", "")
+            # Remove 'v' prefix if present (e.g., "v2026.08.08" -> "2026.08.08")
+            if tag_name.startswith("v"):
+                tag_name = tag_name[1:]
+            return tag_name if tag_name else None
+    except Exception as e:
+        append_service_log("webui", f"Could not fetch latest yt-dlp version from GitHub: {e}")
+        return None
+
+
+def _is_version_older(current: str, latest: str) -> bool:
+    """Compare two version strings. Returns True if current < latest."""
+    try:
+        # Parse versions like "2026.08.08" or "2026.03.17"
+        def parse_version(v: str) -> tuple:
+            parts = v.split(".")
+            result = []
+            for part in parts:
+                # Try to convert to int, keep as string if fails
+                try:
+                    result.append(int(part))
+                except ValueError:
+                    result.append(part)
+            return tuple(result)
+        
+        current_parts = parse_version(current)
+        latest_parts = parse_version(latest)
+        
+        # Compare each part
+        for c, l in zip(current_parts, latest_parts):
+            if isinstance(c, int) and isinstance(l, int):
+                if c < l:
+                    return True
+                elif c > l:
+                    return False
+            else:
+                # String comparison for non-numeric parts
+                if str(c) < str(l):
+                    return True
+                elif str(c) > str(l):
+                    return False
+        
+        # If all compared parts are equal, check length
+        return len(current_parts) < len(latest_parts)
+    except Exception:
+        # Fallback: use string comparison if parsing fails
+        return current < latest
+
+
 if __name__ == "__main__":
     import uvicorn
+    
+    # Check and update yt-dlp before starting
+    _ensure_yt_dlp_updated()
+    
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
