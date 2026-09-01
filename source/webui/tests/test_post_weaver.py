@@ -148,6 +148,65 @@ class ThreadsPostWeaverTests(unittest.TestCase):
         self.assertEqual([post["text"] for post in output["posts"]], ["part 1", "part 2"])
         self.assertEqual(output["warnings"], [])
 
+    def test_op_group_plus_self_reply_group_collects_the_whole_spine(self) -> None:
+        """Threads often splits a numbered essay into the OP group plus one reply group."""
+        replies = [
+            _item(f"p{index}", "alice", f"{index}/12 continued", is_reply=True, reply_to="alice")
+            for index in range(2, 13)
+        ]
+        page = _page(
+            {
+                "thread": {"thread_items": [_item("op", "alice", "1/12 start", is_reply=False)]},
+                "replies": {"thread_items": replies},
+            }
+        )
+        output = ThreadsChainCollector().collect_page(
+            "https://www.threads.com/@alice/post/op",
+            page,
+        )
+        self.assertEqual(len(output["posts"]), 12)
+        self.assertEqual(output["posts"][0]["text"], "1/12 start")
+        self.assertEqual(output["posts"][-1]["text"], "12/12 continued")
+        self.assertEqual(output["warnings"], [])
+
+    def test_share_url_resolves_then_collects_the_whole_spine(self) -> None:
+        replies = [
+            _item(f"p{index}", "alice", f"{index}/12 continued", is_reply=True, reply_to="alice")
+            for index in range(2, 13)
+        ]
+        page = _page(
+            {
+                "thread": {"thread_items": [_item("op", "alice", "1/12 start", is_reply=False)]},
+                "replies": {"thread_items": replies},
+            }
+        )
+        post_url = "https://www.threads.com/@alice/post/op"
+
+        class ShareCollector(ThreadsChainCollector):
+            def _resolve_share_url(self, url: str) -> str:
+                return post_url
+
+            def _fetch(self, url: str) -> str:
+                return page
+
+        output = ShareCollector().collect("https://www.threads.com/share/GAxIncHkq/")
+        self.assertEqual(len(output["posts"]), 12)
+        self.assertEqual(output["posts"][0]["text"], "1/12 start")
+
+    def test_caption_keeps_paragraph_breaks(self) -> None:
+        page = _page(
+            {
+                "thread_items": [
+                    _item("op", "alice", "標題\n1/12第一段\n\n第二段", is_reply=False),
+                ]
+            }
+        )
+        output = ThreadsChainCollector().collect_page(
+            "https://www.threads.com/@alice/post/op",
+            page,
+        )
+        self.assertEqual(output["posts"][0]["text"], "標題\n1/12第一段\n\n第二段")
+
     def test_same_author_unmarked_posts_in_conversation_are_kept(self) -> None:
         page = _page(
             {

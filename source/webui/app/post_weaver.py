@@ -692,7 +692,10 @@ def _caption_text(value: Any) -> str:
         text = str(value.get("text") or "")
     else:
         return ""
-    return re.sub(r"\s+", " ", text).strip()
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[^\S\n]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def _meta_content(page: str, name: str) -> str:
