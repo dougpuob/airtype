@@ -1,8 +1,8 @@
 """Public Threads chain collection for the Post Weaver API.
 
 Threads server-renders a JSON payload in ``script[data-sjs]`` on public post
-pages.  The payload already contains the visible thread tree, so this module
-uses that structured data rather than trying to infer posts from page text.
+pages. This module reads that structured data, then fetches related post pages
+when the first response does not contain the author's full continuation spine.
 """
 
 from __future__ import annotations
@@ -37,13 +37,33 @@ class ThreadsPost:
         return {"url": self.url, "text": self.text, "media_urls": list(self.media_urls)}
 
 
-class ThreadsChainCollector:
-    """Collect the public posts in one author's Threads continuation chain.
+WARNING_NOT_OP_CHAIN = "不是樓主連發，沒有收連續篇"
+WARNING_UNCONFIRMED_OP = "無法確認樓主，這串可能不完整"
+WARNING_INCOMPLETE = "這串可能不完整"
 
-    No account, cookie, browser, or private Threads endpoint is required. The
-    result is limited to what Threads includes in the public response; private
-    or dynamically hidden replies cannot be recovered by any client-side
-    parser without another request authorised by Threads.
+
+@dataclass(frozen=True)
+class _ThreadEntry:
+    """One post plus the reply metadata needed to walk a continuation spine."""
+
+    post: ThreadsPost
+    is_reply: bool
+    reply_to_author: str
+    parent_code: str
+    taken_at: int
+    reply_count: int
+    has_reply_info: bool
+
+
+class ThreadsChainCollector:
+    """Collect one author's continuation spine from a Threads post URL.
+
+    The URL is an anchor for the conversation. Same-author self-replies and
+    unmarked consecutive posts in that conversation are kept; replies to other
+    people are not. Additional post pages are fetched when expanding so a
+    truncated first HTML response can still yield the rest of the spine.
+    Cookies are used when provided; missing later pages become a warning
+    rather than a failed import.
     """
 
     def __init__(
@@ -60,31 +80,19 @@ class ThreadsChainCollector:
         self.cookie_header = cookie_header
 
     def collect(self, url: str) -> dict[str, Any]:
-        canonical_url, _, _ = self._normalize_or_resolve_url(url)
+        canonical_url, author, target_code = self._normalize_or_resolve_url(url)
         page = self._fetch(canonical_url)
-        return self.collect_page(canonical_url, page)
+        return self._collect_from_pages(canonical_url, author, target_code, {canonical_url: page}, expand=True)
 
     def collect_page(self, url: str, page: str) -> dict[str, Any]:
         """Collect a chain from an already fetched public Threads page.
 
         Keeping parsing separate from fetching makes the same production
         collector usable with recorded page fixtures in regression tests.
+        Expansion (parent/continuation page fetches) is intentionally off here.
         """
         canonical_url, author, target_code = self._normalize_url(url)
-        payloads = _DataSjsParser.payloads(page)
-        posts = self._posts_from_payloads(payloads, author, target_code)
-
-        if not posts:
-            preview = _meta_content(page, "og:description") or _meta_content(page, "description")
-            if preview:
-                posts = [ThreadsPost("", canonical_url, author, preview)]
-
-        if not posts:
-            raise RuntimeError(
-                "Threads did not expose public post data for this URL. The post may be private, "
-                "login-walled, deleted, or temporarily rate-limited."
-            )
-        return {"author": author, "posts": [post.as_dict() for post in posts]}
+        return self._collect_from_pages(canonical_url, author, target_code, {canonical_url: page}, expand=False)
 
     def _normalize_url(self, url: str) -> tuple[str, str, str]:
         parsed = urllib.parse.urlparse(str(url or "").strip())
@@ -163,41 +171,131 @@ class ThreadsChainCollector:
             headers["Cookie"] = cookie_header
         return headers
 
-    def _posts_from_payloads(
+    def _collect_from_pages(
         self,
-        payloads: Iterable[Any],
+        canonical_url: str,
         author: str,
         target_code: str,
-    ) -> list[ThreadsPost]:
-        """Return only the thread-items group that contains the requested post.
+        pages: dict[str, str],
+        *,
+        expand: bool,
+    ) -> dict[str, Any]:
+        conversation: list[_ThreadEntry] = []
+        fetched: set[str] = set()
+        pending = [canonical_url]
+        expansion_failed = False
+        reached_max = False
 
-        A Threads page contains several independent ``thread_items`` groups,
-        including profile previews and recommendations.  Filtering every group
-        by author accidentally imports those unrelated posts.  The URL's post
-        code is the stable anchor for selecting the one visible conversation.
-        """
-        entries = list(_thread_item_entries(payloads))
-        target_index = next(
-            (
-                index
-                for index, (post, _) in enumerate(entries)
-                if post.url.rstrip("/").endswith(f"/post/{target_code}")
-            ),
-            None,
+        while pending:
+            page_url = self._canonical_post_url(pending.pop(0))
+            if not page_url or page_url in fetched:
+                continue
+            if page_url in pages:
+                html = pages[page_url]
+            elif expand:
+                try:
+                    html = self._fetch(page_url)
+                except Exception:
+                    expansion_failed = True
+                    fetched.add(page_url)
+                    continue
+                pages[page_url] = html
+            else:
+                break
+
+            fetched.add(page_url)
+            known_codes = {_entry_code(entry) for entry in conversation}
+            known_codes.add(target_code)
+            group = _conversation_group(_DataSjsParser.payloads(html), known_codes)
+            if group:
+                conversation = _merge_entries(conversation, group)
+
+            continuations = [entry for entry in conversation if _is_continuation(entry, author)]
+            if len(continuations) >= self.max_posts:
+                reached_max = True
+                break
+            if not expand:
+                break
+
+            for next_url in self._expansion_urls(conversation, author, target_code, fetched):
+                if next_url not in fetched and next_url not in pending:
+                    pending.append(next_url)
+
+        posts, warnings = _finish_chain(
+            author,
+            target_code,
+            conversation,
+            expansion_failed=expansion_failed,
+            reached_max=reached_max,
+            max_posts=self.max_posts,
         )
-        if target_index is None:
+        page = pages.get(canonical_url, "")
+        if not posts:
+            preview = _meta_content(page, "og:description") or _meta_content(page, "description")
+            if preview:
+                posts = [ThreadsPost("", canonical_url, author, preview)]
+
+        if not posts:
+            raise RuntimeError(
+                "Threads did not expose public post data for this URL. The post may be private, "
+                "login-walled, deleted, or temporarily rate-limited."
+            )
+        return {
+            "author": author,
+            "posts": [post.as_dict() for post in posts],
+            "warnings": warnings,
+        }
+
+    def _canonical_post_url(self, url: str) -> str:
+        try:
+            canonical, _, _ = self._normalize_url(url)
+        except ValueError:
+            return str(url or "").strip().rstrip("/")
+        return canonical
+
+    def _expansion_urls(
+        self,
+        conversation: list[_ThreadEntry],
+        author: str,
+        target_code: str,
+        fetched: set[str],
+    ) -> list[str]:
+        target = _find_entry(conversation, target_code)
+        if target and _is_reply_to_other(target, author):
+            return []
+        first = conversation[0] if conversation else None
+        if first and (
+            first.post.author.casefold() != author.casefold() or _is_reply_to_other(first, author)
+        ):
             return []
 
-        posts = [entries[target_index][0]]
-        for post, raw_post in entries[target_index + 1:]:
-            if post.author.casefold() != author.casefold():
+        urls: list[str] = []
+        if _same_author_op(conversation, author) is None:
+            seed = first or target
+            if seed:
+                parent = _parent_url(seed)
+                if parent:
+                    urls.append(parent)
+                if seed.post.url:
+                    urls.append(seed.post.url)
+
+        op_entry = _same_author_op(conversation, author)
+        if op_entry and op_entry.post.url:
+            urls.append(op_entry.post.url)
+
+        continuations = [entry for entry in conversation if _is_continuation(entry, author)]
+        if continuations and continuations[-1].post.url:
+            urls.append(continuations[-1].post.url)
+
+        seen: set[str] = set()
+        unique: list[str] = []
+        for raw_url in urls:
+            canonical = self._canonical_post_url(raw_url)
+            if not canonical or canonical in fetched or canonical in seen:
                 continue
-            if not _is_self_reply(raw_post, author):
-                break
-            posts.append(post)
-            if len(posts) >= self.max_posts:
-                break
-        return posts
+            seen.add(canonical)
+            unique.append(canonical)
+        return unique
 
 
 class _DataSjsParser(HTMLParser):
@@ -278,23 +376,251 @@ def _thread_item_groups(value: Any) -> Iterable[list[Any]]:
             yield from _thread_item_groups(child)
 
 
-def _thread_item_entries(value: Any) -> Iterable[tuple[ThreadsPost, dict[str, Any]]]:
-    """Yield direct thread posts and their raw metadata in page order."""
-    for items in _thread_item_groups(value):
-        for item in items:
-            if not isinstance(item, dict) or not isinstance(item.get("post"), dict):
+def _conversation_group(payloads: Iterable[Any], known_codes: set[str]) -> list[_ThreadEntry]:
+    """Return the conversation spine that contains a known post.
+
+    Top-level ``thread_items`` groups are independent conversations, profile
+    previews, or recommendations. Threads often splits one author's
+    continuation across adjacent groups in the same payload, so those sibling
+    groups are joined when they continue the same spine. Nested
+    ``thread_items`` under a conversation item are replies in the same tree.
+    """
+    codes = {code for code in known_codes if code}
+    if not codes:
+        return []
+    for payload in payloads:
+        groups = [_flatten_conversation_items(items) for items in _thread_item_groups(payload)]
+        if any(_entry_code(entry) in codes for group in groups for entry in group):
+            return _join_payload_groups(groups, codes)
+    return []
+
+
+def _join_payload_groups(groups: list[list[_ThreadEntry]], known_codes: set[str]) -> list[_ThreadEntry]:
+    target_index = next(
+        index
+        for index, group in enumerate(groups)
+        if any(_entry_code(entry) in known_codes for entry in group)
+    )
+    collected = list(groups[target_index])
+    seed = next((entry for entry in collected if _entry_code(entry) in known_codes), collected[0])
+    author = seed.post.author
+
+    for index in range(target_index - 1, -1, -1):
+        if not _group_continues_spine(groups[index], author, collected, toward_root=True):
+            break
+        collected = groups[index] + collected
+
+    for index in range(target_index + 1, len(groups)):
+        if not _group_continues_spine(groups[index], author, collected, toward_root=False):
+            break
+        collected = collected + groups[index]
+    return collected
+
+
+def _group_continues_spine(
+    group: list[_ThreadEntry],
+    author: str,
+    collected: list[_ThreadEntry],
+    *,
+    toward_root: bool,
+) -> bool:
+    same_author = [entry for entry in group if entry.post.author.casefold() == author.casefold()]
+    if not same_author or any(_is_reply_to_other(entry, author) for entry in same_author):
+        return False
+    collected_codes = {_entry_code(entry) for entry in collected}
+    for entry in same_author:
+        if entry.parent_code and entry.parent_code in collected_codes:
+            return True
+        if entry.is_reply and entry.reply_to_author.casefold() == author.casefold():
+            return True
+        if not entry.has_reply_info:
+            return True
+        if toward_root and not entry.is_reply:
+            return True
+    return False
+
+
+def _flatten_conversation_items(items: Any) -> list[_ThreadEntry]:
+    entries: list[_ThreadEntry] = []
+    if not isinstance(items, list):
+        return entries
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        raw_post = item.get("post")
+        if isinstance(raw_post, dict):
+            entry = _entry_from_raw(raw_post)
+            if entry:
+                entries.append(entry)
+        for key, child in item.items():
+            if key == "post":
                 continue
-            raw_post = item["post"]
-            post = _threads_post(raw_post)
-            if post:
-                yield post, raw_post
+            for nested in _thread_item_groups(child):
+                entries.extend(_flatten_conversation_items(nested))
+    return entries
 
 
-def _is_self_reply(post: dict[str, Any], author: str) -> bool:
-    info = post.get("text_post_app_info")
-    reply_to_author = info.get("reply_to_author") if isinstance(info, dict) else None
-    parent_author = reply_to_author.get("username") if isinstance(reply_to_author, dict) else ""
-    return bool(isinstance(info, dict) and info.get("is_reply") and str(parent_author).casefold() == author.casefold())
+def _entry_from_raw(raw_post: dict[str, Any]) -> _ThreadEntry | None:
+    post = _threads_post(raw_post)
+    if not post:
+        return None
+    info = raw_post.get("text_post_app_info")
+    has_reply_info = isinstance(info, dict)
+    is_reply = bool(has_reply_info and info.get("is_reply"))
+    reply_to_author = ""
+    parent_code = ""
+    reply_count = 0
+    if has_reply_info:
+        reply_to = info.get("reply_to_author")
+        if isinstance(reply_to, dict):
+            reply_to_author = str(reply_to.get("username") or reply_to.get("username_text") or "").strip()
+        elif isinstance(reply_to, str):
+            reply_to_author = reply_to.strip()
+        parent_code = _parent_code(info, raw_post)
+        try:
+            reply_count = int(info.get("direct_reply_count") or 0)
+        except (TypeError, ValueError):
+            reply_count = 0
+    try:
+        taken_at = int(raw_post.get("taken_at") or 0)
+    except (TypeError, ValueError):
+        taken_at = 0
+    return _ThreadEntry(post, is_reply, reply_to_author, parent_code, taken_at, reply_count, has_reply_info)
+
+
+def _parent_code(info: dict[str, Any], raw_post: dict[str, Any]) -> str:
+    own = str(raw_post.get("code") or "").strip()
+    for key in ("reply_to_media", "replied_to", "parent_post", "reply_to_post"):
+        for source in (info, raw_post):
+            value = source.get(key)
+            if isinstance(value, dict):
+                code = str(value.get("code") or "").strip()
+                if code and code != own:
+                    return code
+            elif isinstance(value, str):
+                code = value.strip()
+                if code and code != own and re.fullmatch(r"[A-Za-z0-9_-]+", code):
+                    return code
+    return ""
+
+
+def _entry_code(entry: _ThreadEntry) -> str:
+    match = _POST_PATH.match(urllib.parse.urlparse(entry.post.url).path)
+    return match.group("code") if match else ""
+
+
+def _find_entry(entries: list[_ThreadEntry], target_code: str) -> _ThreadEntry | None:
+    return next((entry for entry in entries if _entry_code(entry) == target_code), None)
+
+
+def _merge_entries(existing: list[_ThreadEntry], incoming: list[_ThreadEntry]) -> list[_ThreadEntry]:
+    merged: dict[str, _ThreadEntry] = {}
+
+    def key_for(entry: _ThreadEntry) -> str:
+        return entry.post.id or entry.post.url or _entry_code(entry)
+
+    for entry in existing + incoming:
+        key = key_for(entry)
+        if not key:
+            continue
+        previous = merged.get(key)
+        if previous is None or (not previous.has_reply_info and entry.has_reply_info):
+            merged[key] = entry
+
+    existing_codes = [_entry_code(entry) for entry in existing if _entry_code(entry)]
+    incoming_codes = [_entry_code(entry) for entry in incoming if _entry_code(entry)]
+    existing_set, incoming_set = set(existing_codes), set(incoming_codes)
+
+    if incoming and existing_set <= incoming_set:
+        ordered = incoming
+    elif existing and incoming_set <= existing_set:
+        ordered = existing
+    else:
+        ordered = existing + [entry for entry in incoming if key_for(entry) not in {key_for(item) for item in existing}]
+
+    entries = []
+    seen: set[str] = set()
+    for entry in ordered:
+        key = key_for(entry)
+        chosen = merged.get(key)
+        if not chosen or key in seen:
+            continue
+        seen.add(key)
+        entries.append(chosen)
+    for key, entry in merged.items():
+        if key not in seen:
+            entries.append(entry)
+
+    if sum(1 for entry in entries if entry.taken_at) >= 2:
+        return sorted(entries, key=lambda entry: (entry.taken_at, entry.post.id))
+
+    roots = [entry for entry in entries if not entry.is_reply]
+    replies = [entry for entry in entries if entry.is_reply]
+    return roots + replies
+
+
+def _is_reply_to_other(entry: _ThreadEntry, author: str) -> bool:
+    return bool(
+        entry.is_reply
+        and entry.reply_to_author
+        and entry.reply_to_author.casefold() != author.casefold()
+    )
+
+
+def _is_continuation(entry: _ThreadEntry, author: str) -> bool:
+    if entry.post.author.casefold() != author.casefold():
+        return False
+    return not _is_reply_to_other(entry, author)
+
+
+def _same_author_op(entries: list[_ThreadEntry], author: str) -> _ThreadEntry | None:
+    return next(
+        (
+            entry
+            for entry in entries
+            if entry.post.author.casefold() == author.casefold() and not entry.is_reply
+        ),
+        None,
+    )
+
+
+def _parent_url(entry: _ThreadEntry) -> str:
+    if not entry.parent_code:
+        return ""
+    parent_author = entry.reply_to_author or entry.post.author
+    return f"https://www.threads.com/@{parent_author}/post/{entry.parent_code}"
+
+
+def _finish_chain(
+    author: str,
+    target_code: str,
+    conversation: list[_ThreadEntry],
+    *,
+    expansion_failed: bool,
+    reached_max: bool,
+    max_posts: int,
+) -> tuple[list[ThreadsPost], list[str]]:
+    target = _find_entry(conversation, target_code)
+    if target is None:
+        return [], []
+
+    if _is_reply_to_other(target, author):
+        return [target.post], [WARNING_NOT_OP_CHAIN]
+
+    first = conversation[0] if conversation else None
+    if first and (
+        first.post.author.casefold() != author.casefold() or _is_reply_to_other(first, author)
+    ):
+        return [target.post], [WARNING_NOT_OP_CHAIN]
+
+    continuations = [entry.post for entry in conversation if _is_continuation(entry, author)]
+    posts = continuations[:max_posts] or [target.post]
+    warnings: list[str] = []
+    if _same_author_op(conversation, author) is None:
+        warnings.append(WARNING_UNCONFIRMED_OP)
+    elif expansion_failed or reached_max:
+        warnings.append(WARNING_INCOMPLETE)
+    return posts, warnings
 
 
 def _threads_post(value: Any) -> ThreadsPost | None:

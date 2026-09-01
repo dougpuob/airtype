@@ -18,3 +18,10 @@ export function useImportPostMutation() {
 export function isThreadsUrl(url: string) {
   return /https?:\/\/(?:www\.)?threads\.(?:com|net)\//i.test(url);
 }
+
+export function chainWarningsFromPayload(payload: unknown, isThreads: boolean) {
+  if (!isThreads || !payload || typeof payload !== "object") return [];
+  const warnings = (payload as ThreadsChainResponse).warnings;
+  if (!Array.isArray(warnings)) return [];
+  return warnings.filter((item): item is string => typeof item === "string" && Boolean(item.trim()));
+}

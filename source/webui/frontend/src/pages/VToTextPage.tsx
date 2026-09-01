@@ -17,7 +17,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chatWithLocalLlm } from "../api/localLlm";
-import { useImportPostMutation } from "../api/postWeaver";
+import { chainWarningsFromPayload, useImportPostMutation } from "../api/postWeaver";
 import { useSettingsQuery } from "../api/settings";
 import {
   useCancelTranscriptionJobMutation,
@@ -64,6 +64,7 @@ type PersistedObsidianClipperState = {
   postAiTags: string;
   postStep: PostStep;
   postError: string;
+  chainWarnings: string[];
 };
 
 export function VToTextPage() {
@@ -88,6 +89,7 @@ export function VToTextPage() {
   const [postAiTags, setPostAiTags] = useState(restoredState.postAiTags);
   const [postStep, setPostStep] = useState<PostStep>(restoredState.postStep);
   const [postError, setPostError] = useState(restoredState.postError);
+  const [chainWarnings, setChainWarnings] = useState<string[]>(restoredState.chainWarnings);
   const [toast, setToast] = useState("");
 
   const settingsQuery = useSettingsQuery();
@@ -206,7 +208,8 @@ export function VToTextPage() {
       polishedContent,
       postAiTags,
       postStep,
-      postError
+      postError,
+      chainWarnings
     });
   }, [
     activeRoute,
@@ -223,7 +226,8 @@ export function VToTextPage() {
     polishedContent,
     postAiTags,
     postStep,
-    postError
+    postError,
+    chainWarnings
   ]);
 
   useEffect(() => {
@@ -248,7 +252,8 @@ export function VToTextPage() {
         polishedContent,
         postAiTags,
         postStep: postIsWorking ? "idle" : postStep,
-        postError
+        postError,
+        chainWarnings
       });
     }
 
@@ -263,6 +268,7 @@ export function VToTextPage() {
     aiTitleSourceKey,
     capturedTitle,
     capturedUrl,
+    chainWarnings,
     isWorking,
     polishedContent,
     postAiTags,
@@ -469,7 +475,8 @@ export function VToTextPage() {
       polishedContent,
       postAiTags,
       postStep,
-      postError
+      postError,
+      chainWarnings
     });
     setActiveJobId(job.job_id);
     setToast("URL job started");
@@ -501,7 +508,8 @@ export function VToTextPage() {
       polishedContent,
       postAiTags,
       postStep,
-      postError
+      postError,
+      chainWarnings
     });
     setActiveJobId(job.job_id);
     setToast("Upload complete; transcription queued");
@@ -515,6 +523,7 @@ export function VToTextPage() {
 
   async function capturePost(url: string) {
     setPostError("");
+    setChainWarnings([]);
     setPosts([]);
     setPolishedContent("");
     setPostAiTags("");
@@ -526,8 +535,10 @@ export function VToTextPage() {
       const { payload, isThreads } = await importPost.mutateAsync(url);
       const nextPosts = normalizeImportedPosts(payload, url, isThreads);
       if (!nextPosts.length) throw new Error("No public post text was found");
+      const nextWarnings = chainWarningsFromPayload(payload, isThreads);
       const initialTitle = titleFromPostText(nextPosts[0]?.text || "");
       setPosts(nextPosts);
+      setChainWarnings(nextWarnings);
       setCapturedTitle(initialTitle);
       setToast(`Captured ${nextPosts.length} post${nextPosts.length === 1 ? "" : "s"}`);
 
@@ -743,6 +754,16 @@ export function VToTextPage() {
               {postError || errorMessage(createUrlJob.error || uploadJob.error || (!selectedRecord ? jobQuery.error : null) || recordQuery.error)}
             </Alert>
           ) : null}
+          {posts.length > 0 && visibleRoute !== "voice" ? (
+            <Typography variant="body2" color="text.secondary">
+              Captured {posts.length} post{posts.length === 1 ? "" : "s"}
+            </Typography>
+          ) : null}
+          {chainWarnings.map((warning) => (
+            <Alert key={warning} severity="warning">
+              {warning}
+            </Alert>
+          ))}
         </Stack>
       </WorkspacePanel>
 
@@ -1067,7 +1088,8 @@ function readPersistedObsidianClipperState(): PersistedObsidianClipperState {
     polishedContent: "",
     postAiTags: "",
     postStep: "idle",
-    postError: ""
+    postError: "",
+    chainWarnings: []
   };
   if (typeof window === "undefined") return fallback;
   try {
@@ -1091,7 +1113,8 @@ function readPersistedObsidianClipperState(): PersistedObsidianClipperState {
       polishedContent: typeof parsed.polishedContent === "string" ? parsed.polishedContent : "",
       postAiTags: typeof parsed.postAiTags === "string" ? parsed.postAiTags : "",
       postStep: ["capture", "polish", "title", "tags"].includes(postStep) ? "idle" : postStep,
-      postError: typeof parsed.postError === "string" ? parsed.postError : ""
+      postError: typeof parsed.postError === "string" ? parsed.postError : "",
+      chainWarnings: persistedChainWarnings(parsed.chainWarnings)
     };
   } catch {
     return fallback;
@@ -1121,4 +1144,8 @@ function isPersistedPost(value: unknown): value is WovenPost {
   if (!value || typeof value !== "object") return false;
   const post = value as Partial<WovenPost>;
   return typeof post.text === "string" && typeof post.url === "string" && Array.isArray(post.mediaUrls);
+}
+
+function persistedChainWarnings(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [];
 }

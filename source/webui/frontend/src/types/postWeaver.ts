@@ -18,4 +18,5 @@ export type ThreadsChainResponse = {
     url?: string;
     media_urls?: string[];
   }>;
+  warnings?: string[];
 };

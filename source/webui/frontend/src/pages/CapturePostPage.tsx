@@ -19,7 +19,7 @@ import {
 } from "@mui/material";
 import { useEffect, useMemo, useState } from "react";
 import { chatWithLocalLlm } from "../api/localLlm";
-import { useImportPostMutation } from "../api/postWeaver";
+import { chainWarningsFromPayload, useImportPostMutation } from "../api/postWeaver";
 import { useSettingsQuery } from "../api/settings";
 import { LlmApiKeyDialog } from "../components/llm/LlmApiKeyDialog";
 import { ObsidianNotePreview } from "../components/obsidian/ObsidianNotePreview";
@@ -48,6 +48,7 @@ type PersistedCapturePostState = {
   aiTags: string;
   step: CaptureStep;
   error: string;
+  chainWarnings: string[];
 };
 
 export function CapturePostPage() {
@@ -61,6 +62,7 @@ export function CapturePostPage() {
   const [step, setStep] = useState<CaptureStep>(restoredState.step);
   const [toast, setToast] = useState("");
   const [error, setError] = useState(restoredState.error);
+  const [chainWarnings, setChainWarnings] = useState<string[]>(restoredState.chainWarnings);
   const [hasCompletedCaptureThisPage, setHasCompletedCaptureThisPage] = useState(false);
   const [hasUnsavedCapture, setHasUnsavedCapture] = useState(false);
   const [pendingCaptureUrl, setPendingCaptureUrl] = useState<string | null>(null);
@@ -90,14 +92,15 @@ export function CapturePostPage() {
         polishedContent,
         aiTags,
         step: "idle",
-        error
+        error,
+        chainWarnings
       });
     }
   });
 
   useEffect(() => {
-    writePersistedCapturePostState({ postUrl, posts, capturedUrl, capturedTitle, polishedContent, aiTags, step, error });
-  }, [postUrl, posts, capturedUrl, capturedTitle, polishedContent, aiTags, step, error]);
+    writePersistedCapturePostState({ postUrl, posts, capturedUrl, capturedTitle, polishedContent, aiTags, step, error, chainWarnings });
+  }, [postUrl, posts, capturedUrl, capturedTitle, polishedContent, aiTags, step, error, chainWarnings]);
 
   useEffect(() => {
     if (!isWorking) return;
@@ -110,13 +113,14 @@ export function CapturePostPage() {
         polishedContent,
         aiTags,
         step: "idle",
-        error
+        error,
+        chainWarnings
       });
     }
 
     window.addEventListener("pagehide", handlePageHide);
     return () => window.removeEventListener("pagehide", handlePageHide);
-  }, [aiTags, capturedTitle, capturedUrl, error, isWorking, polishedContent, postUrl, posts]);
+  }, [aiTags, capturedTitle, capturedUrl, chainWarnings, error, isWorking, polishedContent, postUrl, posts]);
 
   async function pasteClipboardUrl() {
     try {
@@ -146,6 +150,7 @@ export function CapturePostPage() {
     setHasCompletedCaptureThisPage(false);
     setHasUnsavedCapture(false);
     setError("");
+    setChainWarnings([]);
     setPosts([]);
     setPolishedContent("");
     setAiTags("");
@@ -157,8 +162,10 @@ export function CapturePostPage() {
       const { payload, isThreads } = await importPost.mutateAsync(url);
       const nextPosts = normalizeImportedPosts(payload, url, isThreads);
       if (!nextPosts.length) throw new Error("No public post text was found");
+      const nextWarnings = chainWarningsFromPayload(payload, isThreads);
       const initialTitle = titleFromPostText(nextPosts[0]?.text || "");
       setPosts(nextPosts);
+      setChainWarnings(nextWarnings);
       setCapturedTitle(initialTitle);
       setToast(`Captured ${nextPosts.length} post${nextPosts.length === 1 ? "" : "s"}`);
 
@@ -336,6 +343,16 @@ export function CapturePostPage() {
           </Box>
           <Divider />
           {error ? <Alert severity="error">{error}</Alert> : null}
+          {posts.length > 0 ? (
+            <Typography variant="body2" color="text.secondary">
+              Captured {posts.length} post{posts.length === 1 ? "" : "s"}
+            </Typography>
+          ) : null}
+          {chainWarnings.map((warning) => (
+            <Alert key={warning} severity="warning">
+              {warning}
+            </Alert>
+          ))}
         </Stack>
       </WorkspacePanel>
 
@@ -533,7 +550,8 @@ function readPersistedCapturePostState(): PersistedCapturePostState {
     polishedContent: "",
     aiTags: "",
     step: "idle",
-    error: ""
+    error: "",
+    chainWarnings: []
   };
   if (typeof window === "undefined") return fallback;
   try {
@@ -549,7 +567,8 @@ function readPersistedCapturePostState(): PersistedCapturePostState {
       polishedContent: typeof parsed.polishedContent === "string" ? parsed.polishedContent : "",
       aiTags: typeof parsed.aiTags === "string" ? parsed.aiTags : "",
       step: ["capture", "polish", "title", "tags", "obsidian"].includes(step) ? "idle" : step,
-      error: typeof parsed.error === "string" ? parsed.error : ""
+      error: typeof parsed.error === "string" ? parsed.error : "",
+      chainWarnings: persistedWarnings(parsed.chainWarnings)
     };
   } catch {
     return fallback;
@@ -575,4 +594,8 @@ function isPersistedPost(value: unknown): value is WovenPost {
   if (!value || typeof value !== "object") return false;
   const post = value as Partial<WovenPost>;
   return typeof post.text === "string" && typeof post.url === "string" && Array.isArray(post.mediaUrls);
+}
+
+function persistedWarnings(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [];
 }
