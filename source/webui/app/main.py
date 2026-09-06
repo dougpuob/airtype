@@ -1755,6 +1755,7 @@ async def import_threads_chain(request: PostImportRequest):
             request.url,
             cookies_path=cookies_path,
             cookie_header=cookie_header,
+            storage_state_path=THREADS_STORAGE_STATE_PATH,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error

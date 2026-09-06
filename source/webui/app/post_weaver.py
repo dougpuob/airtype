@@ -73,16 +73,61 @@ class ThreadsChainCollector:
         timeout_seconds: int = 20,
         cookies_path: str = "",
         cookie_header: str = "",
+        storage_state_path: str = "",
     ) -> None:
         self.max_posts = max(1, min(int(max_posts), 500))
         self.timeout_seconds = timeout_seconds
         self.cookies_path = cookies_path
         self.cookie_header = cookie_header
+        self.storage_state_path = storage_state_path
+        self._fetch_use_cookies = True
 
     def collect(self, url: str) -> dict[str, Any]:
+        # Logged-in HTML often hides the self-reply spine that the public page
+        # already contains, so the first pass is always anonymous.
+        self._fetch_use_cookies = False
         canonical_url, author, target_code = self._normalize_or_resolve_url(url)
-        page = self._fetch(canonical_url)
-        return self._collect_from_pages(canonical_url, author, target_code, {canonical_url: page}, expand=True)
+        try:
+            anonymous = self._collect_from_pages(canonical_url, author, target_code, {}, expand=True)
+        except RuntimeError:
+            anonymous = {"author": author, "posts": [], "warnings": [], "_reply_count": 0}
+        anonymous["fetch"] = "anonymous"
+        best = anonymous
+
+        if self._has_auth() and self._needs_richer_fetch(best):
+            self._fetch_use_cookies = True
+            try:
+                authed = self._collect_from_pages(canonical_url, author, target_code, {}, expand=True)
+            except RuntimeError:
+                authed = {"author": author, "posts": [], "warnings": [], "_reply_count": 0}
+            authed["fetch"] = "cookies"
+            if len(authed.get("posts") or []) > len(best.get("posts") or []):
+                best = authed
+
+            if self._needs_richer_fetch(best):
+                try:
+                    browser_page = self._fetch_with_browser(canonical_url)
+                except Exception:
+                    browser_page = ""
+                if browser_page:
+                    browser = self._collect_from_pages(
+                        canonical_url, author, target_code, {canonical_url: browser_page}, expand=True
+                    )
+                    browser["fetch"] = "browser"
+                    if len(browser.get("posts") or []) > len(best.get("posts") or []):
+                        best = browser
+
+        if self._needs_richer_fetch(best):
+            warnings = list(best.get("warnings") or [])
+            if WARNING_INCOMPLETE not in warnings and WARNING_UNCONFIRMED_OP not in warnings:
+                warnings.append(WARNING_INCOMPLETE)
+            best["warnings"] = warnings
+        if not best.get("posts"):
+            raise RuntimeError(
+                "Threads did not expose public post data for this URL. The post may be private, "
+                "login-walled, deleted, or temporarily rate-limited."
+            )
+        return self._public_result(best)
 
     def collect_page(self, url: str, page: str) -> dict[str, Any]:
         """Collect a chain from an already fetched public Threads page.
@@ -92,7 +137,9 @@ class ThreadsChainCollector:
         Expansion (parent/continuation page fetches) is intentionally off here.
         """
         canonical_url, author, target_code = self._normalize_url(url)
-        return self._collect_from_pages(canonical_url, author, target_code, {canonical_url: page}, expand=False)
+        return self._public_result(
+            self._collect_from_pages(canonical_url, author, target_code, {canonical_url: page}, expand=False)
+        )
 
     def _normalize_url(self, url: str) -> tuple[str, str, str]:
         parsed = urllib.parse.urlparse(str(url or "").strip())
@@ -143,7 +190,7 @@ class ThreadsChainCollector:
 
     def _fetch(self, url: str) -> str:
         """Fetch with Chrome TLS impersonation when curl-cffi is available."""
-        headers = self._headers(url)
+        headers = self._headers(url, use_cookies=getattr(self, "_fetch_use_cookies", True))
         try:
             from curl_cffi import requests as curl_requests
 
@@ -157,7 +204,7 @@ class ThreadsChainCollector:
         except Exception as error:
             raise RuntimeError(f"Could not open the public Threads post: {error}") from error
 
-    def _headers(self, url: str) -> dict[str, str]:
+    def _headers(self, url: str, *, use_cookies: bool | None = None) -> dict[str, str]:
         headers = {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
@@ -166,10 +213,49 @@ class ThreadsChainCollector:
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131 Safari/537.36"
             ),
         }
-        cookie_header = self.cookie_header or _cookies_header_for_url(self.cookies_path, url)
-        if cookie_header:
-            headers["Cookie"] = cookie_header
+        if use_cookies is None:
+            use_cookies = getattr(self, "_fetch_use_cookies", True)
+        if use_cookies:
+            cookie_header = self.cookie_header or _cookies_header_for_url(self.cookies_path, url)
+            if cookie_header:
+                headers["Cookie"] = cookie_header
         return headers
+
+    def _has_auth(self) -> bool:
+        if str(self.cookie_header or "").strip():
+            return True
+        cookies_path = os.path.expanduser(str(self.cookies_path or "").strip())
+        if cookies_path and os.path.exists(cookies_path):
+            return True
+        state = os.path.expanduser(str(self.storage_state_path or "").strip())
+        return bool(state and os.path.exists(state))
+
+    def _needs_richer_fetch(self, result: dict[str, Any]) -> bool:
+        posts = result.get("posts") or []
+        if not posts:
+            return True
+        return len(posts) == 1 and int(result.get("_reply_count") or 0) >= 1
+
+    def _public_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        result.pop("_reply_count", None)
+        return result
+
+    def _fetch_with_browser(self, url: str) -> str:
+        path = os.path.expanduser(str(self.storage_state_path or "").strip())
+        if not path or not os.path.exists(path):
+            raise RuntimeError("No Threads browser session is available")
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                context = browser.new_context(storage_state=path)
+                page = context.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=max(self.timeout_seconds, 15) * 1000)
+                page.wait_for_timeout(2500)
+                return page.content()
+            finally:
+                browser.close()
 
     def _collect_from_pages(
         self,
@@ -240,10 +326,12 @@ class ThreadsChainCollector:
                 "Threads did not expose public post data for this URL. The post may be private, "
                 "login-walled, deleted, or temporarily rate-limited."
             )
+        target_entry = _find_entry(conversation, target_code)
         return {
             "author": author,
             "posts": [post.as_dict() for post in posts],
             "warnings": warnings,
+            "_reply_count": target_entry.reply_count if target_entry else 0,
         }
 
     def _canonical_post_url(self, url: str) -> str:
@@ -381,18 +469,43 @@ def _conversation_group(payloads: Iterable[Any], known_codes: set[str]) -> list[
 
     Top-level ``thread_items`` groups are independent conversations, profile
     previews, or recommendations. Threads often splits one author's
-    continuation across adjacent groups in the same payload, so those sibling
-    groups are joined when they continue the same spine. Nested
-    ``thread_items`` under a conversation item are replies in the same tree.
+    continuation across adjacent groups in the same payload, and logged-in
+    pages may put the OP in one ``data-sjs`` script and the self-reply spine
+    in a later script. Nested ``thread_items`` under a conversation item are
+    replies in the same tree.
     """
     codes = {code for code in known_codes if code}
     if not codes:
         return []
-    for payload in payloads:
-        groups = [_flatten_conversation_items(items) for items in _thread_item_groups(payload)]
+
+    payload_groups = [
+        [_flatten_conversation_items(items) for items in _thread_item_groups(payload)]
+        for payload in payloads
+    ]
+
+    collected: list[_ThreadEntry] = []
+    for groups in payload_groups:
         if any(_entry_code(entry) in codes for group in groups for entry in group):
-            return _join_payload_groups(groups, codes)
-    return []
+            collected = _merge_entries(collected, _join_payload_groups(groups, codes))
+            codes |= {_entry_code(entry) for entry in collected}
+
+    if not collected:
+        return []
+
+    target = next((entry for entry in collected if _entry_code(entry) in known_codes), collected[0])
+    author = target.post.author
+    while True:
+        before = {_entry_code(entry) for entry in collected}
+        for groups in payload_groups:
+            for group in groups:
+                if _group_continues_spine(group, author, collected, toward_root=True) or _group_continues_spine(
+                    group, author, collected, toward_root=False
+                ):
+                    collected = _merge_entries(collected, group)
+        after = {_entry_code(entry) for entry in collected}
+        if after <= before:
+            break
+    return collected
 
 
 def _join_payload_groups(groups: list[list[_ThreadEntry]], known_codes: set[str]) -> list[_ThreadEntry]:
@@ -435,7 +548,7 @@ def _group_continues_spine(
             return True
         if not entry.has_reply_info:
             return True
-        if toward_root and not entry.is_reply:
+        if toward_root and not entry.is_reply and _same_author_op(collected, author) is None:
             return True
     return False
 
@@ -743,6 +856,16 @@ def _cookies_header_for_url(cookies_path: str, url: str) -> str:
     return "; ".join(cookies)
 
 
-def collect_threads_chain(url: str, *, cookies_path: str = "", cookie_header: str = "") -> dict[str, Any]:
+def collect_threads_chain(
+    url: str,
+    *,
+    cookies_path: str = "",
+    cookie_header: str = "",
+    storage_state_path: str = "",
+) -> dict[str, Any]:
     """Backward-compatible function used by the FastAPI route."""
-    return ThreadsChainCollector(cookies_path=cookies_path, cookie_header=cookie_header).collect(url)
+    return ThreadsChainCollector(
+        cookies_path=cookies_path,
+        cookie_header=cookie_header,
+        storage_state_path=storage_state_path,
+    ).collect(url)

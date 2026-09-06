@@ -30,6 +30,7 @@ def _item(
     reply_to: str | None = None,
     parent_code: str | None = None,
     taken_at: int | None = None,
+    reply_count: int | None = None,
     replies: list | None = None,
 ) -> dict:
     post: dict = {
@@ -47,6 +48,8 @@ def _item(
         info["reply_to_author"] = {"username": reply_to}
     if parent_code is not None:
         info["parent_post"] = {"code": parent_code}
+    if reply_count is not None:
+        info["direct_reply_count"] = reply_count
     if info:
         post["text_post_app_info"] = info
     item: dict = {"post": post}
@@ -206,6 +209,34 @@ class ThreadsPostWeaverTests(unittest.TestCase):
             page,
         )
         self.assertEqual(output["posts"][0]["text"], "標題\n1/12第一段\n\n第二段")
+
+    def test_self_replies_in_a_later_data_sjs_payload_are_collected(self) -> None:
+        """Logged-in Threads pages often put the OP in one script and the spine in another."""
+        replies = [
+            _item(f"p{index}", "alice", f"{index}/12 continued", is_reply=True, reply_to="alice")
+            for index in range(2, 13)
+        ]
+        page = _page({"thread_items": [_item("op", "alice", "1/12 start", is_reply=False)]}) + _page(
+            {"thread_items": replies}
+        )
+        output = ThreadsChainCollector().collect_page(
+            "https://www.threads.com/@alice/post/op",
+            page,
+        )
+        self.assertEqual(len(output["posts"]), 12)
+        self.assertEqual(output["posts"][0]["text"], "1/12 start")
+        self.assertEqual(output["posts"][-1]["text"], "12/12 continued")
+        self.assertEqual(output["warnings"], [])
+
+    def test_later_payload_recommendations_are_not_absorbed(self) -> None:
+        page = _page({"thread_items": [_item("op", "alice", "essay", is_reply=False)]}) + _page(
+            {"thread_items": [_item("zzz", "alice", "unrelated profile post", is_reply=False)]}
+        )
+        output = ThreadsChainCollector().collect_page(
+            "https://www.threads.com/@alice/post/op",
+            page,
+        )
+        self.assertEqual([post["text"] for post in output["posts"]], ["essay"])
 
     def test_same_author_unmarked_posts_in_conversation_are_kept(self) -> None:
         page = _page(
@@ -389,6 +420,93 @@ class ThreadsPostWeaverTests(unittest.TestCase):
             page,
         )
         self.assertEqual([post["text"] for post in output["posts"]], ["one", "two"])
+        self.assertEqual(output["warnings"], [WARNING_INCOMPLETE])
+
+    def test_logged_in_cookies_do_not_hide_a_public_continuation_spine(self) -> None:
+        op_only = _page(
+            {
+                "thread_items": [
+                    _item("op", "alice", "1/12 start", is_reply=False, reply_count=11),
+                ]
+            }
+        )
+        full = _page(
+            {
+                "thread": {"thread_items": [_item("op", "alice", "1/12 start", is_reply=False, reply_count=11)]},
+                "replies": {
+                    "thread_items": [
+                        _item(f"p{index}", "alice", f"{index}/12 continued", is_reply=True, reply_to="alice")
+                        for index in range(2, 13)
+                    ]
+                },
+            }
+        )
+        post_url = "https://www.threads.com/@alice/post/op"
+
+        class CookiePoisonedCollector(ThreadsChainCollector):
+            def _fetch(self, url: str) -> str:
+                return op_only if getattr(self, "_fetch_use_cookies", True) else full
+
+        output = CookiePoisonedCollector(cookie_header="sessionid=fake").collect(post_url)
+        self.assertEqual(len(output["posts"]), 12)
+        self.assertEqual(output["fetch"], "anonymous")
+        self.assertEqual(output["posts"][-1]["text"], "12/12 continued")
+
+    def test_browser_session_is_used_when_html_omits_self_replies(self) -> None:
+        op_only = _page(
+            {
+                "thread_items": [
+                    _item("op", "alice", "1/12 start", is_reply=False, reply_count=11),
+                ]
+            }
+        )
+        full = _page(
+            {
+                "thread": {"thread_items": [_item("op", "alice", "1/12 start", is_reply=False, reply_count=11)]},
+                "replies": {
+                    "thread_items": [
+                        _item(f"p{index}", "alice", f"{index}/12 continued", is_reply=True, reply_to="alice")
+                        for index in range(2, 13)
+                    ]
+                },
+            }
+        )
+        post_url = "https://www.threads.com/@alice/post/op"
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as state_file:
+            state_file.write("{}")
+            state_file.flush()
+
+            class BrowserCollector(ThreadsChainCollector):
+                def _fetch(self, url: str) -> str:
+                    return op_only
+
+                def _fetch_with_browser(self, url: str) -> str:
+                    return full
+
+            output = BrowserCollector(
+                cookie_header="sessionid=fake",
+                storage_state_path=state_file.name,
+            ).collect(post_url)
+
+        self.assertEqual(len(output["posts"]), 12)
+        self.assertEqual(output["fetch"], "browser")
+
+    def test_truncated_public_page_warns_incomplete_without_auth(self) -> None:
+        op_only = _page(
+            {
+                "thread_items": [
+                    _item("op", "alice", "1/12 start", is_reply=False, reply_count=11),
+                ]
+            }
+        )
+
+        class TruncatedCollector(ThreadsChainCollector):
+            def _fetch(self, url: str) -> str:
+                return op_only
+
+        output = TruncatedCollector().collect("https://www.threads.com/@alice/post/op")
+        self.assertEqual(len(output["posts"]), 1)
+        self.assertEqual(output["posts"][0]["text"], "1/12 start")
         self.assertEqual(output["warnings"], [WARNING_INCOMPLETE])
 
 
