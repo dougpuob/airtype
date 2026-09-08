@@ -34,7 +34,6 @@ import { useGuardedWork } from "../hooks/useWorkGuard";
 import type { ThreadsChainResponse, WovenPost } from "../types/postWeaver";
 import type { TranscriptionJob, TranscriptionRecord } from "../types/transcription";
 import { DEFAULT_AI_TITLE_SYSTEM_PROMPT, fallbackAiTitle, normalizeAiTitle } from "../utils/aiTitle";
-import { readFirstClipboardUrl } from "../utils/clipboardUrl";
 import {
   buildPostObsidianDraft,
   buildTranscriptObsidianDraft,
@@ -70,6 +69,7 @@ type PersistedObsidianClipperState = {
 export function VToTextPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const sourceUrlInputRef = useRef<HTMLInputElement | null>(null);
   const restoredState = useMemo(readPersistedObsidianClipperState, []);
   const [activeRoute, setActiveRoute] = useState<ClipperRoute>(restoredState.activeRoute);
   const [sourceUrl, setSourceUrl] = useState(restoredState.sourceUrl || restoredState.postUrl);
@@ -280,15 +280,10 @@ export function VToTextPage() {
     sourceUrl
   ]);
 
-  async function pasteClipboardUrl() {
-    try {
-      const nextUrl = await readFirstClipboardUrl();
-      setSourceUrl(nextUrl);
-      setActiveRoute("auto");
-      setToast("URL pasted from clipboard");
-    } catch (caught) {
-      setToast(caught instanceof Error ? caught.message : "Could not read the clipboard");
-    }
+  function pasteClipboardUrl() {
+    const input = sourceUrlInputRef.current;
+    if (input) { input.focus(); input.select(); }
+    setToast("Press ⌘V / Ctrl+V to paste the URL");
   }
 
   useEffect(() => {
@@ -736,6 +731,7 @@ export function VToTextPage() {
                 fullWidth
                 size="small"
                 sx={{ gridColumn: { sm: "1 / -1" }, "& .MuiOutlinedInput-root": { height: 40 } }}
+                inputRef={sourceUrlInputRef}
                 value={sourceUrl}
                 onChange={(event) => {
                   setSourceUrl(event.target.value);

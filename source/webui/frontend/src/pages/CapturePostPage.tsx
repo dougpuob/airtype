@@ -17,7 +17,7 @@ import {
   TextField,
   Typography
 } from "@mui/material";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { chatWithLocalLlm } from "../api/localLlm";
 import { chainWarningsFromPayload, useImportPostMutation } from "../api/postWeaver";
 import { useSettingsQuery } from "../api/settings";
@@ -28,7 +28,6 @@ import { useLlmApiKey } from "../hooks/useLlmApiKey";
 import { useGuardedWork } from "../hooks/useWorkGuard";
 import type { ThreadsChainResponse, WovenPost } from "../types/postWeaver";
 import { DEFAULT_AI_TITLE_SYSTEM_PROMPT, fallbackAiTitle, normalizeAiTitle } from "../utils/aiTitle";
-import { readFirstClipboardUrl } from "../utils/clipboardUrl";
 import {
   buildPostObsidianDraft,
   openObsidianDraft
@@ -98,6 +97,8 @@ export function CapturePostPage() {
     }
   });
 
+  const postUrlInputRef = useRef<HTMLInputElement | null>(null);
+
   useEffect(() => {
     writePersistedCapturePostState({ postUrl, posts, capturedUrl, capturedTitle, polishedContent, aiTags, step, error, chainWarnings });
   }, [postUrl, posts, capturedUrl, capturedTitle, polishedContent, aiTags, step, error, chainWarnings]);
@@ -122,13 +123,10 @@ export function CapturePostPage() {
     return () => window.removeEventListener("pagehide", handlePageHide);
   }, [aiTags, capturedTitle, capturedUrl, chainWarnings, error, isWorking, polishedContent, postUrl, posts]);
 
-  async function pasteClipboardUrl() {
-    try {
-      setPostUrl(await readFirstClipboardUrl());
-      setToast("URL pasted from clipboard");
-    } catch (caught) {
-      setToast(caught instanceof Error ? caught.message : "Could not read the clipboard");
-    }
+  function pasteClipboardUrl() {
+    const input = postUrlInputRef.current;
+    if (input) { input.focus(); input.select(); }
+    setToast("Press ⌘V / Ctrl+V to paste the URL");
   }
 
   function requestCapturePost() {
@@ -332,6 +330,7 @@ export function CapturePostPage() {
                 fullWidth
                 size="small"
                 sx={{ gridColumn: { sm: "1 / -1" }, "& .MuiOutlinedInput-root": { height: 40 } }}
+                inputRef={postUrlInputRef}
                 value={postUrl}
                 onChange={(event) => setPostUrl(event.target.value)}
                 placeholder="Paste post URL, Threads, ..."
