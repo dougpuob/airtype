@@ -51,6 +51,9 @@ A macOS desktop speech-to-text app. Double-press Right Ctrl or Right Option to s
 - **Background ASR** — transcription runs in a background thread with detailed timing logs
 - **Voice activity detection** — recordings below RMS threshold are skipped
 - **URL transcription** — download and transcribe audio/video from YouTube, Bilibili, Instagram, TikTok, etc.
+- **Obsidian Clipper** — one page captures everything: Threads posts, audio/video URLs, and any other web page (fetched as Markdown via md.genedai.me); every note carries a GUID frontmatter and runs AI polish → AI title → AI tags before saving to Obsidian
+- **Note photos in Immich** — photos from posts and articles are uploaded to a dedicated Immich account, tagged with the note GUID, and rendered in Obsidian through key-gated share links
+- **Known-source routing** — Threads, YouTube/Bilibili, Instagram, TikTok, and direct media files keep their dedicated pipelines; everything else falls through to the generic web-article pipeline
 - **Async job queue** — long-running transcriptions run as background jobs with progress tracking
 - **Local LLM chat** — query transcripts with ollama or llama.cpp models
 - **Web UI** — settings management, transcription records, and configuration
@@ -228,6 +231,10 @@ macOS will ask for Microphone permission when recording. If the global hotkey or
 | DELETE 	| /api/transcribe/records/:id     	| Delete a record                	|
 | POST   	| /api/local-llm/models           	| List local LLM models          	|
 | POST   	| /api/local-llm/chat             	| Chat with local LLM            	|
+| GET    	| /api/web-article/known-sources  	| Known-source routing list      	|
+| POST   	| /api/web-article/jobs           	| Capture a web page via md.genedai.me + Immich 	|
+| GET    	| /api/web-article/jobs/:id       	| Web-article job status         	|
+| POST   	| /api/immich/note-media          	| Upload note photos to Immich (GUID-tagged)     	|
 
 ## macOS Setup
 

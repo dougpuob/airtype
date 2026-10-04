@@ -17,8 +17,12 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chatWithLocalLlm } from "../api/localLlm";
+import { uploadNoteMedia } from "../api/immich";
+import type { NoteMediaImage } from "../api/immich";
 import { chainWarningsFromPayload, useImportPostMutation } from "../api/postWeaver";
 import { useSettingsQuery } from "../api/settings";
+import { fetchWebArticleJob, startWebArticleJob } from "../api/webArticle";
+import type { WebArticleImage, WebArticleJob } from "../api/webArticle";
 import {
   useCancelTranscriptionJobMutation,
   useCreateUrlTranscriptionJobMutation,
@@ -42,9 +46,14 @@ import {
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
 const OBSIDIAN_CLIPPER_STATE_KEY = "airtype:obsidian-clipper:state";
+const ARTICLE_POLL_INTERVAL_MS = 1500;
+// Threads/media providers attach og:video to posts; those files are not
+// uploaded to Immich (the pipeline only stores images) and keep their links.
+const NON_IMAGE_MEDIA_EXTENSIONS = /\.(?:aac|aif|aiff|avi|flac|m4a|m4v|mkv|mov|mp3|mp4|mpeg|mpg|ogg|opus|wav|webm)(?:$|[?#])/i;
 
-type ClipperRoute = "auto" | "post" | "voice";
-type PostStep = "idle" | "capture" | "polish" | "title" | "tags" | "complete" | "error";
+type ClipperRoute = "auto" | "post" | "voice" | "article";
+type PostStep = "idle" | "capture" | "photos" | "polish" | "title" | "tags" | "complete" | "error";
+type CaptureKind = "post" | "article";
 
 type PersistedObsidianClipperState = {
   activeRoute: ClipperRoute;
@@ -64,6 +73,13 @@ type PersistedObsidianClipperState = {
   postStep: PostStep;
   postError: string;
   chainWarnings: string[];
+  guid: string;
+  captureKind: CaptureKind;
+  shareUrl: string;
+  mediaMap: Record<string, string>;
+  mediaImages: NoteMediaImage[];
+  articleJobId: string | null;
+  articleImages: WebArticleImage[];
 };
 
 export function VToTextPage() {
@@ -90,7 +106,18 @@ export function VToTextPage() {
   const [postStep, setPostStep] = useState<PostStep>(restoredState.postStep);
   const [postError, setPostError] = useState(restoredState.postError);
   const [chainWarnings, setChainWarnings] = useState<string[]>(restoredState.chainWarnings);
+  const [guid, setGuid] = useState(restoredState.guid);
+  const [captureKind, setCaptureKind] = useState<CaptureKind>(restoredState.captureKind);
+  const [shareUrl, setShareUrl] = useState(restoredState.shareUrl);
+  const [mediaMap, setMediaMap] = useState<Record<string, string>>(restoredState.mediaMap);
+  const [mediaImages, setMediaImages] = useState<NoteMediaImage[]>(restoredState.mediaImages);
+  const [articleJobId, setArticleJobId] = useState<string | null>(restoredState.articleJobId);
+  const [articleJob, setArticleJob] = useState<WebArticleJob | null>(null);
+  const [articleImages, setArticleImages] = useState<WebArticleImage[]>(restoredState.articleImages);
   const [toast, setToast] = useState("");
+  const captureSeqRef = useRef(0);
+  const postStepRef = useRef(restoredState.postStep);
+  const ingestedArticleJobsRef = useRef<Set<string>>(new Set());
 
   const settingsQuery = useSettingsQuery();
   const jobQuery = useTranscriptionJobQuery(activeJobId, Boolean(activeJobId));
@@ -111,7 +138,7 @@ export function VToTextPage() {
   const detectedRoute = routeForUrl(sourceUrl);
   const visibleRoute = activeRoute === "auto" ? detectedRoute : activeRoute;
   const voiceIsWorking = Boolean(activeJobId && !isTerminalStatus(selectedRecord?.status)) || createUrlJob.isPending || uploadJob.isPending;
-  const postIsWorking = importPost.isPending || ["capture", "polish", "title", "tags"].includes(postStep);
+  const postIsWorking = importPost.isPending || ["capture", "photos", "polish", "title", "tags"].includes(postStep);
   const isWorking = voiceIsWorking || postIsWorking;
 
   const aiTitleSource = useMemo(() => transcriptAiSource(selectedRecord), [selectedRecord]);
@@ -127,18 +154,31 @@ export function VToTextPage() {
   );
   const aiTagsRequestKey = aiTagsSource.key ? `${aiTagsSource.key}|${aiTagsSource.title}` : "";
   const transcriptDraft = useMemo(
-    () => buildTranscriptObsidianDraft(selectedRecord, aiTags, effectiveAiTitle),
-    [aiTags, effectiveAiTitle, selectedRecord]
+    () => buildTranscriptObsidianDraft(selectedRecord, aiTags, effectiveAiTitle, guid),
+    [aiTags, effectiveAiTitle, guid, selectedRecord]
   );
   const postDraft = useMemo(
-    () => buildPostObsidianDraft({ posts, capturedUrl, capturedTitle, polishedContent, aiTags: postAiTags }),
-    [capturedTitle, capturedUrl, polishedContent, postAiTags, posts]
+    () =>
+      buildPostObsidianDraft({
+        posts,
+        capturedUrl,
+        capturedTitle,
+        polishedContent,
+        aiTags: postAiTags,
+        guid,
+        shareUrl,
+        mediaMap,
+        extraTags: captureKind === "article" ? ["web-article"] : []
+      }),
+    [captureKind, capturedTitle, capturedUrl, guid, mediaMap, polishedContent, postAiTags, posts, shareUrl]
   );
   const activeDraft = visibleRoute === "voice" ? transcriptDraft : postDraft;
   const originalTitle = visibleRoute === "voice" ? "Original Transcript" : "Original Content";
   const emptyMessage = visibleRoute === "voice"
     ? "Complete a transcript to preview the note."
-    : "Capture a public post to preview the note.";
+    : visibleRoute === "article"
+      ? "Capture a web article to preview the note."
+      : "Capture a public post to preview the note.";
   const polishedFallback = visibleRoute === "voice"
     ? "AI article is not available for this transcript."
     : "AI publishing was unavailable for this capture.";
@@ -155,7 +195,7 @@ export function VToTextPage() {
         isGeneratingAiTitle,
         isGeneratingAiTags
       })
-    : postStepToIndex(postStep);
+    : postStepToIndex(postStep, visibleRoute === "article");
   const activeProgress = visibleRoute === "voice"
     ? voiceProgress({
         activeJob,
@@ -164,7 +204,9 @@ export function VToTextPage() {
         isGeneratingAiTitle,
         isGeneratingAiTags
       })
-    : postProgress(postStep);
+    : visibleRoute === "article" && postStep === "capture" && articleJob
+      ? Math.max(2, articleJob.progress)
+      : postProgress(postStep, visibleRoute === "article");
   const activeMessage = visibleRoute === "voice"
     ? voiceProgressMessage({
         activeJob,
@@ -173,7 +215,13 @@ export function VToTextPage() {
         isGeneratingAiTitle,
         isGeneratingAiTags
       })
-    : postProgressMessage(postStep);
+    : visibleRoute === "article" && postStep === "capture" && articleJob?.message
+      ? articleJob.message
+      : postProgressMessage(postStep, visibleRoute === "article");
+
+  useEffect(() => {
+    postStepRef.current = postStep;
+  }, [postStep]);
 
   useGuardedWork({
     id: "obsidian-clipper",
@@ -187,6 +235,8 @@ export function VToTextPage() {
       }
       if (postIsWorking) {
         setPostStep("idle");
+        setArticleJobId(null);
+        setArticleJob(null);
       }
     }
   });
@@ -209,7 +259,14 @@ export function VToTextPage() {
       postAiTags,
       postStep,
       postError,
-      chainWarnings
+      chainWarnings,
+      guid,
+      captureKind,
+      shareUrl,
+      mediaMap,
+      mediaImages,
+      articleJobId,
+      articleImages
     });
   }, [
     activeRoute,
@@ -227,7 +284,14 @@ export function VToTextPage() {
     postAiTags,
     postStep,
     postError,
-    chainWarnings
+    chainWarnings,
+    guid,
+    captureKind,
+    shareUrl,
+    mediaMap,
+    mediaImages,
+    articleJobId,
+    articleImages
   ]);
 
   useEffect(() => {
@@ -253,7 +317,14 @@ export function VToTextPage() {
         postAiTags,
         postStep: postIsWorking ? "idle" : postStep,
         postError,
-        chainWarnings
+        chainWarnings,
+        guid,
+        captureKind,
+        shareUrl,
+        mediaMap,
+        mediaImages,
+        articleJobId,
+        articleImages
       });
     }
 
@@ -277,7 +348,14 @@ export function VToTextPage() {
     postStep,
     posts,
     selectedRecordId,
-    sourceUrl
+    sourceUrl,
+    guid,
+    captureKind,
+    shareUrl,
+    mediaMap,
+    mediaImages,
+    articleJobId,
+    articleImages
   ]);
 
   function pasteClipboardUrl() {
@@ -320,6 +398,55 @@ export function VToTextPage() {
       setUploadProgress(null);
     }
   }, [activeJobId, selectedRecord, queryClient]);
+
+  // Web-article job polling: the backend fetches the page as Markdown,
+  // stores the article images in Immich under the note GUID, and rewrites
+  // the links before the job completes.
+  useEffect(() => {
+    if (!articleJobId) return;
+    let cancelled = false;
+    async function pollArticleJob() {
+      try {
+        const updated = await fetchWebArticleJob(articleJobId as string);
+        if (cancelled) return;
+        setArticleJob(updated);
+      } catch (caught) {
+        if (cancelled) return;
+        const message = caught instanceof Error ? caught.message : "Could not refresh the article capture job";
+        setArticleJobId(null);
+        setArticleJob(null);
+        if (postStepRef.current === "capture") {
+          setPostStep("error");
+          setPostError(message);
+          setToast(message);
+        }
+      }
+    }
+    void pollArticleJob();
+    const timer = window.setInterval(() => void pollArticleJob(), ARTICLE_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [articleJobId]);
+
+  useEffect(() => {
+    if (!articleJob) return;
+    if (articleJob.status === "completed") {
+      if (ingestedArticleJobsRef.current.has(articleJob.job_id)) return;
+      ingestedArticleJobsRef.current.add(articleJob.job_id);
+      setArticleJobId(null);
+      ingestCompletedArticleJob(articleJob);
+    }
+    if (articleJob.status === "error") {
+      setArticleJobId(null);
+      setArticleJob(null);
+      const message = articleJob.error || "The capture job failed.";
+      setPostStep("error");
+      setPostError(message);
+      setToast(message);
+    }
+  }, [articleJob]);
 
   useEffect(() => {
     if (!aiTitleRequestKey) {
@@ -443,12 +570,18 @@ export function VToTextPage() {
       await startUrlJob(url);
       return;
     }
+    if (route === "article") {
+      await captureArticle(url);
+      return;
+    }
     await capturePost(url);
   }
 
   async function startUrlJob(url: string) {
     setSelectedRecordId(null);
     setUploadProgress(null);
+    const captureGuid = createNoteGuid();
+    setGuid(captureGuid);
     const job = await createUrlJob.mutateAsync({
       url,
       language: whisper.language || null,
@@ -471,7 +604,14 @@ export function VToTextPage() {
       postAiTags,
       postStep,
       postError,
-      chainWarnings
+      chainWarnings,
+      guid: captureGuid,
+      captureKind,
+      shareUrl,
+      mediaMap,
+      mediaImages,
+      articleJobId,
+      articleImages
     });
     setActiveJobId(job.job_id);
     setToast("URL job started");
@@ -481,6 +621,9 @@ export function VToTextPage() {
     setActiveRoute("voice");
     setSourceUrl("");
     setSelectedRecordId(null);
+    setUploadProgress(null);
+    const captureGuid = createNoteGuid();
+    setGuid(captureGuid);
     const job = await uploadJob.mutateAsync({
       file,
       language: whisper.language || null,
@@ -504,7 +647,14 @@ export function VToTextPage() {
       postAiTags,
       postStep,
       postError,
-      chainWarnings
+      chainWarnings,
+      guid: captureGuid,
+      captureKind,
+      shareUrl,
+      mediaMap,
+      mediaImages,
+      articleJobId,
+      articleImages
     });
     setActiveJobId(job.job_id);
     setToast("Upload complete; transcription queued");
@@ -517,17 +667,16 @@ export function VToTextPage() {
   }
 
   async function capturePost(url: string) {
+    const { seq, guid: captureGuid } = beginCapture("post");
     setPostError("");
     setChainWarnings([]);
-    setPosts([]);
-    setPolishedContent("");
-    setPostAiTags("");
-    setCapturedTitle("");
+    resetCaptureResults();
     setCapturedUrl(url);
     setPostStep("capture");
 
     try {
       const { payload, isThreads } = await importPost.mutateAsync(url);
+      if (captureSeqRef.current !== seq) return;
       const nextPosts = normalizeImportedPosts(payload, url, isThreads);
       if (!nextPosts.length) throw new Error("No public post text was found");
       const nextWarnings = chainWarningsFromPayload(payload, isThreads);
@@ -537,28 +686,178 @@ export function VToTextPage() {
       setCapturedTitle(initialTitle);
       setToast(`Captured ${nextPosts.length} post${nextPosts.length === 1 ? "" : "s"}`);
 
+      setPostStep("photos");
+      const photoWarnings = await storePostPhotos(nextPosts, url, initialTitle, captureGuid, seq);
+      if (captureSeqRef.current !== seq) return;
+      if (photoWarnings.length) {
+        setChainWarnings((current) => [...current, ...photoWarnings]);
+      }
+
       setPostStep("polish");
       const source = uniquePostBlocks(nextPosts.map((post) => post.text.trim()).filter(Boolean).join("\n\n"));
       const polished = await polishPosts(source);
+      if (captureSeqRef.current !== seq) return;
       setPolishedContent(polished);
 
       setPostStep("title");
       const title = settingsQuery.data?.capture_post?.ai_title_enabled === false
         ? initialTitle
         : await generatePostTitle(polished || source);
+      if (captureSeqRef.current !== seq) return;
       setCapturedTitle(title || initialTitle);
 
       setPostStep("tags");
       const generatedTags = await generatePostAiTags(polished || source, title || initialTitle);
+      if (captureSeqRef.current !== seq) return;
       setPostAiTags(generatedTags);
 
       setPostStep("complete");
       setToast("Post ready for Obsidian");
     } catch (caught) {
+      if (captureSeqRef.current !== seq) return;
       setPostStep("error");
       const message = caught instanceof Error ? caught.message : "Could not capture this post";
       setPostError(message);
       setToast(message);
+    }
+  }
+
+  // One GUID per capture: the note frontmatter and every photo stored in
+  // Immich (post photos via /api/immich/note-media, article photos inside
+  // the web-article job) share the same identifier.
+  function beginCapture(kind: CaptureKind) {
+    captureSeqRef.current += 1;
+    const captureGuid = createNoteGuid();
+    setCaptureKind(kind);
+    setGuid(captureGuid);
+    return { seq: captureSeqRef.current, guid: captureGuid };
+  }
+
+  function resetCaptureResults() {
+    setPosts([]);
+    setPolishedContent("");
+    setPostAiTags("");
+    setCapturedTitle("");
+    setShareUrl("");
+    setMediaMap({});
+    setMediaImages([]);
+    setArticleJobId(null);
+    setArticleJob(null);
+    setArticleImages([]);
+  }
+
+  // Web-article capture: the backend job fetches the page as Markdown and
+  // stores its images in Immich before the AI chain rewrites title and tags.
+  async function captureArticle(url: string) {
+    const { seq, guid: captureGuid } = beginCapture("article");
+    setPostError("");
+    setChainWarnings([]);
+    resetCaptureResults();
+    setCapturedUrl(url);
+    setPostStep("capture");
+    setToast("Article capture started");
+
+    try {
+      const job = await startWebArticleJob(url, captureGuid);
+      if (captureSeqRef.current !== seq) return;
+      setArticleJobId(job.job_id);
+      setArticleJob(job);
+    } catch (caught) {
+      if (captureSeqRef.current !== seq) return;
+      const message = caught instanceof Error ? caught.message : "Could not start the article capture job";
+      setPostStep("error");
+      setPostError(message);
+      setToast(message);
+    }
+  }
+
+  function ingestCompletedArticleJob(job: WebArticleJob) {
+    setArticleJob(null);
+    setArticleImages(Array.isArray(job.images) ? job.images : []);
+    setShareUrl(job.share_url || "");
+    setPosts(job.markdown.trim() ? [{ text: job.markdown, url: job.url, mediaUrls: [] }] : []);
+    setCapturedUrl(job.url);
+    setCapturedTitle(job.title || "");
+    setChainWarnings(Array.isArray(job.warnings) ? job.warnings.filter(Boolean) : []);
+    setToast("Article captured");
+    void runArticleAiChain(job);
+  }
+
+  async function runArticleAiChain(job: WebArticleJob) {
+    const seq = captureSeqRef.current;
+    const markdown = String(job.markdown || "").trim();
+    if (!markdown) {
+      const message = "The captured article was empty";
+      setPostStep("error");
+      setPostError(message);
+      setToast(message);
+      return;
+    }
+    try {
+      setPostStep("polish");
+      const polished = await polishPosts(markdown);
+      if (captureSeqRef.current !== seq) return;
+      setPolishedContent(polished);
+
+      setPostStep("title");
+      const title = settingsQuery.data?.capture_post?.ai_title_enabled === false
+        ? job.title
+        : await generatePostTitle(polished || markdown, job.title);
+      if (captureSeqRef.current !== seq) return;
+      setCapturedTitle(title || job.title);
+
+      setPostStep("tags");
+      const tags = await generatePostAiTags(polished || markdown, title || job.title);
+      if (captureSeqRef.current !== seq) return;
+      setPostAiTags(tags);
+
+      setPostStep("complete");
+      setToast("Article ready for Obsidian");
+    } catch (caught) {
+      if (captureSeqRef.current !== seq) return;
+      setPostStep("error");
+      const message = caught instanceof Error ? caught.message : "Could not process this article";
+      setPostError(message);
+      setToast(message);
+    }
+  }
+
+  // Upload the post's photos into Immich under the note GUID and keep the
+  // original→embedded mapping so the note renders them from share links.
+  async function storePostPhotos(
+    nextPosts: WovenPost[],
+    sourceUrl: string,
+    title: string,
+    captureGuid: string,
+    seq: number
+  ) {
+    const photoUrls = [
+      ...new Set(
+        nextPosts
+          .flatMap((post) => (Array.isArray(post.mediaUrls) ? post.mediaUrls : []))
+          .map((value) => String(value || "").trim())
+          .filter((value) => value && !NON_IMAGE_MEDIA_EXTENSIONS.test(value))
+      )
+    ];
+    if (!photoUrls.length) return [];
+    try {
+      const result = await uploadNoteMedia({ guid: captureGuid, urls: photoUrls, sourceUrl, title });
+      if (captureSeqRef.current !== seq) return [];
+      const nextMap: Record<string, string> = {};
+      (result.images || []).forEach((image) => {
+        if (image.embedded_url) nextMap[image.url] = image.embedded_url;
+      });
+      setMediaMap(nextMap);
+      setMediaImages(result.images || []);
+      if (result.share_url) setShareUrl(result.share_url);
+      return result.warnings || [];
+    } catch (caught) {
+      if (captureSeqRef.current !== seq) return [];
+      const message = caught instanceof Error ? caught.message : "Uploading photos to Immich failed";
+      setMediaImages(
+        photoUrls.map((url) => ({ url, asset_id: "", status: "remote" as const, warning: message }))
+      );
+      return [`照片上傳 Immich 失敗，保留原始連結：${message}`];
     }
   }
 
@@ -581,8 +880,8 @@ export function VToTextPage() {
     }
   }
 
-  async function generatePostTitle(content: string) {
-    const fallback = fallbackAiTitle(content);
+  async function generatePostTitle(content: string, preferredFallback = "") {
+    const fallback = fallbackAiTitle(content, preferredFallback);
     if (!content.trim()) return fallback;
     try {
       const apiKey = await llmApiKey.ensureApiKey(settingsQuery.data || {});
@@ -625,15 +924,26 @@ export function VToTextPage() {
     }
   }
 
-  function saveToObsidian() {
+  async function saveToObsidian() {
     if (!activeDraft) {
-      setToast(visibleRoute === "voice" ? "Complete a transcript before saving" : "Capture a post before saving");
+      setToast(
+        visibleRoute === "voice"
+          ? "Complete a transcript before saving"
+          : visibleRoute === "article"
+            ? "Capture an article before saving"
+            : "Capture a post before saving"
+      );
       return;
     }
-    openObsidianDraft(activeDraft, {
-      defaultFolder: settingsQuery.data?.obsidian?.default_folder
-    });
-    setToast("Opening Obsidian to create the note");
+    try {
+      await openObsidianDraft(activeDraft, {
+        defaultFolder: settingsQuery.data?.obsidian?.default_folder,
+        vaultName: settingsQuery.data?.obsidian?.vault_name
+      });
+      setToast("Note copied. Opening Obsidian");
+    } catch (caught) {
+      setToast(caught instanceof Error ? caught.message : "Could not open Obsidian");
+    }
   }
 
   const showError =
@@ -737,7 +1047,7 @@ export function VToTextPage() {
                   setSourceUrl(event.target.value);
                   setActiveRoute("auto");
                 }}
-                placeholder="Paste a post, video, or audio URL"
+                placeholder="Paste a post, article, video, or audio URL"
                 InputProps={{
                   startAdornment: <LinkOutlinedIcon color="disabled" fontSize="small" sx={{ mr: 1 }} />
                 }}
@@ -750,10 +1060,30 @@ export function VToTextPage() {
               {postError || errorMessage(createUrlJob.error || uploadJob.error || (!selectedRecord ? jobQuery.error : null) || recordQuery.error)}
             </Alert>
           ) : null}
-          {posts.length > 0 && visibleRoute !== "voice" ? (
+          {posts.length > 0 && captureKind === "post" && visibleRoute !== "voice" ? (
             <Typography variant="body2" color="text.secondary">
               Captured {posts.length} post{posts.length === 1 ? "" : "s"}
             </Typography>
+          ) : null}
+          {shareUrl ? (
+            <Typography variant="body2" color="text.secondary">
+              Immich share:{" "}
+              <Box component="span" sx={{ overflowWrap: "anywhere" }}>
+                {shareUrl}
+              </Box>
+            </Typography>
+          ) : null}
+          {(visibleRoute === "article" ? articleImages : mediaImages).length ? (
+            <Stack direction="row" sx={{ flexWrap: "wrap", gap: 0.75 }}>
+              {(visibleRoute === "article" ? articleImages : mediaImages).map((image) => (
+                <Chip
+                  key={image.url}
+                  size="small"
+                  color={image.status === "uploaded" ? "success" : "warning"}
+                  label={image.status === "uploaded" ? "Image stored in Immich" : "Image kept as original link"}
+                />
+              ))}
+            </Stack>
           ) : null}
           {chainWarnings.map((warning) => (
             <Alert key={warning} severity="warning">
@@ -810,9 +1140,9 @@ function WorkflowStepper({
 }) {
   const steps = route === "voice"
     ? ["Source", "AI Transcribe", aiTitleEnabled ? "AI Title" : "Title", "AI Tags", "Ready"]
-    : route === "post"
+    : route === "article"
       ? ["Capture", "AI Polish", aiTitleEnabled ? "AI Title" : "Title", "AI Tags", "Ready"]
-      : ["Source", "Process", aiTitleEnabled ? "AI Title" : "Title", "AI Tags", "Ready"];
+      : ["Capture", "Photos", "AI Polish", aiTitleEnabled ? "AI Title" : "Title", "AI Tags", "Ready"];
   return (
     <Stack spacing={1}>
       <Typography
@@ -839,11 +1169,12 @@ function routeForUrl(value: string): ClipperRoute {
   const url = value.trim();
   if (!url) return "auto";
   if (isThreadsUrl(url)) return "post";
-  return isVoiceUrl(url) ? "voice" : "post";
+  return isVoiceUrl(url) ? "voice" : "article";
 }
 
 function routeLabel(route: ClipperRoute) {
   if (route === "voice") return "Voice";
+  if (route === "article") return "Article";
   if (route === "post") return "Post";
   return "Auto";
 }
@@ -1016,30 +1347,33 @@ function normalizeImportedPosts(payload: unknown, url: string, isThreads: boolea
   return [{ text, url: post.url || url, mediaUrls: Array.isArray(post.media_urls) ? post.media_urls : [] }];
 }
 
-function postStepToIndex(step: PostStep) {
-  if (step === "complete") return 4;
-  if (step === "tags") return 3;
-  if (step === "title") return 2;
-  if (step === "polish") return 1;
+function postStepToIndex(step: PostStep, isArticle = false) {
+  if (step === "complete") return isArticle ? 4 : 5;
+  if (step === "tags") return isArticle ? 3 : 4;
+  if (step === "title") return isArticle ? 2 : 3;
+  if (step === "polish") return isArticle ? 1 : 2;
+  if (step === "photos") return 1;
   return 0;
 }
 
-function postProgress(step: PostStep) {
+function postProgress(step: PostStep, isArticle = false) {
   if (step === "complete") return 100;
   if (step === "tags") return 86;
   if (step === "title") return 72;
-  if (step === "polish") return 50;
-  if (step === "capture") return 22;
+  if (step === "polish") return isArticle ? 55 : 50;
+  if (step === "photos") return 30;
+  if (step === "capture") return isArticle ? 10 : 22;
   return 0;
 }
 
-function postProgressMessage(step: PostStep) {
-  if (step === "complete") return "Post ready";
-  if (step === "error") return "Capture failed";
+function postProgressMessage(step: PostStep, isArticle = false) {
+  if (step === "complete") return isArticle ? "Article ready" : "Post ready";
+  if (step === "error") return isArticle ? "Article capture failed" : "Capture failed";
   if (step === "tags") return "Generating tags";
   if (step === "title") return "Generating title";
   if (step === "polish") return "Polishing captured text";
-  if (step === "capture") return "Capturing post";
+  if (step === "photos") return "Uploading photos to Immich…";
+  if (step === "capture") return isArticle ? "Capturing article" : "Capturing post";
   return "Ready";
 }
 
@@ -1085,7 +1419,14 @@ function readPersistedObsidianClipperState(): PersistedObsidianClipperState {
     postAiTags: "",
     postStep: "idle",
     postError: "",
-    chainWarnings: []
+    chainWarnings: [],
+    guid: "",
+    captureKind: "post",
+    shareUrl: "",
+    mediaMap: {},
+    mediaImages: [],
+    articleJobId: null,
+    articleImages: []
   };
   if (typeof window === "undefined") return fallback;
   try {
@@ -1093,6 +1434,7 @@ function readPersistedObsidianClipperState(): PersistedObsidianClipperState {
     if (!value) return fallback;
     const parsed = JSON.parse(value) as Partial<PersistedObsidianClipperState>;
     const postStep = isPersistablePostStep(parsed.postStep) ? parsed.postStep : "idle";
+    const hasArticleJobId = typeof parsed.articleJobId === "string" && Boolean(parsed.articleJobId);
     return {
       activeRoute: isClipperRoute(parsed.activeRoute) ? parsed.activeRoute : "auto",
       activeJobId: typeof parsed.activeJobId === "string" && parsed.activeJobId ? parsed.activeJobId : null,
@@ -1108,9 +1450,20 @@ function readPersistedObsidianClipperState(): PersistedObsidianClipperState {
       capturedTitle: typeof parsed.capturedTitle === "string" ? parsed.capturedTitle : "",
       polishedContent: typeof parsed.polishedContent === "string" ? parsed.polishedContent : "",
       postAiTags: typeof parsed.postAiTags === "string" ? parsed.postAiTags : "",
-      postStep: ["capture", "polish", "title", "tags"].includes(postStep) ? "idle" : postStep,
+      postStep: ["capture", "photos", "polish", "title", "tags"].includes(postStep)
+        ? hasArticleJobId
+          ? "capture"
+          : "idle"
+        : postStep,
       postError: typeof parsed.postError === "string" ? parsed.postError : "",
-      chainWarnings: persistedChainWarnings(parsed.chainWarnings)
+      chainWarnings: persistedChainWarnings(parsed.chainWarnings),
+      guid: typeof parsed.guid === "string" ? parsed.guid : "",
+      captureKind: parsed.captureKind === "article" ? "article" : "post",
+      shareUrl: typeof parsed.shareUrl === "string" ? parsed.shareUrl : "",
+      mediaMap: persistedMediaMap(parsed.mediaMap),
+      mediaImages: persistedImageRecords(parsed.mediaImages),
+      articleJobId: hasArticleJobId ? (parsed.articleJobId as string) : null,
+      articleImages: persistedImageRecords(parsed.articleImages)
     };
   } catch {
     return fallback;
@@ -1129,11 +1482,11 @@ function writePersistedObsidianClipperState(state: PersistedObsidianClipperState
 }
 
 function isClipperRoute(value: unknown): value is ClipperRoute {
-  return ["auto", "post", "voice"].includes(String(value));
+  return ["auto", "post", "voice", "article"].includes(String(value));
 }
 
 function isPersistablePostStep(value: unknown): value is PostStep {
-  return ["idle", "capture", "polish", "title", "tags", "complete", "error"].includes(String(value));
+  return ["idle", "capture", "photos", "polish", "title", "tags", "complete", "error"].includes(String(value));
 }
 
 function isPersistedPost(value: unknown): value is WovenPost {
@@ -1144,4 +1497,40 @@ function isPersistedPost(value: unknown): value is WovenPost {
 
 function persistedChainWarnings(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [];
+}
+
+function persistedMediaMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") return {};
+  const result: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === "string" && entry) result[key] = entry;
+  }
+  return result;
+}
+
+// NoteMediaImage and WebArticleImage are structurally identical records, so
+// one validator serves both the post photo chips and the article photo chips.
+function persistedImageRecords(value: unknown): NoteMediaImage[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is NoteMediaImage => {
+    if (!item || typeof item !== "object") return false;
+    const record = item as Partial<NoteMediaImage>;
+    return (
+      typeof record.url === "string" &&
+      typeof record.asset_id === "string" &&
+      (record.status === "uploaded" || record.status === "remote") &&
+      typeof record.warning === "string"
+    );
+  });
+}
+
+function createNoteGuid() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = char === "x" ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
 }

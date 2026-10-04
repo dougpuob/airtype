@@ -3,6 +3,7 @@ import type { WovenPost } from "../types/postWeaver";
 
 const OBSIDIAN_TRANSCRIPT_TEMPLATE = `---
 title: {{DATE}} {{TITLE}}
+guid: {{GUID}}
 sources:
 {{sources}}
 datetime: {{DATETIME}}
@@ -52,12 +53,14 @@ export type TranscriptObsidianDraft = {
   sources: string[];
   tags: string[];
   datetime: string;
+  guid: string;
 };
 
 export function buildTranscriptObsidianDraft(
   record?: TranscriptionRecord | null,
   aiTags = "",
-  titleOverride = ""
+  titleOverride = "",
+  guid = ""
 ): TranscriptObsidianDraft | null {
   if (!record?.transcript?.segments?.length && !record?.transcript?.text) return null;
 
@@ -75,12 +78,13 @@ export function buildTranscriptObsidianDraft(
     DATE: dateParts.date,
     tags: yamlTagList(tags),
     TITLE: title,
+    GUID: guid,
     ai_tags: aiTags,
     polished_content: polishedContent,
     content
   };
   const note = OBSIDIAN_TRANSCRIPT_TEMPLATE.replace(
-    /{{(sources|DATETIME|DATE|TITLE|tags|ai_tags|polished_content|content)}}/g,
+    /{{(sources|DATETIME|DATE|TITLE|tags|GUID|ai_tags|polished_content|content)}}/g,
     (_, key: string) => values[key] ?? ""
   );
 
@@ -93,23 +97,68 @@ export function buildTranscriptObsidianDraft(
     aiTags,
     sources,
     tags,
-    datetime: dateParts.datetime
+    datetime: dateParts.datetime,
+    guid
   };
 }
 
 type ObsidianOpenOptions = {
   defaultFolder?: string;
+  vaultName?: string;
 };
 
-export function openObsidianDraft(draft: { noteTitle: string; note: string }, options: ObsidianOpenOptions = {}) {
+export async function openObsidianDraft(
+  draft: { noteTitle: string; note: string },
+  options: ObsidianOpenOptions = {}
+) {
   const notePath = obsidianNotePath(options.defaultFolder || "", draft.noteTitle);
-  const query = [
-    ["file", notePath],
-    ["content", draft.note]
-  ]
-    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
-    .join("&");
-  window.location.href = `obsidian://new?${query}`;
+  await copyTextToClipboard(draft.note);
+  // Full articles overflow macOS/Obsidian URI limits. Obsidian then reports
+  // "Unable to find a vault" even when the vault exists. Clipboard keeps the
+  // URI short. Omit vault to use the currently open vault; vault_name must
+  // match the vault switcher, not a folder inside the vault.
+  window.location.href = obsidianNewUri({
+    vaultName: options.vaultName,
+    file: notePath,
+    clipboard: true
+  });
+}
+
+export function obsidianNewUri(options: { vaultName?: string; file: string; content?: string; clipboard?: boolean }) {
+  const vaultName = String(options.vaultName || "").trim();
+  const parts: string[] = [];
+  if (vaultName) parts.push(`vault=${encodeURIComponent(vaultName)}`);
+  parts.push(`file=${encodeURIComponent(options.file)}`);
+  if (options.clipboard) parts.push("clipboard=true");
+  else if (options.content) parts.push(`content=${encodeURIComponent(options.content)}`);
+  return `obsidian://new?${parts.join("&")}`;
+}
+
+async function copyTextToClipboard(text: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the execCommand path used on older Safari.
+    }
+  }
+  if (typeof document === "undefined") {
+    throw new Error("Clipboard is unavailable");
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("Could not copy the note to the clipboard");
 }
 
 function obsidianNotePath(folder: string, noteTitle: string) {
@@ -124,8 +173,10 @@ function obsidianNotePath(folder: string, noteTitle: string) {
 
 const OBSIDIAN_POST_TEMPLATE = `---
 title: {{DATE}} {{TITLE}}
+guid: {{GUID}}
 sources:
 {{sources}}
+immich_share: {{IMMICH_SHARE}}
 datetime: {{DATETIME}}
 tags:
 {{tags}}
@@ -176,6 +227,8 @@ export type PostObsidianDraft = {
   sources: string[];
   tags: string[];
   datetime: string;
+  guid: string;
+  shareUrl: string;
 };
 
 export function buildPostObsidianDraft(input: {
@@ -184,13 +237,25 @@ export function buildPostObsidianDraft(input: {
   capturedTitle: string;
   polishedContent: string;
   aiTags?: string;
+  guid?: string;
+  shareUrl?: string;
+  mediaMap?: Record<string, string>;
+  extraTags?: string[];
 }): PostObsidianDraft | null {
-  const content = uniquePostBlocks(input.posts.map((post) => post.text.trim()).filter(Boolean).join("\n\n"));
+  const content = uniquePostBlocks(
+    input.posts
+      .flatMap((post) => [
+        post.text.trim(),
+        ...(Array.isArray(post.mediaUrls) ? post.mediaUrls : []).map((url) => embeddedPhotoMarkdown(url, input.mediaMap))
+      ])
+      .filter(Boolean)
+      .join("\n\n")
+  );
   if (!content) return null;
 
   const dateParts = localObsidianDateParts();
   const sources = postSources(input.posts, input.capturedUrl);
-  const tags = [dateParts.date, "airtype", ...sourceDomainTags(sources)];
+  const tags = uniqueTags([dateParts.date, "airtype", ...sourceDomainTags(sources), ...(input.extraTags || [])]);
   const articleTitle =
     sanitizeObsidianTitle(input.capturedTitle || fallbackArticleTitle(input.polishedContent || content)) || "TITLE";
   const values: Record<string, string> = {
@@ -199,14 +264,16 @@ export function buildPostObsidianDraft(input: {
     DATE: dateParts.date,
     tags: yamlTagList(tags),
     TITLE: articleTitle,
+    GUID: input.guid || "",
+    IMMICH_SHARE: input.shareUrl || "",
     ai_tags: input.aiTags || "",
     polished_content: input.polishedContent,
     content
   };
   const note = OBSIDIAN_POST_TEMPLATE.replace(
-    /{{(sources|DATETIME|DATE|TITLE|tags|ai_tags|polished_content|content)}}/g,
+    /{{(sources|DATETIME|DATE|TITLE|tags|GUID|IMMICH_SHARE|ai_tags|polished_content|content)}}/g,
     (_, key: string) => values[key] ?? ""
-  );
+  ).replace(/^immich_share:\s*\n/m, "");
 
   return {
     articleTitle,
@@ -217,7 +284,9 @@ export function buildPostObsidianDraft(input: {
     aiTags: input.aiTags || "",
     sources,
     tags,
-    datetime: dateParts.datetime
+    datetime: dateParts.datetime,
+    guid: input.guid || "",
+    shareUrl: input.shareUrl || ""
   };
 }
 
@@ -230,18 +299,21 @@ function transcriptOriginalText(segments?: TranscriptSegment[], fallbackText?: s
     .join("");
 }
 
+function embeddedPhotoMarkdown(url: string, mediaMap?: Record<string, string>) {
+  const clean = String(url || "").trim();
+  if (!clean) return "";
+  return `![](${mediaMap?.[clean] || clean})`;
+}
+
 function postSources(posts: WovenPost[], capturedUrl: string) {
-  const candidates = [
-    capturedUrl,
-    ...posts.flatMap((post) => [
-      post.url,
-      ...urlsInPostText(post.text),
-      ...(Array.isArray(post.mediaUrls) ? post.mediaUrls : [])
-    ])
-  ];
+  // Provenance only: the captured page and each post permalink.
+  // Body hyperlinks, TOC anchors, Wikipedia asides, and Immich image URLs
+  // must not land in frontmatter — they bloated tags (sec, zh, immich-app)
+  // and leaked broken markdown fragments like "url)，單季營收".
+  const candidates = [capturedUrl, ...posts.map((post) => post.url)];
   const seen = new Set<string>();
   return candidates
-    .map((value) => String(value || "").trim())
+    .map((value) => canonicalSourceUrl(value))
     .filter((value) => {
       if (!value || seen.has(value)) return false;
       seen.add(value);
@@ -249,10 +321,19 @@ function postSources(posts: WovenPost[], capturedUrl: string) {
     });
 }
 
-function urlsInPostText(text = "") {
-  return (String(text).match(/https?:\/\/\S+/gi) || [])
-    .map((url) => url.replace(/[\])}>，。！？；：】【、.,;:!?]+$/g, ""))
-    .filter(Boolean);
+function canonicalSourceUrl(value?: string) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  try {
+    const url = new URL(trimmed);
+    if (!/^https?:$/.test(url.protocol) || !url.hostname) return "";
+    url.hash = "";
+    let href = url.toString();
+    if (url.pathname !== "/" && href.endsWith("/")) href = href.slice(0, -1);
+    return href;
+  } catch {
+    return "";
+  }
 }
 
 function uniquePostBlocks(text = "") {
@@ -333,6 +414,7 @@ function sourceDomainTags(urls: string[]) {
       const url = new URL(String(value || "").trim());
       if (!/^https?:$/.test(url.protocol) || !url.hostname) return;
       const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+      if (hostname.endsWith(".ts.net")) return;
       const serviceName = hostname.split(".")[0];
       if (serviceName) tags.add(serviceName);
     } catch {
@@ -340,4 +422,14 @@ function sourceDomainTags(urls: string[]) {
     }
   });
   return [...tags];
+}
+
+function uniqueTags(tags: string[]) {
+  const seen = new Set<string>();
+  return tags.filter((tag) => {
+    const value = String(tag || "").trim();
+    if (!value || seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
 }

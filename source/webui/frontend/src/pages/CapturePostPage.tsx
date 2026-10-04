@@ -257,16 +257,21 @@ export function CapturePostPage() {
     }
   }
 
-  function saveToObsidian() {
+  async function saveToObsidian() {
     if (!draft) {
       setToast("Capture a post before saving");
       return;
     }
-    openObsidianDraft(draft, {
-      defaultFolder: settingsQuery.data?.obsidian?.default_folder
-    });
-    setHasUnsavedCapture(false);
-    setToast("Opening Obsidian to create the note");
+    try {
+      await openObsidianDraft(draft, {
+        defaultFolder: settingsQuery.data?.obsidian?.default_folder,
+        vaultName: settingsQuery.data?.obsidian?.vault_name
+      });
+      setHasUnsavedCapture(false);
+      setToast("Note copied. Opening Obsidian");
+    } catch (caught) {
+      setToast(caught instanceof Error ? caught.message : "Could not open Obsidian");
+    }
   }
 
   return (

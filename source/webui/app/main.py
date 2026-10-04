@@ -47,6 +47,8 @@ from .config_schema import (
     whisper_model_path_from_settings,
 )
 from .whisper import WhisperCppNotConfigured, transcriber
+from . import known_sources
+from . import web_article
 from .post_weaver import collect_threads_chain
 
 app = FastAPI(title="AirType API", description="Aircraft Cabin Configuration & Speech Recognition API")
@@ -547,6 +549,7 @@ def startup_managed_processes() -> None:
 def shutdown_managed_processes() -> None:
     _stop_threads_browser()
     transcriber.shutdown()
+    web_article.shutdown_jobs()
     executor.shutdown(wait=False, cancel_futures=True)
 
 
@@ -573,6 +576,18 @@ class ArticleRequest(BaseModel):
 
 class PostImportRequest(BaseModel):
     url: str
+
+
+class WebArticleJobRequest(BaseModel):
+    url: str
+    guid: str = ""
+
+
+class NoteMediaRequest(BaseModel):
+    guid: str
+    urls: list[str] = []
+    source_url: str = ""
+    title: str = ""
 
 
 class ThreadsLoginClickRequest(BaseModel):
@@ -735,6 +750,8 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     obsidian_input = incoming.get("obsidian", {}) if isinstance(incoming.get("obsidian"), dict) else {}
     capture_post_input = incoming.get("capture_post", {}) if isinstance(incoming.get("capture_post"), dict) else {}
     ime_input = incoming.get("ime", {}) if isinstance(incoming.get("ime"), dict) else {}
+    web_to_markdown_input = incoming.get("web_to_markdown", {}) if isinstance(incoming.get("web_to_markdown"), dict) else {}
+    immich_input = incoming.get("immich", {}) if isinstance(incoming.get("immich"), dict) else {}
     auth_input = incoming.get("auth", {}) if isinstance(incoming.get("auth"), dict) else {}
     current_settings = _read_backend_config_settings()
     current_whisper = current_settings.get("whisper", {})
@@ -745,6 +762,10 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     current_obsidian = current_obsidian if isinstance(current_obsidian, dict) else {}
     current_capture_post = current_settings.get("capture_post", {})
     current_capture_post = current_capture_post if isinstance(current_capture_post, dict) else {}
+    current_web_to_markdown = current_settings.get("web_to_markdown", {})
+    current_web_to_markdown = current_web_to_markdown if isinstance(current_web_to_markdown, dict) else {}
+    current_immich = current_settings.get("immich", {})
+    current_immich = current_immich if isinstance(current_immich, dict) else {}
     current_ime = current_settings.get("ime", {})
     current_ime = current_ime if isinstance(current_ime, dict) else {}
     current_auth = current_settings.get("auth", {})
@@ -813,6 +834,16 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
                     current_ime.get("correction_enabled", False),
                 )
             ),
+        },
+        "web_to_markdown": {
+            "api_key": web_to_markdown_input.get("api_key") or web_to_markdown_input.get("api-key") or current_web_to_markdown.get("api_key", ""),
+            "timeout_seconds": web_to_markdown_input.get("timeout_seconds", current_web_to_markdown.get("timeout_seconds", 60)),
+            "download_max_mb": web_to_markdown_input.get("download_max_mb", current_web_to_markdown.get("download_max_mb", 20)),
+        },
+        "immich": {
+            "server_url": immich_input.get("server_url") or immich_input.get("server-url") or current_immich.get("server_url", ""),
+            "api_key": immich_input.get("api_key") or immich_input.get("api-key") or current_immich.get("api_key", ""),
+            "create_album": bool(immich_input.get("create_album", current_immich.get("create_album", False))),
         },
         "auth": {
             "enabled": bool(auth_input.get("enabled", current_auth.get("enabled", False))),
@@ -1669,6 +1700,93 @@ async def import_social_post(request: PostImportRequest):
     return {"url": request.url, "title": title, "text": text, "media_urls": media_urls}
 
 
+@app.get("/api/web-article/known-sources")
+async def get_web_article_known_sources():
+    """The source list that routes URLs away from the generic web pipeline."""
+    return known_sources.known_sources_payload()
+
+
+@app.post("/api/web-article/jobs")
+async def create_web_article_job(request: WebArticleJobRequest):
+    """Capture any non-known-source URL as Markdown with images stored in Immich."""
+    settings = _read_app_settings()
+    web_to_markdown = settings.get("web_to_markdown", {})
+    immich = settings.get("immich", {})
+    try:
+        job = web_article.start_job(
+            request.url,
+            guid=request.guid,
+            web_to_markdown_api_key=str(web_to_markdown.get("api_key") or ""),
+            timeout_seconds=int(web_to_markdown.get("timeout_seconds") or 60),
+            download_max_mb=int(web_to_markdown.get("download_max_mb") or 20),
+            immich_server_url=str(immich.get("server_url") or ""),
+            immich_api_key=str(immich.get("api_key") or ""),
+            create_album=bool(immich.get("create_album")),
+        )
+    except web_article.KnownSourceError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return job
+
+
+@app.get("/api/web-article/jobs/{job_id}")
+async def get_web_article_job(job_id: str):
+    job = web_article.job_payload(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Web article job not found")
+    return job
+
+
+MAX_NOTE_MEDIA_URLS = 30
+
+
+@app.post("/api/immich/note-media")
+async def create_note_media(request: NoteMediaRequest):
+    """Upload note photos into Immich and map them to key-gated share URLs.
+
+    One shared pipeline with the web-article job: every photo is uploaded
+    into the dedicated Immich account, tagged with the note GUID, and mapped
+    to a key-gated thumbnail URL. Photos that fail keep their original URL
+    and are reported in ``warnings``.
+    """
+    settings = _read_app_settings()
+    web_to_markdown = settings.get("web_to_markdown", {})
+    immich = settings.get("immich", {})
+    try:
+        guid = str(uuid.UUID(str(request.guid or "").strip()))
+    except (ValueError, AttributeError, TypeError) as error:
+        raise HTTPException(status_code=400, detail="GUID 必須是有效的 UUID 格式。") from error
+
+    urls: list[str] = []
+    for value in request.urls or []:
+        url = str(value or "").strip()
+        if not url or url in urls:
+            continue
+        if not url.lower().startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="圖片網址必須以 http:// 或 https:// 開頭。")
+        urls.append(url)
+    if len(urls) > MAX_NOTE_MEDIA_URLS:
+        raise HTTPException(status_code=400, detail=f"一次最多上傳 {MAX_NOTE_MEDIA_URLS} 張照片。")
+    if not urls:
+        return {"images": [], "share_url": "", "album_id": "", "warnings": []}
+
+    return await asyncio.to_thread(
+        web_article.store_note_media,
+        urls,
+        source_url=str(request.source_url or ""),
+        guid=guid,
+        title=str(request.title or ""),
+        immich_server_url=str(immich.get("server_url") or ""),
+        immich_api_key=str(immich.get("api_key") or ""),
+        timeout_seconds=int(web_to_markdown.get("timeout_seconds") or 60),
+        download_max_mb=int(web_to_markdown.get("download_max_mb") or 20),
+        create_album=bool(immich.get("create_album")),
+    )
+
+
 @app.get("/api/threads-login/status")
 async def threads_login_status():
     return await asyncio.to_thread(_threads_browser_status)
@@ -1921,6 +2039,8 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
     capture_post = normalized["capture_post"]
     ime = normalized["ime"]
     auth = normalized["auth"]
+    web_to_markdown = normalized["web_to_markdown"]
+    immich = normalized["immich"]
     selected_llm = normalized["llm"]
     default_name = str(settings.get("default_llm_server_name") or selected_llm.get("name") or "default")
     lines = [
@@ -1945,6 +2065,16 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
         "[webui.obsidian]",
         f"vault_name = {_toml_string(obsidian.get('vault_name', ''))}",
         f"default_folder = {_toml_string(obsidian.get('default_folder', ''))}",
+        "",
+        "[webui.web-to-markdown]",
+        f"api_key = {_toml_string(web_to_markdown.get('api_key', ''))}",
+        f"timeout_seconds = {web_to_markdown.get('timeout_seconds', 60)}",
+        f"download_max_mb = {web_to_markdown.get('download_max_mb', 20)}",
+        "",
+        "[webui.immich]",
+        f"server_url = {_toml_string(immich.get('server_url', ''))}",
+        f"api_key = {_toml_string(immich.get('api_key', ''))}",
+        f"create_album = {'true' if immich.get('create_album') else 'false'}",
         "",
         "[webui.capture-post]",
         f"ai_title_enabled = {'true' if capture_post.get('ai_title_enabled') else 'false'}",

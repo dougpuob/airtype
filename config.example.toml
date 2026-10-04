@@ -67,6 +67,30 @@ cookies_from_browser = ""
 # IME mode returns raw speech-to-text results without LLM polishing.
 correction_enabled = false
 
+[webui.web-to-markdown]
+# Generic web-article pipeline (any URL that is not a known source like
+# Threads/YouTube). Optional md.genedai.me API key (mk_...) unlocks the
+# browser/firecrawl/jina engines for JS-heavy or paywalled pages.
+api_key = ""
+timeout_seconds = 60
+download_max_mb = 20
+
+[webui.obsidian]
+# Vault switcher name, not a folder. Leave empty to use the currently open vault.
+vault_name = ""
+# Folder inside that vault where Save to Obsidian creates notes.
+default_folder = ""
+
+[webui.immich]
+# Dedicated Immich account that collects note photos (from posts and web
+# articles). Obsidian notes render them through key-gated share links,
+# tagged with the note GUID.
+# Tailscale MagicDNS hostnames (*.ts.net) still work when "Use Tailscale DNS"
+# is off: AirType queries 100.100.100.100 for those names.
+server_url = ""
+api_key = ""
+create_album = false
+
 [[webui.llm-server]]
 # Unique name for this LLM server.
 name = "llama.cpp"

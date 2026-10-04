@@ -26,6 +26,16 @@ export type AppSettings = {
     cookies?: string;
     cookies_from_browser?: string;
   };
+  web_to_markdown?: {
+    api_key?: string;
+    timeout_seconds?: number;
+    download_max_mb?: number;
+  };
+  immich?: {
+    server_url?: string;
+    api_key?: string;
+    create_album?: boolean;
+  };
   auth?: {
     enabled?: boolean;
     username?: string;

@@ -35,6 +35,16 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "cookies": "",
         "cookies_from_browser": "",
     },
+    "web_to_markdown": {
+        "api_key": "",
+        "timeout_seconds": 60,
+        "download_max_mb": 20,
+    },
+    "immich": {
+        "server_url": "",
+        "api_key": "",
+        "create_album": False,
+    },
     "obsidian": {
         "vault_name": "",
         "default_folder": "",
@@ -60,6 +70,8 @@ WEBUI_SECTION_ALIASES = {
     "whisper": ("whisper-server",),
     "llm": ("llm-server",),
     "ytdlp": ("yt-dlp", "ytdlp"),
+    "web_to_markdown": ("web-to-markdown",),
+    "immich": ("immich",),
     "obsidian": ("obsidian",),
     "capture_post": ("capture-post", "capture_post"),
     "ime": ("ime",),
@@ -262,6 +274,28 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         or ""
     )
 
+    web_to_markdown_input = _dict_value(normalized.get("web_to_markdown"))
+    web_to_markdown = {**DEFAULT_APP_SETTINGS["web_to_markdown"], **web_to_markdown_input}
+    if "api_key" not in web_to_markdown_input and "api-key" in web_to_markdown_input:
+        web_to_markdown["api_key"] = web_to_markdown_input["api-key"]
+    web_to_markdown["api_key"] = str(web_to_markdown.get("api_key") or "")
+    web_to_markdown["timeout_seconds"] = _int_in_range(
+        web_to_markdown.get("timeout_seconds"), 60, minimum=5, maximum=300
+    )
+    web_to_markdown["download_max_mb"] = _int_in_range(
+        web_to_markdown.get("download_max_mb"), 20, minimum=1, maximum=200
+    )
+
+    immich_input = _dict_value(normalized.get("immich"))
+    immich = {**DEFAULT_APP_SETTINGS["immich"], **immich_input}
+    if "server_url" not in immich_input and "server-url" in immich_input:
+        immich["server_url"] = immich_input["server-url"]
+    if "api_key" not in immich_input and "api-key" in immich_input:
+        immich["api_key"] = immich_input["api-key"]
+    immich["server_url"] = str(immich.get("server_url") or "").strip().rstrip("/")
+    immich["api_key"] = str(immich.get("api_key") or "")
+    immich["create_album"] = bool(immich.get("create_album"))
+
     obsidian = {**DEFAULT_APP_SETTINGS["obsidian"], **_dict_value(normalized.get("obsidian"))}
     obsidian["vault_name"] = str(
         obsidian.get("vault_name")
@@ -303,6 +337,8 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         "whisper": whisper,
         "llm": llm,
         "ytdlp": ytdlp,
+        "web_to_markdown": web_to_markdown,
+        "immich": immich,
         "obsidian": obsidian,
         "capture_post": capture_post,
         "ime": ime,
@@ -314,7 +350,7 @@ def remove_webui_sections(text: str) -> str:
     import re
 
     pattern = re.compile(
-        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:auth|whisper-server|llm-server|yt-dlp|ytdlp|obsidian|capture-post|capture_post|ime)\]{1,2})\n.*?(?=^\[|\Z)"
+        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:auth|whisper-server|llm-server|yt-dlp|ytdlp|obsidian|capture-post|capture_post|web-to-markdown|immich|ime)\]{1,2})\n.*?(?=^\[|\Z)"
     )
     text = pattern.sub("", text)
     header_pattern = re.compile(
@@ -328,6 +364,8 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
     whisper = normalized["whisper"]
     llm = normalized["llm"]
     ytdlp = normalized["ytdlp"]
+    web_to_markdown = normalized["web_to_markdown"]
+    immich = normalized["immich"]
     obsidian = normalized["obsidian"]
     capture_post = normalized["capture_post"]
     ime = normalized["ime"]
@@ -354,6 +392,16 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
         "[webui.obsidian]",
         f"vault_name = {_toml_string(obsidian.get('vault_name', ''))}",
         f"default_folder = {_toml_string(obsidian.get('default_folder', ''))}",
+        "",
+        "[webui.web-to-markdown]",
+        f"api_key = {_toml_string(web_to_markdown.get('api_key', ''))}",
+        f"timeout_seconds = {_toml_number(web_to_markdown.get('timeout_seconds', 60), 60)}",
+        f"download_max_mb = {_toml_number(web_to_markdown.get('download_max_mb', 20), 20)}",
+        "",
+        "[webui.immich]",
+        f"server_url = {_toml_string(immich.get('server_url', ''))}",
+        f"api_key = {_toml_string(immich.get('api_key', ''))}",
+        f"create_album = {'true' if immich.get('create_album') else 'false'}",
         "",
         "[webui.capture-post]",
         f"ai_title_enabled = {'true' if capture_post.get('ai_title_enabled') else 'false'}",

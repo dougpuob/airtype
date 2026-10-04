@@ -9,6 +9,8 @@ type ObsidianPreviewDraft = {
   sources: string[];
   tags: string[];
   datetime: string;
+  guid?: string;
+  shareUrl?: string;
 };
 
 type ObsidianNotePreviewProps = {
@@ -91,7 +93,9 @@ function PreviewSection({ title, children }: { title: string; children: ReactNod
 function PropertiesTable({ draft }: { draft: ObsidianPreviewDraft }) {
   const rows = [
     ["title", draft.noteTitle],
+    ...(draft.guid ? [["guid", draft.guid]] : []),
     ["sources", draft.sources.length ? draft.sources.join("\n") : "--"],
+    ...(draft.shareUrl ? [["immich_share", draft.shareUrl]] : []),
     ["datetime", draft.datetime],
     ["tags", draft.tags.length ? draft.tags.join(", ") : "--"]
   ];

@@ -50,6 +50,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/v-to-text" element={<VToTextPage />} />
+        <Route path="/web-article" element={<Navigate to="/v-to-text" replace />} />
         <Route path="/capture-post" element={<Navigate to="/v-to-text" replace />} />
         <Route path="/ime-history" element={<ImeHistoryPage />} />
         <Route path="/threads-login" element={<ThreadsLoginPage />} />

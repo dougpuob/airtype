@@ -342,16 +342,24 @@ export function SettingsPage() {
               <Stack spacing={1.5} sx={settingsPanelSx}>
                 <Typography variant="h3">Obsidian and Downloads</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Note export opens the currently active Obsidian vault with Obsidian URI links; media URL imports use yt-dlp.
+                  Save to Obsidian copies the note to the clipboard and opens a short Obsidian URI. Leave the vault name blank to use the vault that is currently open. Media URL imports use yt-dlp.
                 </Typography>
                 <Divider />
+                <TextField
+                  size="small"
+                  label="Obsidian vault name"
+                  placeholder="Leave blank for the open vault"
+                  value={draft?.obsidian?.vault_name || ""}
+                  onChange={(event) => updateSection("obsidian", { vault_name: event.target.value })}
+                  helperText="Must match the name in Obsidian’s vault switcher exactly. This is not a folder inside the vault. Leave blank unless you need to switch vaults."
+                />
                 <TextField
                   size="small"
                   label="Obsidian default folder"
                   placeholder="Inbox/AirType"
                   value={draft?.obsidian?.default_folder || ""}
                   onChange={(event) => updateSection("obsidian", { default_folder: event.target.value })}
-                  helperText="Saved notes are created in this folder inside the currently open Obsidian vault."
+                  helperText="Folder inside the vault, for example airtype. Do not put the vault name here."
                 />
                 <TextField
                   size="small"
@@ -368,6 +376,53 @@ export function SettingsPage() {
                 />
                 <Alert severity="info">
                   Obsidian notes are opened with the local Obsidian app using the generated note title and Markdown body.
+                </Alert>
+              </Stack>
+            </WorkspacePanel>
+          </Grid>
+
+          <Grid size={{ xs: 12, lg: 6 }}>
+            <WorkspacePanel>
+              <Stack spacing={1.5} sx={settingsPanelSx}>
+                <Typography variant="h3">Article Capture and Immich</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Obsidian Clipper captures web pages outside the known sources through md.genedai.me; note photos from posts and articles are stored in Immich and rendered from key-gated share links.
+                </Typography>
+                <Divider />
+                <TextField
+                  size="small"
+                  label="md.genedai.me API key"
+                  placeholder="mk_..."
+                  value={draft?.web_to_markdown?.api_key || ""}
+                  onChange={(event) => updateSection("web_to_markdown", { api_key: event.target.value })}
+                  helperText="Optional. Anonymous captures cannot use the browser/firecrawl/jina engines on JS-heavy pages."
+                />
+                <TextField
+                  size="small"
+                  label="Immich server URL"
+                  placeholder="https://immich.example.com"
+                  value={draft?.immich?.server_url || ""}
+                  onChange={(event) => updateSection("immich", { server_url: event.target.value })}
+                  helperText="Tailscale MagicDNS names (*.ts.net) work even if Use Tailscale DNS is off."
+                />
+                <TextField
+                  size="small"
+                  label="Immich API key"
+                  value={draft?.immich?.api_key || ""}
+                  onChange={(event) => updateSection("immich", { api_key: event.target.value })}
+                  helperText="API key of the dedicated Immich account that collects article images."
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={draft?.immich?.create_album ?? false}
+                      onChange={(event) => updateSection("immich", { create_album: event.target.checked })}
+                    />
+                  }
+                  label="Also create one Immich album per article"
+                />
+                <Alert severity="info">
+                  Every note gets a GUID and all of its Immich images carry that GUID as a tag. Without Immich settings, images keep their original URLs.
                 </Alert>
               </Stack>
             </WorkspacePanel>

@@ -166,12 +166,12 @@
             "vault_name": {
               "type": "string",
               "default": "",
-              "description": "Optional Obsidian vault name used by Save to Obsidian URI links."
+              "description": "Optional Obsidian vault-switcher name for Save to Obsidian. Leave empty to use the currently open vault. Must not be a folder inside the vault."
             },
             "default_folder": {
               "type": "string",
               "default": "",
-              "description": "Optional default folder/path inside the Obsidian vault for Save to Obsidian notes."
+              "description": "Optional folder path inside the Obsidian vault for Save to Obsidian notes."
             }
           }
         },
@@ -188,6 +188,46 @@
               "type": "string",
               "default": "你是擅長提煉文章重點的繁體中文標題編輯。請根據使用者提供的文章產生一個約 30 個字的標題；不要使用冒號、不要提供多個選項、不要加入引號或解釋，只輸出標題。",
               "description": "System prompt used when the LLM generates workflow titles."
+            }
+          }
+        },
+        "web-to-markdown": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "api_key": {
+              "type": "string",
+              "default": "",
+              "description": "Optional md.genedai.me API key (mk_...). Anonymous requests cannot use the browser/firecrawl/jina engines."
+            },
+            "timeout_seconds": { "type": "integer", "minimum": 5, "maximum": 300, "default": 60 },
+            "download_max_mb": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 20,
+              "description": "Maximum single-image download size in megabytes."
+            }
+          }
+        },
+        "immich": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "server_url": {
+              "type": "string",
+              "default": "",
+              "description": "Immich server base URL, e.g. https://immich.example.com. Tailscale MagicDNS names (*.ts.net) are resolved even when Use Tailscale DNS is off."
+            },
+            "api_key": {
+              "type": "string",
+              "default": "",
+              "description": "Immich API key of the dedicated account that collects web-article images."
+            },
+            "create_album": {
+              "type": "boolean",
+              "default": false,
+              "description": "Additionally create one Immich album per article beside the GUID tag."
             }
           }
         },
