@@ -1282,7 +1282,11 @@ def _patch_config_llm_models(models_by_server: dict[str, list[str]]) -> None:
         else:
             patched = _replace_or_append_toml_value(block, "models", _toml_string_array(model_names))
             selected_model = table.get("selected-model") or table.get("default_model") or table.get("model") or ""
-            if not selected_model or selected_model not in model_names:
+            if not selected_model:
+                # Only pick a default when the user has not chosen a model.
+                # A selected model missing from the freshly fetched list may
+                # simply not be served right now; keep the user's choice
+                # instead of silently resetting it to the first entry.
                 patched = _replace_or_append_toml_value(patched, "selected-model", _toml_string(model_names[0] if model_names else ""))
             patched = _remove_toml_keys(patched, {"model", "default_model"})
             output.extend(patched)
