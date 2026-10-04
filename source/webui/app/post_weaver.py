@@ -451,17 +451,63 @@ def _walk_thread_items(value: Any) -> Iterable[ThreadsPost]:
 
 
 def _thread_item_groups(value: Any) -> Iterable[list[Any]]:
-    """Yield each distinct, direct ``thread_items`` group in page order."""
+    """Yield each distinct, direct post group in page order.
+
+    Besides the classic ``thread_items`` lists, the current Threads payload
+    also exposes the anchor post as ``data.media`` and the author's
+    continuation spine as ``text_post_app_info.self_thread.posts.edges``.
+    Both are yielded as post groups so the spine joining logic treats them
+    like any other conversation fragment.
+    """
+    yield from _item_groups(value, frozenset())
+
+
+def _item_groups(value: Any, seen: frozenset) -> Iterable[list[Any]]:
     if isinstance(value, dict):
+        marker = id(value)
+        if marker in seen:
+            return
+        seen = seen | {marker}
         items = value.get("thread_items")
         if isinstance(items, list):
             yield items
+        media = value.get("media")
+        if _looks_like_post(media):
+            yield [media]
+        edges = _self_thread_edges(value)
+        if edges:
+            yield edges
         for key, child in value.items():
-            if key != "thread_items":
-                yield from _thread_item_groups(child)
+            if key == "thread_items":
+                continue
+            yield from _item_groups(child, seen)
     elif isinstance(value, list):
         for child in value:
-            yield from _thread_item_groups(child)
+            yield from _item_groups(child, seen)
+
+
+def _self_thread_edges(value: dict) -> list[dict]:
+    thread = value.get("self_thread")
+    if not isinstance(thread, dict):
+        return []
+    posts = thread.get("posts")
+    if not isinstance(posts, dict):
+        return []
+    edges = posts.get("edges")
+    if not isinstance(edges, list):
+        return []
+    nodes = [edge.get("node") for edge in edges if isinstance(edge, dict)]
+    return [node for node in nodes if isinstance(node, dict)]
+
+
+def _looks_like_post(value: Any) -> bool:
+    """A raw post object carries its own code, caption, and user fields."""
+    if not isinstance(value, dict):
+        return False
+    has_id = bool(value.get("code") or value.get("pk") or value.get("id"))
+    has_caption = isinstance(value.get("caption"), (str, dict))
+    has_user = isinstance(value.get("user"), dict)
+    return has_id and has_caption and has_user
 
 
 def _conversation_group(payloads: Iterable[Any], known_codes: set[str]) -> list[_ThreadEntry]:
@@ -561,9 +607,14 @@ def _flatten_conversation_items(items: Any) -> list[_ThreadEntry]:
         if not isinstance(item, dict):
             continue
         raw_post = item.get("post")
+        # The current Threads payload nests raw post objects directly (for
+        # example ``data.media`` and ``self_thread.posts.edges[].node``)
+        # instead of wrapping every post in a ``post`` key.
+        if not isinstance(raw_post, dict) and _looks_like_post(item):
+            raw_post = item
         if isinstance(raw_post, dict):
             entry = _entry_from_raw(raw_post)
-            if entry:
+            if entry is not None:
                 entries.append(entry)
         for key, child in item.items():
             if key == "post":

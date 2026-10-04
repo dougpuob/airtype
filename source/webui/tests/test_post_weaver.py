@@ -88,6 +88,79 @@ class ThreadsPostWeaverTests(unittest.TestCase):
         )
         self.assertEqual(output["warnings"], [])
 
+    def test_media_and_self_thread_payload_format_collects_spine(self) -> None:
+        """The current Threads payload puts posts under ``data.media`` and
+        ``text_post_app_info.self_thread.posts.edges`` instead of the classic
+        ``thread_items`` lists."""
+        reply_leaf = {
+            "pk": "p2",
+            "code": "p2",
+            "user": {"username": "alice"},
+            "caption": {"text": "2/2 continued"},
+            "text_post_app_info": {
+                "is_reply": True,
+                "reply_to_author": {"username": "alice"},
+            },
+        }
+        reply_media = {
+            **reply_leaf,
+            "text_post_app_info": {
+                **reply_leaf["text_post_app_info"],
+                "self_thread": {"posts": {"edges": [{"node": reply_leaf}]}},
+            },
+        }
+        op = {
+            "pk": "op",
+            "code": "op",
+            "user": {"username": "alice"},
+            "caption": {"text": "1/2 start"},
+            "text_post_app_info": {"self_thread": {}},
+        }
+        page = _page(
+            {
+                "require": [
+                    [
+                        "ScheduledServerJS",
+                        "handle",
+                        None,
+                        [
+                            {
+                                "__bbox": {
+                                    "require": [
+                                        [
+                                            "RelayPrefetchedStreamCache",
+                                            "next",
+                                            None,
+                                            [
+                                                "adp_BarcelonaPostPageQuery",
+                                                {
+                                                    "__bbox": {
+                                                        "result": {"data": {"media": op}}
+                                                    }
+                                                },
+                                            ],
+                                        ]
+                                    ]
+                                }
+                            }
+                        ],
+                    ]
+                ],
+                "spine": {"require": [{"__bbox": {"result": {"data": {"media": reply_media}}}}]},
+            }
+        )
+
+        output = ThreadsChainCollector().collect_page(
+            "https://www.threads.com/@alice/post/op",
+            page,
+        )
+
+        self.assertEqual(
+            [post["text"] for post in output["posts"]],
+            ["1/2 start", "2/2 continued"],
+        )
+        self.assertEqual(output["warnings"], [])
+
     def test_threads_share_url_resolves_before_fetching(self) -> None:
         case = json.loads(CASE_PATH.read_text())
 
