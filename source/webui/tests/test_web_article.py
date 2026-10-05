@@ -15,12 +15,16 @@ class _FakeResponse:
 
 
 class _FakeImmich:
+    last = None
+
     def __init__(self, server_url, api_key, timeout_seconds=60):
         self.server_url = server_url
         self.api_key = api_key
         self.configured = bool(server_url and api_key)
         self.uploaded = []
         self.tagged = None
+        self.tag_name = None
+        _FakeImmich.last = self
 
     def upload_asset(self, *, data, filename, content_type, device_asset_id, file_created_at, device_id="airtype"):
         asset_id = f"a{len(self.uploaded)}"
@@ -30,6 +34,7 @@ class _FakeImmich:
         return {"id": asset_id, "status": "created", "duplicate": False}
 
     def ensure_tag(self, name):
+        self.tag_name = name
         return "tag-1"
 
     def tag_assets(self, tag_id, asset_ids):
@@ -207,6 +212,8 @@ class RunJobTests(unittest.TestCase):
         self.assertEqual([item["status"] for item in payload["images"]], ["uploaded", "uploaded"])
         self.assertEqual([item["asset_id"] for item in payload["images"]], ["a0", "a1"])
         self.assertEqual(payload["warnings"], [])
+        self.assertEqual(_FakeImmich.last.tag_name, payload["guid"])
+        self.assertEqual(_FakeImmich.last.tagged, ("tag-1", ["a0", "a1"]))
         self.assertNotIn("cdn.example.com", payload["markdown"])
         self.assertIn(
             "![第一張](https://immich.example/api/assets/a0/thumbnail?key=K&size=preview)",
@@ -214,6 +221,30 @@ class RunJobTests(unittest.TestCase):
         )
         self.assertIn(
             '![第二張](https://immich.example/api/assets/a1/thumbnail?key=K&size=preview "標題")',
+            payload["markdown"],
+        )
+
+    def test_duplicate_asset_rewrites_to_existing_immich_url(self) -> None:
+        class _DuplicateImmich(_FakeImmich):
+            def upload_asset(self, *, data, filename, content_type, device_asset_id, file_created_at, device_id="airtype"):
+                self.uploaded.append({"filename": filename, "size": len(data)})
+                return {"id": "existing-asset", "status": "duplicate", "duplicate": True}
+
+        payload = _run_article_job(
+            {
+                "download": {"return_value": (b"png-bytes", "image/png")},
+                "immich": _DuplicateImmich,
+            }
+        )
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["images"][0]["asset_id"], "existing-asset")
+        self.assertTrue(payload["images"][0]["duplicate"])
+        self.assertEqual(payload["warnings"], [])
+        self.assertEqual(_FakeImmich.last.tag_name, payload["guid"])
+        self.assertEqual(_FakeImmich.last.tagged, ("tag-1", ["existing-asset", "existing-asset"]))
+        self.assertNotIn("cdn.example.com", payload["markdown"])
+        self.assertIn(
+            "https://immich.example/api/assets/existing-asset/thumbnail?key=K&size=preview",
             payload["markdown"],
         )
 

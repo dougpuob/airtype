@@ -21,7 +21,7 @@ import { uploadNoteMedia } from "../api/immich";
 import type { NoteMediaImage } from "../api/immich";
 import { chainWarningsFromPayload, useImportPostMutation } from "../api/postWeaver";
 import { useSettingsQuery } from "../api/settings";
-import { fetchWebArticleJob, startWebArticleJob } from "../api/webArticle";
+import { fetchClipId, fetchWebArticleJob, startWebArticleJob } from "../api/webArticle";
 import type { WebArticleImage, WebArticleJob } from "../api/webArticle";
 import {
   useCancelTranscriptionJobMutation,
@@ -41,7 +41,8 @@ import { DEFAULT_AI_TITLE_SYSTEM_PROMPT, fallbackAiTitle, normalizeAiTitle } fro
 import {
   buildPostObsidianDraft,
   buildTranscriptObsidianDraft,
-  openObsidianDraft
+  openObsidianDraft,
+  postsToMarkdown
 } from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
@@ -160,6 +161,7 @@ export function VToTextPage() {
   const postDraft = useMemo(
     () =>
       buildPostObsidianDraft({
+        kind: captureKind === "article" ? "article" : "post",
         posts,
         capturedUrl,
         capturedTitle,
@@ -167,13 +169,13 @@ export function VToTextPage() {
         aiTags: postAiTags,
         guid,
         shareUrl,
-        mediaMap,
-        extraTags: captureKind === "article" ? ["web-article"] : []
+        mediaMap
       }),
     [captureKind, capturedTitle, capturedUrl, guid, mediaMap, polishedContent, postAiTags, posts, shareUrl]
   );
   const activeDraft = visibleRoute === "voice" ? transcriptDraft : postDraft;
-  const originalTitle = visibleRoute === "voice" ? "Original Transcript" : "Original Content";
+  const originalTitle =
+    activeDraft?.originalHeading || (visibleRoute === "voice" ? "Original Transcript" : "Original Content");
   const emptyMessage = visibleRoute === "voice"
     ? "Complete a transcript to preview the note."
     : visibleRoute === "article"
@@ -580,7 +582,7 @@ export function VToTextPage() {
   async function startUrlJob(url: string) {
     setSelectedRecordId(null);
     setUploadProgress(null);
-    const captureGuid = createNoteGuid();
+    const captureGuid = (await fetchClipId(url)).guid;
     setGuid(captureGuid);
     const job = await createUrlJob.mutateAsync({
       url,
@@ -667,7 +669,7 @@ export function VToTextPage() {
   }
 
   async function capturePost(url: string) {
-    const { seq, guid: captureGuid } = beginCapture("post");
+    const seq = beginCapture("post");
     setPostError("");
     setChainWarnings([]);
     resetCaptureResults();
@@ -679,6 +681,10 @@ export function VToTextPage() {
       if (captureSeqRef.current !== seq) return;
       const nextPosts = normalizeImportedPosts(payload, url, isThreads);
       if (!nextPosts.length) throw new Error("No public post text was found");
+      const payloadGuid = clipGuidFromPayload(payload);
+      const captureGuid = payloadGuid || (await fetchClipId(nextPosts[0]?.url || url)).guid;
+      if (captureSeqRef.current !== seq) return;
+      setGuid(captureGuid);
       const nextWarnings = chainWarningsFromPayload(payload, isThreads);
       const initialTitle = titleFromPostText(nextPosts[0]?.text || "");
       setPosts(nextPosts);
@@ -687,14 +693,14 @@ export function VToTextPage() {
       setToast(`Captured ${nextPosts.length} post${nextPosts.length === 1 ? "" : "s"}`);
 
       setPostStep("photos");
-      const photoWarnings = await storePostPhotos(nextPosts, url, initialTitle, captureGuid, seq);
+      const photoResult = await storePostPhotos(nextPosts, url, initialTitle, captureGuid, seq);
       if (captureSeqRef.current !== seq) return;
-      if (photoWarnings.length) {
-        setChainWarnings((current) => [...current, ...photoWarnings]);
+      if (photoResult.warnings.length) {
+        setChainWarnings((current) => [...current, ...photoResult.warnings]);
       }
 
       setPostStep("polish");
-      const source = uniquePostBlocks(nextPosts.map((post) => post.text.trim()).filter(Boolean).join("\n\n"));
+      const source = postsToMarkdown(nextPosts, photoResult.mediaMap);
       const polished = await polishPosts(source);
       if (captureSeqRef.current !== seq) return;
       setPolishedContent(polished);
@@ -722,15 +728,12 @@ export function VToTextPage() {
     }
   }
 
-  // One GUID per capture: the note frontmatter and every photo stored in
-  // Immich (post photos via /api/immich/note-media, article photos inside
-  // the web-article job) share the same identifier.
+  // URL clips get a UUID v5 from the backend (same source → same GUID).
   function beginCapture(kind: CaptureKind) {
     captureSeqRef.current += 1;
-    const captureGuid = createNoteGuid();
     setCaptureKind(kind);
-    setGuid(captureGuid);
-    return { seq: captureSeqRef.current, guid: captureGuid };
+    setGuid("");
+    return captureSeqRef.current;
   }
 
   function resetCaptureResults() {
@@ -749,7 +752,7 @@ export function VToTextPage() {
   // Web-article capture: the backend job fetches the page as Markdown and
   // stores its images in Immich before the AI chain rewrites title and tags.
   async function captureArticle(url: string) {
-    const { seq, guid: captureGuid } = beginCapture("article");
+    const seq = beginCapture("article");
     setPostError("");
     setChainWarnings([]);
     resetCaptureResults();
@@ -758,8 +761,9 @@ export function VToTextPage() {
     setToast("Article capture started");
 
     try {
-      const job = await startWebArticleJob(url, captureGuid);
+      const job = await startWebArticleJob(url);
       if (captureSeqRef.current !== seq) return;
+      if (job.guid) setGuid(job.guid);
       setArticleJobId(job.job_id);
       setArticleJob(job);
     } catch (caught) {
@@ -772,6 +776,7 @@ export function VToTextPage() {
   }
 
   function ingestCompletedArticleJob(job: WebArticleJob) {
+    if (job.guid) setGuid(job.guid);
     setArticleJob(null);
     setArticleImages(Array.isArray(job.images) ? job.images : []);
     setShareUrl(job.share_url || "");
@@ -839,10 +844,10 @@ export function VToTextPage() {
           .filter((value) => value && !NON_IMAGE_MEDIA_EXTENSIONS.test(value))
       )
     ];
-    if (!photoUrls.length) return [];
+    if (!photoUrls.length) return { warnings: [], mediaMap: {} };
     try {
       const result = await uploadNoteMedia({ guid: captureGuid, urls: photoUrls, sourceUrl, title });
-      if (captureSeqRef.current !== seq) return [];
+      if (captureSeqRef.current !== seq) return { warnings: [], mediaMap: {} };
       const nextMap: Record<string, string> = {};
       (result.images || []).forEach((image) => {
         if (image.embedded_url) nextMap[image.url] = image.embedded_url;
@@ -850,14 +855,17 @@ export function VToTextPage() {
       setMediaMap(nextMap);
       setMediaImages(result.images || []);
       if (result.share_url) setShareUrl(result.share_url);
-      return result.warnings || [];
+      return { warnings: result.warnings || [], mediaMap: nextMap };
     } catch (caught) {
-      if (captureSeqRef.current !== seq) return [];
+      if (captureSeqRef.current !== seq) return { warnings: [], mediaMap: {} };
       const message = caught instanceof Error ? caught.message : "Uploading photos to Immich failed";
       setMediaImages(
         photoUrls.map((url) => ({ url, asset_id: "", status: "remote" as const, warning: message }))
       );
-      return [`照片上傳 Immich 失敗，保留原始連結：${message}`];
+      return {
+        warnings: [`照片上傳 Immich 失敗，保留原始連結：${message}`],
+        mediaMap: {}
+      };
     }
   }
 
@@ -1329,6 +1337,12 @@ function normalizeAiTags(text = "") {
     .join("\n");
 }
 
+function clipGuidFromPayload(payload: unknown) {
+  if (!payload || typeof payload !== "object") return "";
+  const guid = (payload as { guid?: unknown }).guid;
+  return typeof guid === "string" && guid.trim() ? guid.trim() : "";
+}
+
 function normalizeImportedPosts(payload: unknown, url: string, isThreads: boolean): WovenPost[] {
   if (isThreads) {
     const thread = payload as ThreadsChainResponse;
@@ -1375,21 +1389,6 @@ function postProgressMessage(step: PostStep, isArticle = false) {
   if (step === "photos") return "Uploading photos to Immich…";
   if (step === "capture") return isArticle ? "Capturing article" : "Capturing post";
   return "Ready";
-}
-
-function uniquePostBlocks(text = "") {
-  const seen = new Set<string>();
-  return String(text)
-    .split(/\n\s*\n/)
-    .map((block) => block.trim())
-    .filter((block) => {
-      if (!block) return false;
-      const key = block.replace(/[\s\u200B-\u200D\uFEFF]+/g, " ").trim();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .join("\n\n");
 }
 
 function titleFromPostText(text = "") {

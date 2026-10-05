@@ -28,6 +28,7 @@ from typing import Any, Callable, Optional
 
 from . import known_sources
 from .immich import IMAGE_EXTENSION_BY_CONTENT_TYPE, ImmichClient, ImmichError
+from .note_id import note_guid_for_source
 
 MD_GENEDAI_HOST = "md.genedai.me"
 USER_AGENT = "Mozilla/5.0 (compatible; AirType WebArticle/1.0)"
@@ -313,7 +314,9 @@ def store_note_media(
     account, tagged with the note GUID, and mapped to a key-gated thumbnail
     URL from one passwordless shared link. Images that fail at any step keep
     their original URL and are reported in ``warnings`` instead of failing
-    the whole note.
+    the whole note. A checksum duplicate is not a failure: Immich returns
+    the existing asset id, and this function reuses it for the tag, shared
+    link, and rewritten URL.
 
     Returns ``{"images", "share_url", "album_id", "warnings"}`` where each
     image record is ``{"url", "asset_id", "status", "warning", "embedded_url"}``.
@@ -349,9 +352,16 @@ def store_note_media(
                 file_created_at=_now(),
             )
             asset_ids.append(uploaded["id"])
-            record = {"url": image_url, "asset_id": uploaded["id"], "status": "uploaded", "warning": ""}
-            if uploaded.get("duplicate"):
-                warnings.append(f"圖片已存在於 Immich，重複上傳略過：{image_url}")
+            # A checksum hit still returns the existing asset id. Reuse that
+            # id for tagging, the note's shared link, and Markdown rewrite —
+            # do not fall back to the original CDN URL.
+            record = {
+                "url": image_url,
+                "asset_id": uploaded["id"],
+                "status": "uploaded",
+                "warning": "",
+                "duplicate": bool(uploaded.get("duplicate")),
+            }
         except Exception as error:
             warnings.append(f"圖片上傳失敗，保留原始連結：{image_url}（{error}）")
             record = {"url": image_url, "asset_id": "", "status": "remote", "warning": str(error)}
@@ -439,9 +449,9 @@ def start_job(
 ) -> dict[str, Any]:
     """Validate the URL, register a queued job, and hand it to the executor.
 
-    ``guid`` is the caller's note GUID (the frontend generates one per
-    capture); when omitted a fresh UUID is generated so the note and its
-    Immich assets still share one identifier.
+    The note GUID is UUID v5 of the canonical source URL so recapturing the
+    same page reuses the Immich tag. A caller-supplied ``guid`` is ignored
+    when the URL can be canonicalized.
     """
     url = str(url or "").strip()
     try:
@@ -457,7 +467,7 @@ def start_job(
     if blocked_reason:
         raise ValueError(blocked_reason)
 
-    note_guid = _validated_note_guid(guid)
+    note_guid = note_guid_for_source(url)
     job_id = f"web-{uuid.uuid4().hex[:12]}"
     job: dict[str, Any] = {
         "job_id": job_id,

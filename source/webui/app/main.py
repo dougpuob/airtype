@@ -49,7 +49,8 @@ from .config_schema import (
 from .whisper import WhisperCppNotConfigured, transcriber
 from . import known_sources
 from . import web_article
-from .post_weaver import collect_threads_chain
+from .note_id import canonical_source_id, note_guid_for_source
+from .post_weaver import collect_threads_chain, posts_to_markdown
 
 app = FastAPI(title="AirType API", description="Aircraft Cabin Configuration & Speech Recognition API")
 
@@ -1697,7 +1698,27 @@ async def import_social_post(request: PostImportRequest):
         "og:image", "og:image:url", "og:image:secure_url", "og:video", "og:video:url",
         "og:video:secure_url", "twitter:image", "twitter:player:stream",
     )
-    return {"url": request.url, "title": title, "text": text, "media_urls": media_urls}
+    return {
+        "kind": "post",
+        "url": request.url,
+        "title": title,
+        "text": text,
+        "media_urls": media_urls,
+        "markdown": posts_to_markdown(
+            [{"text": text, "url": request.url, "media_urls": media_urls}]
+        ),
+        "guid": note_guid_for_source(request.url),
+        "source_id": canonical_source_id(request.url),
+    }
+
+
+@app.get("/api/clip/id")
+async def get_clip_id(url: str):
+    """UUID v5 and canonical source id for a clip URL."""
+    source_id = canonical_source_id(url)
+    if not source_id:
+        raise HTTPException(status_code=400, detail="URL 必須以 http:// 或 https:// 開頭。")
+    return {"url": url, "source_id": source_id, "guid": note_guid_for_source(url)}
 
 
 @app.get("/api/web-article/known-sources")

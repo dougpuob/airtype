@@ -47,6 +47,16 @@ export function startWebArticleJob(url: string, guid = "") {
   });
 }
 
+export type ClipIdResponse = {
+  url: string;
+  source_id: string;
+  guid: string;
+};
+
+export function fetchClipId(url: string) {
+  return apiRequest<ClipIdResponse>(`/api/clip/id?url=${encodeURIComponent(url)}`);
+}
+
 export function fetchWebArticleJob(jobId: string) {
   return apiRequest<WebArticleJob>(`/api/web-article/jobs/${encodeURIComponent(jobId)}`);
 }

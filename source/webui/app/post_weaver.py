@@ -17,6 +17,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Iterable
 
+from .note_id import canonical_source_id, note_guid_for_source
+
 
 _THREADS_HOSTS = {"threads.com", "www.threads.com", "threads.net", "www.threads.net"}
 _POST_PATH = re.compile(r"^/@(?P<author>[^/?#]+)/post/(?P<code>[A-Za-z0-9_-]+)", re.IGNORECASE)
@@ -35,6 +37,44 @@ class ThreadsPost:
 
     def as_dict(self) -> dict[str, Any]:
         return {"url": self.url, "text": self.text, "media_urls": list(self.media_urls)}
+
+
+def posts_to_markdown(posts: Iterable[Any]) -> str:
+    """Compile collected posts into one Markdown document.
+
+    Each post is its text followed by image embeds. This is the same
+    original-content shape the web-article pipeline produces, so Immich
+    rewriting and the Obsidian clip template can treat posts and articles
+    the same way.
+    """
+    blocks: list[str] = []
+    seen: set[str] = set()
+    for post in posts or []:
+        if isinstance(post, ThreadsPost):
+            text = post.text
+            media = post.media_urls
+        elif isinstance(post, dict):
+            text = str(post.get("text") or "")
+            media = post.get("media_urls") or ()
+        else:
+            continue
+        parts: list[str] = []
+        stripped = str(text or "").strip()
+        if stripped:
+            parts.append(stripped)
+        for url in media:
+            clean = str(url or "").strip()
+            if clean:
+                parts.append(f"![]({clean})")
+        block = "\n\n".join(parts).strip()
+        if not block:
+            continue
+        key = re.sub(r"[\s\u200b-\u200d\ufeff]+", " ", block).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        blocks.append(block)
+    return "\n\n".join(blocks)
 
 
 WARNING_NOT_OP_CHAIN = "不是樓主連發，沒有收連續篇"
@@ -238,6 +278,15 @@ class ThreadsChainCollector:
 
     def _public_result(self, result: dict[str, Any]) -> dict[str, Any]:
         result.pop("_reply_count", None)
+        result["kind"] = "post"
+        result["markdown"] = posts_to_markdown(result.get("posts") or [])
+        source_url = str(result.get("url") or "")
+        if not source_url:
+            posts = result.get("posts") or []
+            source_url = str((posts[0] or {}).get("url") or "") if posts else ""
+        if source_url:
+            result["guid"] = note_guid_for_source(source_url)
+            result["source_id"] = canonical_source_id(source_url)
         return result
 
     def _fetch_with_browser(self, url: str) -> str:
@@ -329,6 +378,7 @@ class ThreadsChainCollector:
         target_entry = _find_entry(conversation, target_code)
         return {
             "author": author,
+            "url": canonical_url,
             "posts": [post.as_dict() for post in posts],
             "warnings": warnings,
             "_reply_count": target_entry.reply_count if target_entry else 0,

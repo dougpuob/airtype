@@ -30,7 +30,8 @@ import type { ThreadsChainResponse, WovenPost } from "../types/postWeaver";
 import { DEFAULT_AI_TITLE_SYSTEM_PROMPT, fallbackAiTitle, normalizeAiTitle } from "../utils/aiTitle";
 import {
   buildPostObsidianDraft,
-  openObsidianDraft
+  openObsidianDraft,
+  postsToMarkdown
 } from "../utils/obsidian";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
@@ -73,7 +74,7 @@ export function CapturePostPage() {
   const activeProgress = captureProgress(step);
   const activeMessage = captureProgressMessage(step);
   const draft = useMemo(
-    () => buildPostObsidianDraft({ posts, capturedUrl, capturedTitle, polishedContent, aiTags }),
+    () => buildPostObsidianDraft({ kind: "post", posts, capturedUrl, capturedTitle, polishedContent, aiTags }),
     [posts, capturedUrl, capturedTitle, polishedContent, aiTags]
   );
 
@@ -168,7 +169,7 @@ export function CapturePostPage() {
       setToast(`Captured ${nextPosts.length} post${nextPosts.length === 1 ? "" : "s"}`);
 
       setStep("polish");
-      const source = uniquePostBlocks(nextPosts.map((post) => post.text.trim()).filter(Boolean).join("\n\n"));
+      const source = postsToMarkdown(nextPosts);
       const polished = await polishPosts(source);
       setPolishedContent(polished);
 
@@ -508,21 +509,6 @@ function captureProgressMessage(step: CaptureStep) {
   if (step === "polish") return "Polishing captured text";
   if (step === "capture") return "Capturing post";
   return "Ready";
-}
-
-function uniquePostBlocks(text = "") {
-  const seen = new Set<string>();
-  return String(text)
-    .split(/\n\s*\n/)
-    .map((block) => block.trim())
-    .filter((block) => {
-      if (!block) return false;
-      const key = block.replace(/[\s\u200B-\u200D\uFEFF]+/g, " ").trim();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .join("\n\n");
 }
 
 function titleFromPostText(text = "") {

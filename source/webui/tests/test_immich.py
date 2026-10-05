@@ -80,6 +80,11 @@ class ImmichClientTests(unittest.TestCase):
             tag_id = client.ensure_tag("guid")
             client.tag_assets(tag_id, ["a1", "a2"])
         self.assertEqual(tag_id, "tag-1")
+        first_call = mock_request.call_args_list[0]
+        self.assertEqual(first_call.args[0], "POST")
+        self.assertTrue(str(first_call.args[1]).endswith("/api/tags"))
+        first_payload = json.loads(first_call.kwargs["data"].decode("utf-8"))
+        self.assertEqual(first_payload, {"name": "guid"})
         second_call = mock_request.call_args_list[1]
         self.assertEqual(second_call.args[0], "PUT")
         self.assertTrue(str(second_call.args[1]).endswith("/api/tags/tag-1/assets"))

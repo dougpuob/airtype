@@ -1,11 +1,26 @@
 import type { TranscriptionRecord, TranscriptSegment } from "../types/transcription";
 import type { WovenPost } from "../types/postWeaver";
 
-const OBSIDIAN_TRANSCRIPT_TEMPLATE = `---
+export type ClipKind = "article" | "post" | "media";
+
+const CLIP_KIND_TAGS: Record<ClipKind, string> = {
+  article: "web-article",
+  post: "capture-post",
+  media: "speech-to-text"
+};
+
+const ORIGINAL_HEADING: Record<ClipKind, string> = {
+  article: "Original Content",
+  post: "Original Content",
+  media: "Original Transcript"
+};
+
+const OBSIDIAN_CLIP_TEMPLATE = `---
 title: {{DATE}} {{TITLE}}
 guid: {{GUID}}
 sources:
 {{sources}}
+immich_share: {{IMMICH_SHARE}}
 datetime: {{DATETIME}}
 tags:
 {{tags}}
@@ -38,13 +53,18 @@ tags:
 
 ---
 
-# Original Transcript
+# {{ORIGINAL_HEADING}}
 
 {{content}}
-`;
 
-export type TranscriptObsidianDraft = {
+---
+
+END`;
+
+export type ClipObsidianDraft = {
+  kind: ClipKind;
   title: string;
+  articleTitle: string;
   noteTitle: string;
   note: string;
   content: string;
@@ -54,52 +74,33 @@ export type TranscriptObsidianDraft = {
   tags: string[];
   datetime: string;
   guid: string;
+  shareUrl: string;
+  originalHeading: string;
 };
+
+export type TranscriptObsidianDraft = ClipObsidianDraft;
+export type PostObsidianDraft = ClipObsidianDraft;
 
 export function buildTranscriptObsidianDraft(
   record?: TranscriptionRecord | null,
   aiTags = "",
   titleOverride = "",
   guid = ""
-): TranscriptObsidianDraft | null {
+): ClipObsidianDraft | null {
   if (!record?.transcript?.segments?.length && !record?.transcript?.text) return null;
 
-  const content = transcriptOriginalText(record.transcript?.segments, record.transcript?.text);
-  if (!content.trim()) return null;
+  const markdown = transcriptOriginalText(record.transcript?.segments, record.transcript?.text);
+  if (!markdown.trim()) return null;
 
-  const dateParts = localObsidianDateParts();
-  const title = sanitizeObsidianTitle(titleOverride || record.title || record.source?.name || "Untitled transcript");
-  const sources = transcriptSources(record);
-  const tags = [dateParts.date, "airtype", "speech-to-text", ...sourceDomainTags(sources)];
-  const polishedContent = record.article?.text?.trim() || "";
-  const values: Record<string, string> = {
-    sources: yamlSourceList(sources),
-    DATETIME: dateParts.datetime,
-    DATE: dateParts.date,
-    tags: yamlTagList(tags),
-    TITLE: title,
-    GUID: guid,
-    ai_tags: aiTags,
-    polished_content: polishedContent,
-    content
-  };
-  const note = OBSIDIAN_TRANSCRIPT_TEMPLATE.replace(
-    /{{(sources|DATETIME|DATE|TITLE|tags|GUID|ai_tags|polished_content|content)}}/g,
-    (_, key: string) => values[key] ?? ""
-  );
-
-  return {
-    title,
-    note,
-    noteTitle: `${dateParts.date} ${title}`,
-    content,
-    polishedContent,
+  return buildClipObsidianDraft({
+    kind: "media",
+    title: titleOverride || record.title || record.source?.name || "Untitled transcript",
+    markdown,
+    polishedContent: record.article?.text?.trim() || "",
     aiTags,
-    sources,
-    tags,
-    datetime: dateParts.datetime,
-    guid
-  };
+    guid,
+    sources: transcriptSources(record)
+  });
 }
 
 type ObsidianOpenOptions = {
@@ -171,65 +172,23 @@ function obsidianNotePath(folder: string, noteTitle: string) {
   return cleanFolder ? `${cleanFolder}/${noteTitle}` : noteTitle;
 }
 
-const OBSIDIAN_POST_TEMPLATE = `---
-title: {{DATE}} {{TITLE}}
-guid: {{GUID}}
-sources:
-{{sources}}
-immich_share: {{IMMICH_SHARE}}
-datetime: {{DATETIME}}
-tags:
-{{tags}}
----
-
----
-
-# Title
-
-{{TITLE}}
-
----
-
-# Notes
-
-
-
-
----
-
-# AI Tags
-
-{{ai_tags}}
-
----
-
-# AI Polished Article
-
-{{polished_content}}
-
----
-
-# Original Content
-
-{{content}}
-
----
-
-END`;
-
-export type PostObsidianDraft = {
-  articleTitle: string;
-  noteTitle: string;
-  note: string;
-  content: string;
-  polishedContent: string;
-  aiTags: string;
-  sources: string[];
-  tags: string[];
-  datetime: string;
-  guid: string;
-  shareUrl: string;
-};
+export function postsToMarkdown(posts: WovenPost[], mediaMap?: Record<string, string>) {
+  const blocks: string[] = [];
+  const seen = new Set<string>();
+  for (const post of posts || []) {
+    const parts = [
+      String(post.text || "").trim(),
+      ...(Array.isArray(post.mediaUrls) ? post.mediaUrls : []).map((url) => embeddedPhotoMarkdown(url, mediaMap))
+    ].filter(Boolean);
+    const block = parts.join("\n\n").trim();
+    if (!block) continue;
+    const key = block.replace(/[\s\u200B-\u200D\uFEFF]+/g, " ").trim();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    blocks.push(block);
+  }
+  return blocks.join("\n\n");
+}
 
 export function buildPostObsidianDraft(input: {
   posts: WovenPost[];
@@ -241,44 +200,73 @@ export function buildPostObsidianDraft(input: {
   shareUrl?: string;
   mediaMap?: Record<string, string>;
   extraTags?: string[];
-}): PostObsidianDraft | null {
-  const content = uniquePostBlocks(
-    input.posts
-      .flatMap((post) => [
-        post.text.trim(),
-        ...(Array.isArray(post.mediaUrls) ? post.mediaUrls : []).map((url) => embeddedPhotoMarkdown(url, input.mediaMap))
-      ])
-      .filter(Boolean)
-      .join("\n\n")
-  );
+  kind?: ClipKind;
+  markdown?: string;
+}): ClipObsidianDraft | null {
+  const markdown = String(input.markdown || "").trim() || postsToMarkdown(input.posts, input.mediaMap);
+  return buildClipObsidianDraft({
+    kind: input.kind || "post",
+    title: input.capturedTitle,
+    markdown,
+    polishedContent: input.polishedContent,
+    aiTags: input.aiTags,
+    guid: input.guid,
+    shareUrl: input.shareUrl,
+    sources: postSources(input.posts, input.capturedUrl),
+    extraTags: input.extraTags
+  });
+}
+
+function buildClipObsidianDraft(input: {
+  kind: ClipKind;
+  title: string;
+  markdown: string;
+  polishedContent: string;
+  aiTags?: string;
+  guid?: string;
+  shareUrl?: string;
+  sources?: string[];
+  extraTags?: string[];
+}): ClipObsidianDraft | null {
+  const content = input.kind === "media" ? String(input.markdown || "").trim() : uniquePostBlocks(input.markdown);
   if (!content) return null;
 
   const dateParts = localObsidianDateParts();
-  const sources = postSources(input.posts, input.capturedUrl);
-  const tags = uniqueTags([dateParts.date, "airtype", ...sourceDomainTags(sources), ...(input.extraTags || [])]);
-  const articleTitle =
-    sanitizeObsidianTitle(input.capturedTitle || fallbackArticleTitle(input.polishedContent || content)) || "TITLE";
+  const sources = uniqueSources(input.sources || []);
+  const tags = uniqueTags([
+    dateParts.date,
+    "airtype",
+    CLIP_KIND_TAGS[input.kind],
+    ...sourceDomainTags(sources),
+    ...(input.extraTags || [])
+  ]);
+  const title =
+    sanitizeObsidianTitle(input.title || fallbackArticleTitle(input.polishedContent || content)) || "TITLE";
+  const originalHeading = ORIGINAL_HEADING[input.kind];
   const values: Record<string, string> = {
     sources: yamlSourceList(sources),
     DATETIME: dateParts.datetime,
     DATE: dateParts.date,
     tags: yamlTagList(tags),
-    TITLE: articleTitle,
+    TITLE: title,
     GUID: input.guid || "",
     IMMICH_SHARE: input.shareUrl || "",
+    ORIGINAL_HEADING: originalHeading,
     ai_tags: input.aiTags || "",
     polished_content: input.polishedContent,
     content
   };
-  const note = OBSIDIAN_POST_TEMPLATE.replace(
-    /{{(sources|DATETIME|DATE|TITLE|tags|GUID|IMMICH_SHARE|ai_tags|polished_content|content)}}/g,
+  const note = OBSIDIAN_CLIP_TEMPLATE.replace(
+    /{{(sources|DATETIME|DATE|TITLE|tags|GUID|IMMICH_SHARE|ORIGINAL_HEADING|ai_tags|polished_content|content)}}/g,
     (_, key: string) => values[key] ?? ""
   ).replace(/^immich_share:\s*\n/m, "");
 
   return {
-    articleTitle,
+    kind: input.kind,
+    title,
+    articleTitle: title,
     note,
-    noteTitle: `${dateParts.date} ${articleTitle}`,
+    noteTitle: `${dateParts.date} ${title}`,
     content,
     polishedContent: input.polishedContent,
     aiTags: input.aiTags || "",
@@ -286,7 +274,8 @@ export function buildPostObsidianDraft(input: {
     tags,
     datetime: dateParts.datetime,
     guid: input.guid || "",
-    shareUrl: input.shareUrl || ""
+    shareUrl: input.shareUrl || "",
+    originalHeading
   };
 }
 
@@ -349,6 +338,17 @@ function uniquePostBlocks(text = "") {
       return true;
     })
     .join("\n\n");
+}
+
+function uniqueSources(urls: string[]) {
+  const seen = new Set<string>();
+  return urls
+    .map((value) => String(value || "").trim())
+    .filter((value) => {
+      if (!value || seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
 }
 
 function fallbackArticleTitle(text = "") {

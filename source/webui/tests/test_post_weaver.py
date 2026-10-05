@@ -4,13 +4,17 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import uuid
 
+from app.note_id import note_guid_for_source
 from app.post_weaver import (
     ThreadsChainCollector,
+    ThreadsPost,
     WARNING_INCOMPLETE,
     WARNING_NOT_OP_CHAIN,
     WARNING_UNCONFIRMED_OP,
     _cookies_header_for_url,
+    posts_to_markdown,
 )
 
 
@@ -87,6 +91,31 @@ class ThreadsPostWeaverTests(unittest.TestCase):
             case["expected_post_texts"],
         )
         self.assertEqual(output["warnings"], [])
+        self.assertEqual(output["kind"], "post")
+        self.assertEqual(output["markdown"], posts_to_markdown(output["posts"]))
+        self.assertIn(case["expected_post_texts"][0], output["markdown"])
+        self.assertEqual(output["guid"], note_guid_for_source(case["input_url"]))
+        self.assertEqual(uuid.UUID(output["guid"]).version, 5)
+
+    def test_posts_to_markdown_embeds_images_and_drops_duplicates(self) -> None:
+        markdown = posts_to_markdown(
+            [
+                ThreadsPost(
+                    "p1",
+                    "https://www.threads.com/@alice/post/p1",
+                    "alice",
+                    "第一則",
+                    ("https://cdn.example/a.jpg",),
+                ),
+                {"text": "第二則", "media_urls": ["https://cdn.example/b.jpg", ""]},
+                {"text": "第一則", "media_urls": ["https://cdn.example/a.jpg"]},
+                {"text": "   ", "media_urls": []},
+            ]
+        )
+        self.assertEqual(
+            markdown,
+            "第一則\n\n![](https://cdn.example/a.jpg)\n\n第二則\n\n![](https://cdn.example/b.jpg)",
+        )
 
     def test_media_and_self_thread_payload_format_collects_spine(self) -> None:
         """The current Threads payload puts posts under ``data.media`` and
