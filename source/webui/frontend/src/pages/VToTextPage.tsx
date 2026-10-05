@@ -37,6 +37,7 @@ import { useLlmApiKey } from "../hooks/useLlmApiKey";
 import { useGuardedWork } from "../hooks/useWorkGuard";
 import type { ThreadsChainResponse, WovenPost } from "../types/postWeaver";
 import type { TranscriptionJob, TranscriptionRecord } from "../types/transcription";
+import { AI_TAGS_SYSTEM_PROMPT, buildAiTagsPrompt, normalizeAiTags } from "../utils/aiTags";
 import { DEFAULT_AI_TITLE_SYSTEM_PROMPT, fallbackAiTitle, normalizeAiTitle } from "../utils/aiTitle";
 import {
   buildPostObsidianDraft,
@@ -123,7 +124,7 @@ export function VToTextPage() {
   const settingsQuery = useSettingsQuery();
   const jobQuery = useTranscriptionJobQuery(activeJobId, Boolean(activeJobId));
   const recordLookupId = selectedRecordId || activeJobId;
-  const recordQuery = useTranscriptionRecordQuery(recordLookupId);
+  const recordQuery = useTranscriptionRecordQuery(recordLookupId, Boolean(activeJobId));
   const createUrlJob = useCreateUrlTranscriptionJobMutation();
   const uploadJob = useUploadTranscriptionJobMutation();
   const cancelJob = useCancelTranscriptionJobMutation();
@@ -138,7 +139,9 @@ export function VToTextPage() {
   const selectedRecord = recordQuery.data;
   const detectedRoute = routeForUrl(sourceUrl);
   const visibleRoute = activeRoute === "auto" ? detectedRoute : activeRoute;
-  const voiceIsWorking = Boolean(activeJobId && !isTerminalStatus(selectedRecord?.status)) || createUrlJob.isPending || uploadJob.isPending;
+  const voiceJobWorking =
+    Boolean(activeJobId && !isTerminalStatus(selectedRecord?.status)) || createUrlJob.isPending || uploadJob.isPending;
+  const voiceIsWorking = voiceJobWorking || isGeneratingAiTitle || isGeneratingAiTags;
   const postIsWorking = importPost.isPending || ["capture", "photos", "polish", "title", "tags"].includes(postStep);
   const isWorking = voiceIsWorking || postIsWorking;
 
@@ -154,9 +157,11 @@ export function VToTextPage() {
     [effectiveAiTitle, selectedRecord]
   );
   const aiTagsRequestKey = aiTagsSource.key ? `${aiTagsSource.key}|${aiTagsSource.title}` : "";
+  const storedAiTags = selectedRecord?.status === "completed" ? String(selectedRecord.ai_tags || "").trim() : "";
+  const visibleAiTags = aiTags || storedAiTags;
   const transcriptDraft = useMemo(
-    () => buildTranscriptObsidianDraft(selectedRecord, aiTags, effectiveAiTitle, guid),
-    [aiTags, effectiveAiTitle, guid, selectedRecord]
+    () => buildTranscriptObsidianDraft(selectedRecord, visibleAiTags, effectiveAiTitle, guid),
+    [effectiveAiTitle, guid, selectedRecord, visibleAiTags]
   );
   const postDraft = useMemo(
     () =>
@@ -191,8 +196,11 @@ export function VToTextPage() {
         hasRecord: Boolean(selectedRecord),
         hasTitleSource: Boolean(aiTitleSource.key),
         titleDone: aiTitleDone,
-        hasTagSource: Boolean(aiTagsSource.key),
-        tagsDone: !aiTagsRequestKey || (aiTagsSourceKey === aiTagsRequestKey && !isGeneratingAiTags),
+        hasTagSource: Boolean(storedAiTags || aiTagsSource.key),
+        tagsDone:
+          Boolean(storedAiTags) ||
+          !aiTagsRequestKey ||
+          (aiTagsSourceKey === aiTagsRequestKey && !isGeneratingAiTags),
         isSubmitting: uploadProgress !== null || createUrlJob.isPending || uploadJob.isPending,
         isGeneratingAiTitle,
         isGeneratingAiTags
@@ -504,14 +512,20 @@ export function VToTextPage() {
   }, [
     aiTitleEnabled,
     aiTitleRequestKey,
-    aiTitleSource,
+    aiTitleSource.content,
+    aiTitleSource.title,
     aiTitleSourceKey,
     aiTitleSystemPrompt,
-    llmApiKey,
+    llmApiKey.ensureApiKey,
     settingsQuery.data
   ]);
 
   useEffect(() => {
+    if (storedAiTags) {
+      setAiTags(storedAiTags);
+      setIsGeneratingAiTags(false);
+      return;
+    }
     if (!aiTitleDone) return;
     if (!aiTagsSource.key) {
       setAiTags("");
@@ -531,7 +545,7 @@ export function VToTextPage() {
         const response = await chatWithLocalLlm(
           settingsQuery.data || {},
           buildAiTagsPrompt(aiTagsSource.content, aiTagsSource.title),
-          "你是擅長資訊整理的繁體中文知識管理助手。只輸出可直接貼進 Obsidian 的 hashtag 清單。",
+          AI_TAGS_SYSTEM_PROMPT,
           apiKey
         );
         if (!cancelled) {
@@ -557,7 +571,17 @@ export function VToTextPage() {
     return () => {
       cancelled = true;
     };
-  }, [aiTagsRequestKey, aiTagsSource, aiTagsSourceKey, aiTitleDone, llmApiKey, settingsQuery.data]);
+  }, [
+    aiTagsRequestKey,
+    aiTagsSource.content,
+    aiTagsSource.key,
+    aiTagsSource.title,
+    aiTagsSourceKey,
+    aiTitleDone,
+    llmApiKey.ensureApiKey,
+    settingsQuery.data,
+    storedAiTags
+  ]);
 
   async function runClipperUrl() {
     const url = sourceUrl.trim();
@@ -919,7 +943,7 @@ export function VToTextPage() {
       const response = await chatWithLocalLlm(
         settingsQuery.data || {},
         buildAiTagsPrompt(source, title),
-        "你是擅長資訊整理的繁體中文知識管理助手。只輸出可直接貼進 Obsidian 的 hashtag 清單。",
+        AI_TAGS_SYSTEM_PROMPT,
         apiKey
       );
       const tags = normalizeAiTags(response);
@@ -960,8 +984,14 @@ export function VToTextPage() {
     uploadJob.isError ||
     (jobQuery.isError && !selectedRecord) ||
     (selectedRecordId && recordQuery.isError);
-  const mainActionText = voiceIsWorking ? "Stop" : visibleRoute === "voice" ? "Transcribe" : "Capture";
-  const mainActionDisabled = postIsWorking || createUrlJob.isPending || uploadJob.isPending || cancelJob.isPending;
+  const mainActionText = voiceJobWorking ? "Stop" : visibleRoute === "voice" ? "Transcribe" : "Capture";
+  const mainActionDisabled =
+    postIsWorking ||
+    isGeneratingAiTitle ||
+    isGeneratingAiTags ||
+    createUrlJob.isPending ||
+    uploadJob.isPending ||
+    cancelJob.isPending;
 
   return (
     <PageScaffold>
@@ -1018,9 +1048,9 @@ export function VToTextPage() {
                 </Button>
                 <Button
                   variant="contained"
-                  color={voiceIsWorking ? "error" : "primary"}
+                  color={voiceJobWorking ? "error" : "primary"}
                   disabled={mainActionDisabled}
-                  onClick={voiceIsWorking ? stopActiveJob : () => void runClipperUrl()}
+                  onClick={voiceJobWorking ? stopActiveJob : () => void runClipperUrl()}
                   sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
                 >
                   {mainActionText}
@@ -1296,7 +1326,7 @@ function isTerminalStatus(status?: string) {
 }
 
 function transcriptAiSource(record?: TranscriptionRecord | null, titleOverride = "") {
-  if (!record) return { key: "", title: "", content: "" };
+  if (!record || record.status !== "completed") return { key: "", title: "", content: "" };
   const content =
     record.article?.text?.trim() ||
     record.transcript?.text?.trim() ||
@@ -1308,33 +1338,6 @@ function transcriptAiSource(record?: TranscriptionRecord | null, titleOverride =
     title,
     content
   };
-}
-
-function buildAiTagsPrompt(content: string, title: string) {
-  return `請根據以下文章產生 5 到 8 組 Obsidian hashtag。
-
-要求：
-1. 每一組包含一個繁體中文 hashtag 與一個對應英文 hashtag。
-2. 英文若有常見縮寫，請優先使用縮寫，例如 AI、LLM、API、GPU、CPU、SaaS。
-3. hashtag 不要有空格、標點或解釋文字。
-4. 每行只輸出一組，格式固定為：#中文標籤 #EnglishTag
-5. 不要輸出編號、前言、結語、Markdown code block。
-
-標題：${title || "未命名"}
-
-文章：
-${content}`;
-}
-
-function normalizeAiTags(text = "") {
-  return String(text)
-    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```[a-zA-Z]*\n?/g, "").replace(/```/g, ""))
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim())
-    .filter(Boolean)
-    .filter((line) => line.includes("#"))
-    .slice(0, 8)
-    .join("\n");
 }
 
 function clipGuidFromPayload(payload: unknown) {

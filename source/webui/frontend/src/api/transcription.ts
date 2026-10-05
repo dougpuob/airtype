@@ -25,10 +25,11 @@ export function useTranscriptionRecordsQuery() {
   });
 }
 
-export function useTranscriptionRecordQuery(jobId?: string | null) {
+export function useTranscriptionRecordQuery(jobId?: string | null, live = false) {
   return useQuery({
     queryKey: ["transcription-record", jobId],
     enabled: Boolean(jobId),
+    refetchInterval: live && jobId ? 1000 : false,
     queryFn: async () => {
       const payload = await apiRequest<{ record: TranscriptionRecord }>(`/api/transcribe/records/${jobId}`);
       return payload.record;

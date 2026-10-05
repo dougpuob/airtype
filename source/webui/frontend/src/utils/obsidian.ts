@@ -1,5 +1,6 @@
 import type { TranscriptionRecord, TranscriptSegment } from "../types/transcription";
 import type { WovenPost } from "../types/postWeaver";
+import { yamlTagsFromAiTags } from "./aiTags";
 
 export type ClipKind = "article" | "post" | "media";
 
@@ -238,6 +239,7 @@ function buildClipObsidianDraft(input: {
     "airtype",
     CLIP_KIND_TAGS[input.kind],
     ...sourceDomainTags(sources),
+    ...yamlTagsFromAiTags(input.aiTags || ""),
     ...(input.extraTags || [])
   ]);
   const title =

@@ -28,6 +28,9 @@ export type TranscriptionJob = {
     segments?: TranscriptSegment[];
   } | null;
   error?: string | null;
+  article_error?: string | null;
+  ai_tags?: string | null;
+  ai_tags_error?: string | null;
 };
 
 export type TranscriptionRecordSummary = {
@@ -65,4 +68,6 @@ export type TranscriptionRecord = TranscriptionRecordSummary & {
     title?: string;
     updated_at?: string;
   } | null;
+  ai_tags?: string | null;
+  ai_tags_error?: string | null;
 };

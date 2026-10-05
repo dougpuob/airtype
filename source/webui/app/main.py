@@ -49,6 +49,7 @@ from .config_schema import (
 from .whisper import WhisperCppNotConfigured, transcriber
 from . import known_sources
 from . import web_article
+from .ai_tags import AI_TAGS_SYSTEM_PROMPT, build_ai_tags_prompt, normalize_ai_tags
 from .note_id import canonical_source_id, note_guid_for_source
 from .post_weaver import collect_threads_chain, posts_to_markdown
 
@@ -3059,9 +3060,26 @@ def _llm_messages(system: Optional[str], prompt: str) -> list[Dict[str, str]]:
 
 
 def _strip_thinking_blocks(text: str) -> str:
-    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", str(text or ""), flags=re.IGNORECASE)
+    cleaned = re.sub(r"<\|think\|>[\s\S]*?<\|/?think\|>", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"^\s*</?think>\s*", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip()
+
+
+def _message_text(message: Dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                parts.append(str(part.get("text") or part.get("content") or ""))
+        content = "\n".join(parts)
+    text = str(content or "").strip()
+    if text:
+        return text
+    return str(message.get("reasoning_content") or message.get("reasoning") or "").strip()
 
 
 def _local_chat_response(request: LocalChatRequest) -> str:
@@ -3084,7 +3102,7 @@ def _local_chat_response(request: LocalChatRequest) -> str:
             payload_body,
             api_key=request.api_key,
         )
-        return _strip_thinking_blocks(payload.get("message", {}).get("content", ""))
+        return _strip_thinking_blocks(_message_text(payload.get("message") or {}))
 
     payload_body = {
         "model": request.model,
@@ -3092,7 +3110,8 @@ def _local_chat_response(request: LocalChatRequest) -> str:
         "temperature": request.temperature,
         **({"n_ctx": _request_context_length(request)} if request.provider == "llama.cpp" else {}),
     }
-    if request.disable_thinking and request.provider == "llama.cpp":
+    if request.disable_thinking:
+        payload_body["think"] = False
         payload_body["chat_template_kwargs"] = {"enable_thinking": False}
     payload = _http_json(
         "POST",
@@ -3101,7 +3120,9 @@ def _local_chat_response(request: LocalChatRequest) -> str:
         api_key=request.api_key,
     )
     choices = payload.get("choices", [])
-    return _strip_thinking_blocks(choices[0].get("message", {}).get("content", "")) if choices else ""
+    if not choices:
+        return ""
+    return _strip_thinking_blocks(_message_text(choices[0].get("message") or {}))
 
 
 def _request_context_length(request: LocalChatRequest) -> int:
@@ -3337,6 +3358,8 @@ def _public_job(job: Dict[str, Any]) -> Dict[str, Any]:
         "result": job["result"],
         "error": job["error"],
         "article_error": job.get("article_error"),
+        "ai_tags": job.get("ai_tags"),
+        "ai_tags_error": job.get("ai_tags_error"),
         "created_at": job["created_at"],
         "updated_at": job["updated_at"],
     }
@@ -3533,6 +3556,10 @@ def _record_data(job_id: str, job: Dict[str, Any]) -> Dict[str, Any]:
     }
     if isinstance(job.get("article"), dict):
         record["article"] = job["article"]
+    if job.get("ai_tags"):
+        record["ai_tags"] = job["ai_tags"]
+    if job.get("ai_tags_error"):
+        record["ai_tags_error"] = job["ai_tags_error"]
     return record
 
 
@@ -3781,6 +3808,51 @@ def _generate_transcription_article(
     }
 
 
+def _generate_transcription_tags(content: str, title: str) -> str:
+    source = str(content or "").strip()
+    if not source:
+        raise ValueError("Tag source text is empty")
+
+    settings = _read_app_settings()
+    llm = settings.get("llm", {}) if isinstance(settings.get("llm"), dict) else {}
+    model = str(llm.get("model") or llm.get("selected_model") or "").strip()
+    if not model:
+        models = llm.get("models")
+        if isinstance(models, list):
+            model = next((str(candidate).strip() for candidate in models if str(candidate).strip()), "")
+    if not model:
+        raise ValueError("Local LLM model is not configured")
+
+    user_prompt = build_ai_tags_prompt(source, title)
+    provider = str(llm.get("provider") or "llama.cpp")
+    endpoint = str(llm.get("endpoint") or "http://127.0.0.1:8080")
+    api_key = str(llm.get("api_key") or "")
+    server_name = str(llm.get("name") or settings.get("default_llm_server_name") or "default")
+    append_service_log(
+        "webui",
+        "requesting Local LLM tags: "
+        f"server={server_name} provider={provider} "
+        f"endpoint={_llm_base_endpoint(endpoint)} model={model} chars={len(user_prompt)}",
+    )
+    raw = _local_chat_response(
+        LocalChatRequest(
+            provider=provider,
+            endpoint=endpoint,
+            api_key=api_key or None,
+            model=model,
+            system=AI_TAGS_SYSTEM_PROMPT,
+            prompt=user_prompt,
+            temperature=float(llm.get("temperature", 0.4) or 0.4),
+            context_length=int(llm.get("contextLength", 8192) or 8192),
+            disable_thinking=bool(llm.get("disable_thinking")),
+        )
+    )
+    tags = normalize_ai_tags(raw)
+    if not tags:
+        raise RuntimeError("Local LLM returned no hashtags")
+    return tags
+
+
 def _update_transcription_record(job_id: str, title: str, record_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
     clean_title = title.strip()
     if not clean_title:
@@ -3915,24 +3987,51 @@ def _run_url_transcription_job(
             progress=96,
             message=f"Requesting Local LLM article ({article_request_chars} chars)",
         )
+        article_text = ""
         try:
             article = _generate_transcription_article(record, transcript_text=transcript_text)
             transcription_jobs[job_id]["article"] = article
+            article_text = str(article.get("text") or "").strip()
             _update_job(
                 job_id,
-                status="completed",
-                progress=100,
-                message="Transcript and article ready",
+                status="running",
+                progress=98,
+                message="Generating AI tags",
             )
         except Exception as article_error:
             append_service_log("webui", f"Local LLM article generation failed: {article_error}")
             _update_job(
                 job_id,
-                status="completed",
-                progress=100,
-                message="Transcript ready; article generation failed",
+                status="running",
+                progress=98,
+                message="Transcript ready; article generation failed, generating AI tags",
                 error=None,
                 article_error=str(article_error),
+            )
+
+        if _is_job_cancelled(job_id):
+            return
+        tag_source = article_text or transcript_text
+        tag_title = str(transcription_jobs[job_id].get("title") or record.get("title") or "")
+        try:
+            tags = _generate_transcription_tags(tag_source, tag_title)
+            if tags:
+                transcription_jobs[job_id]["ai_tags"] = tags
+            _update_job(
+                job_id,
+                status="completed",
+                progress=100,
+                message="Transcript, article, and tags ready" if article_text else "Transcript and tags ready",
+            )
+        except Exception as tags_error:
+            append_service_log("webui", f"Local LLM tag generation failed: {tags_error}")
+            _update_job(
+                job_id,
+                status="completed",
+                progress=100,
+                message="Transcript ready; tag generation failed",
+                error=None,
+                ai_tags_error=str(tags_error),
             )
     except Exception as e:
         if _is_job_cancelled(job_id):
