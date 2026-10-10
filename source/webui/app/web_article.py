@@ -1,11 +1,12 @@
-"""Generic web-article pipeline backed by md.genedai.me and Immich.
+"""Generic web-article pipeline backed by Trafilatura and Immich.
 
 Flow:
-  1. Fetch the article as Markdown (``GET https://md.genedai.me/<url>?raw=true``).
-  2. Collect the image URLs embedded in the Markdown.
-  3. Download and upload every image to Immich under the dedicated account,
+  1. Fetch the page HTML (Chrome TLS impersonation when curl_cffi is available).
+  2. Extract the article as Markdown with Trafilatura, keeping images and links.
+  3. Collect the image URLs embedded in the Markdown.
+  4. Download and upload every image to Immich under the dedicated account,
      tagging each asset with the note GUID so the note owns its images.
-  4. Create one passwordless shared link and rewrite image links so Obsidian
+  5. Create one passwordless shared link and rewrite image links so Obsidian
      renders the images from Immich.
 
 Images that fail at any step keep their original URL, and the job reports a
@@ -32,8 +33,13 @@ from .note_id import note_guid_for_source
 
 MD_GENEDAI_HOST = "md.genedai.me"
 USER_AGENT = "Mozilla/5.0 (compatible; AirType WebArticle/1.0)"
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+CURL_IMPERSONATE = "chrome131"
 
-# Hosts the generic pipeline must never fetch: the conversion service itself
+# Hosts the generic pipeline must never fetch: the retired converter host
 # and local/private network addresses. (User-visible known sources live in
 # known_sources; this is the extra safety boundary for the fallback route.)
 BLOCKED_HOSTS = {MD_GENEDAI_HOST, "localhost"}
@@ -114,7 +120,7 @@ def extract_title(markdown: str, fallback: str = "") -> str:
 
 
 # Below this many non-heading body characters the article likely came back
-# with just its title (anonymous-tier pages without the browser engine).
+# with just its title (JS-heavy pages, paywalls, or extraction failure).
 SHORT_BODY_CHARS = 200
 
 
@@ -135,44 +141,54 @@ def _curl_requests():
     return curl_requests
 
 
-def fetch_markdown(url: str, *, api_key: str = "", timeout_seconds: int = 60) -> str:
-    """Fetch ``url`` through md.genedai.me as raw Markdown.
-
-    ``?raw=true`` keeps the response clean of the reading-view HTML, and an
-    optional ``Authorization: Bearer <key>`` unlocks browser/firecrawl/jina
-    engines on key-carrying tiers. The fragment is dropped first so
-    ``raw=true`` always lands in the real query string.
-    """
-    clean_url = url.split("#", 1)[0]
-    separator = "&" if "?" in clean_url else "?"
-    target = f"https://{MD_GENEDAI_HOST}/{clean_url}{separator}raw=true"
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Accept": "text/markdown",
+def _html_request_headers() -> dict[str, str]:
+    return {
+        "User-Agent": BROWSER_USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
     }
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+
+
+def fetch_html(url: str, *, timeout_seconds: int = 60) -> str:
+    """Download the page HTML for Trafilatura.
+
+    Prefer curl_cffi with Chrome TLS impersonation so sites that fingerprint
+    the client still return the article. The fragment is dropped first.
+    """
+    target = url.split("#", 1)[0]
+    headers = _html_request_headers()
     try:
         curl_requests = _curl_requests()
-        response = curl_requests.get(
-            target, headers=headers, timeout=timeout_seconds, allow_redirects=True
-        )
+        try:
+            response = curl_requests.get(
+                target,
+                headers=headers,
+                timeout=timeout_seconds,
+                allow_redirects=True,
+                impersonate=CURL_IMPERSONATE,
+            )
+        except TypeError:
+            response = curl_requests.get(
+                target, headers=headers, timeout=timeout_seconds, allow_redirects=True
+            )
         if response.status_code >= 400:
-            raise RuntimeError(f"md.genedai.me 回應 {response.status_code}：{response.text[:200]}")
-        markdown_text = response.text
-        _raise_if_html(markdown_text)
-        return markdown_text
+            raise RuntimeError(f"網頁回應 {response.status_code}：{target}")
+        html = response.text
+        if not (html or "").strip():
+            raise RuntimeError(f"網頁內容是空的：{target}")
+        return html
     except ImportError:
         try:
             request = urllib.request.Request(target, headers=headers)
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                markdown_text = response.read().decode("utf-8", errors="replace")
-                _raise_if_html(markdown_text)
-                return markdown_text
+                html = response.read().decode("utf-8", errors="replace")
+                if not html.strip():
+                    raise RuntimeError(f"網頁內容是空的：{target}")
+                return html
         except urllib.error.HTTPError as error:
-            raise RuntimeError(f"md.genedai.me 回應 {error.code}：{error.reason}") from error
+            raise RuntimeError(f"網頁回應 {error.code}：{error.reason}") from error
         except urllib.error.URLError as error:
-            raise RuntimeError(f"無法連上 md.genedai.me：{error.reason}") from error
+            raise RuntimeError(f"無法連上這個網頁：{error.reason}") from error
         except RuntimeError:
             raise
         except Exception as error:
@@ -183,14 +199,74 @@ def fetch_markdown(url: str, *, api_key: str = "", timeout_seconds: int = 60) ->
         raise RuntimeError(f"抓取文章失敗：{error}") from error
 
 
-def _raise_if_html(text: str) -> None:
-    """Reject HTML reading-view responses with actionable guidance."""
-    stripped = (text or "").lstrip()[:512].lower()
-    if stripped.startswith(("<!doctype html", "<html", "<head", "<body")):
+def _extract_page_title(html: str, url: str = "") -> str:
+    try:
+        import trafilatura
+
+        extract_metadata = getattr(trafilatura, "extract_metadata", None)
+        if extract_metadata is None:
+            from trafilatura.metadata import extract_metadata
+        try:
+            metadata = extract_metadata(html, default_url=url or None)
+        except TypeError:
+            metadata = extract_metadata(html)
+        return (getattr(metadata, "title", None) or "").strip()
+    except Exception:
+        return ""
+
+
+def _trafilatura_config():
+    """Extractor config tuned for clipping, not corpus harvesting.
+
+    The library default ``MIN_EXTRACTED_SIZE`` of 250 drops short posts and
+    falls back to a text-only cleaner that also strips images.
+    """
+    from trafilatura.settings import use_config
+
+    config = use_config()
+    config.set("DEFAULT", "MIN_EXTRACTED_SIZE", "50")
+    return config
+
+
+def html_to_markdown(html: str, *, url: str = "") -> str:
+    """Turn page HTML into article Markdown, including images and links."""
+    try:
+        import trafilatura
+    except ImportError as error:
+        raise RuntimeError("尚未安裝 trafilatura，無法擷取網頁文章。") from error
+
+    markdown = trafilatura.extract(
+        html,
+        url=url or None,
+        output_format="markdown",
+        include_comments=False,
+        include_tables=True,
+        include_images=True,
+        include_links=True,
+        with_metadata=False,
+        config=_trafilatura_config(),
+    )
+    if not (markdown or "").strip():
         raise RuntimeError(
-            "md.genedai.me 回傳的是 HTML 頁面而不是 Markdown；"
-            "這個網站可能需要 md.genedai.me API key 的瀏覽器引擎才能轉換。"
+            "無法從這個網頁擷取文章內容。這個網站可能需要登入、阻擋擷取，或主要是動態載入。"
         )
+
+    title = _extract_page_title(html, url)
+    stripped = markdown.lstrip()
+    if title and not stripped.startswith("#"):
+        markdown = f"# {title}\n\n{stripped}"
+    return markdown.strip() + "\n"
+
+
+def fetch_markdown(url: str, *, api_key: str = "", timeout_seconds: int = 60) -> str:
+    """Fetch ``url`` and convert the article to Markdown with Trafilatura.
+
+    ``api_key`` is ignored. It remains in the signature so older callers keep
+    working after the md.genedai.me extractor was replaced.
+    """
+    del api_key
+    html = fetch_html(url, timeout_seconds=timeout_seconds)
+    return html_to_markdown(html, url=url)
 
 
 def _read_capped(chunks, max_bytes: int, url: str) -> bytes:
@@ -519,23 +595,22 @@ def _run_job(job_id: str, url: str, options: dict[str, Any]) -> None:
         update(progress=percent, message=message)
 
     try:
-        progress(5, "透過 md.genedai.me 抓取文章…")
+        progress(5, "擷取網頁文章…")
         markdown = fetch_markdown(
             url,
-            api_key=options["web_to_markdown_api_key"],
             timeout_seconds=options["timeout_seconds"],
         )
         guid = options["guid"]
         title = extract_title(markdown)
         update(guid=guid, title=title)
-        progress(20, "Markdown 轉換完成")
+        progress(20, "文章擷取完成")
 
         warnings: list[str] = []
         body_chars = article_body_chars(markdown)
         if body_chars < SHORT_BODY_CHARS:
             warnings.append(
-                f"md.genedai.me 只抓到極少的內文（{body_chars} 字，多半只有標題）。匿名層級無法使用瀏覽器引擎，"
-                "到 Settings 填入 md.genedai.me API key（mk_…）後重試，或這個網站可能不支援自動轉換。"
+                f"只抓到極少的內文（{body_chars} 字，多半只有標題）。"
+                "這個網站可能是動態載入、需要登入，或有擷取保護。"
             )
 
         image_urls = extract_image_urls(markdown, base_url=url)

@@ -386,17 +386,9 @@ export function SettingsPage() {
               <Stack spacing={1.5} sx={settingsPanelSx}>
                 <Typography variant="h3">Article Capture and Immich</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Obsidian Clipper captures web pages outside the known sources through md.genedai.me; note photos from posts and articles are stored in Immich and rendered from key-gated share links.
+                  Obsidian Clipper captures web pages outside the known sources locally with Trafilatura; note photos from posts and articles are stored in Immich and rendered from key-gated share links.
                 </Typography>
                 <Divider />
-                <TextField
-                  size="small"
-                  label="md.genedai.me API key"
-                  placeholder="mk_..."
-                  value={draft?.web_to_markdown?.api_key || ""}
-                  onChange={(event) => updateSection("web_to_markdown", { api_key: event.target.value })}
-                  helperText="Optional. Anonymous captures cannot use the browser/firecrawl/jina engines on JS-heavy pages."
-                />
                 <TextField
                   size="small"
                   label="Immich server URL"

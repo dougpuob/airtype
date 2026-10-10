@@ -69,8 +69,8 @@ correction_enabled = false
 
 [webui.web-to-markdown]
 # Generic web-article pipeline (any URL that is not a known source like
-# Threads/YouTube). Optional md.genedai.me API key (mk_...) unlocks the
-# browser/firecrawl/jina engines for JS-heavy or paywalled pages.
+# Threads/YouTube). Pages are fetched locally and converted with Trafilatura.
+# api_key is unused; it remains so older config files still load.
 api_key = ""
 timeout_seconds = 60
 download_max_mb = 20

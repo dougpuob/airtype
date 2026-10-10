@@ -198,7 +198,7 @@
             "api_key": {
               "type": "string",
               "default": "",
-              "description": "Optional md.genedai.me API key (mk_...). Anonymous requests cannot use the browser/firecrawl/jina engines."
+              "description": "Unused. Kept so older config files still load. Web-article capture now extracts locally with Trafilatura."
             },
             "timeout_seconds": { "type": "integer", "minimum": 5, "maximum": 300, "default": 60 },
             "download_max_mb": {

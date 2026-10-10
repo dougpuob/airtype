@@ -3,7 +3,7 @@
 A URL belonging to one of these sources is routed to its own feature
 (Capture Post for Threads, V-to-Text for media platforms and raw media
 files) and is excluded from the generic web-article pipeline backed by
-md.genedai.me. Every entry maps to a pipeline that already exists, so
+Trafilatura. Every entry maps to a pipeline that already exists, so
 this list is a code constant rather than user configuration.
 
 Host matching is suffix-based on the hostname: ``www.youtube.com``
@@ -110,7 +110,7 @@ def route_for_url(url: str) -> str:
 
     Returns the owning pipeline id (``capture-post`` or ``v-to-text``) for
     known sources, and ``web-article`` for everything else. The web-article
-    pipeline is the md.genedai.me backed generic extractor for pages that
+    pipeline is the Trafilatura-backed generic extractor for pages that
     have no dedicated tool.
     """
     source = match_known_source(url)

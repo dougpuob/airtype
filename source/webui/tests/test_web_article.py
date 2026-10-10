@@ -160,40 +160,73 @@ class StartJobValidationTests(unittest.TestCase):
             web_article.start_job("not a url")
 
 
+SAMPLE_ARTICLE_HTML = """<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <title>測試文章</title>
+  <meta property="og:title" content="測試文章">
+</head>
+<body>
+  <header><nav>選單不該出現在內文</nav></header>
+  <article>
+    <h1>測試文章</h1>
+    <p>這是第一段內文，描述這篇文章的主題、背景與動機，用來確認 Trafilatura 可以抽出主文。</p>
+    <p><img src="https://cdn.example.com/a.png" alt="第一張"></p>
+    <p>這是第二段內文，補充更多細節、例子與結論。</p>
+  </article>
+  <footer>版權宣告不該出現在內文</footer>
+</body>
+</html>
+"""
+
+
 class FetchMarkdownTests(unittest.TestCase):
-    def test_raw_true_and_bearer_header(self) -> None:
+    def test_html_to_markdown_extracts_title_body_and_image(self) -> None:
+        markdown = web_article.html_to_markdown(
+            SAMPLE_ARTICLE_HTML, url="https://example.com/article"
+        )
+        self.assertIn("測試文章", markdown)
+        self.assertIn("第一段內文", markdown)
+        self.assertIn("https://cdn.example.com/a.png", markdown)
+        self.assertNotIn("選單不該出現在內文", markdown)
+
+    def test_html_to_markdown_empty_body_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            web_article.html_to_markdown("<html><body></body></html>")
+        self.assertIn("無法從這個網頁擷取", str(ctx.exception))
+
+    def test_fetch_markdown_requests_article_url(self) -> None:
         captured: dict = {}
 
-        def fake_get(url, headers=None, timeout=None, allow_redirects=False):
+        def fake_get(url, headers=None, timeout=None, allow_redirects=False, impersonate=None):
             captured["url"] = url
             captured["headers"] = headers
-            return _FakeResponse(200, "# hi")
+            captured["impersonate"] = impersonate
+            return _FakeResponse(200, SAMPLE_ARTICLE_HTML)
 
         with patch("curl_cffi.requests.get", side_effect=fake_get):
-            web_article.fetch_markdown("https://example.com/p?q=1", api_key="mk_x")
-            self.assertEqual(captured["url"], "https://md.genedai.me/https://example.com/p?q=1&raw=true")
-            self.assertEqual(captured["headers"]["Authorization"], "Bearer mk_x")
-            self.assertEqual(captured["headers"]["Accept"], "text/markdown")
-        with patch("curl_cffi.requests.get", side_effect=fake_get):
-            web_article.fetch_markdown("https://example.com/plain")
-            self.assertEqual(captured["url"], "https://md.genedai.me/https://example.com/plain?raw=true")
-        with patch("curl_cffi.requests.get", side_effect=fake_get):
-            web_article.fetch_markdown("https://example.com/page#section")
-            self.assertEqual(captured["url"], "https://md.genedai.me/https://example.com/page?raw=true")
+            markdown = web_article.fetch_markdown("https://example.com/p?q=1#section")
+        self.assertEqual(captured["url"], "https://example.com/p?q=1")
+        self.assertEqual(captured["impersonate"], "chrome131")
+        self.assertIn("text/html", captured["headers"]["Accept"])
+        self.assertNotIn("Authorization", captured["headers"])
+        self.assertIn("第一段內文", markdown)
 
     def test_http_error_becomes_runtime_error(self) -> None:
-        with patch("curl_cffi.requests.get", return_value=_FakeResponse(402, "quota")):
-            with self.assertRaises(RuntimeError):
+        with patch("curl_cffi.requests.get", return_value=_FakeResponse(403, "forbidden")):
+            with self.assertRaises(RuntimeError) as ctx:
                 web_article.fetch_markdown("https://example.com/x")
+        self.assertIn("403", str(ctx.exception))
 
-    def test_html_response_rejected(self) -> None:
+    def test_empty_extraction_becomes_runtime_error(self) -> None:
         with patch(
             "curl_cffi.requests.get",
-            return_value=_FakeResponse(200, "<!DOCTYPE html><html><body>reading view</body></html>"),
+            return_value=_FakeResponse(200, "<!DOCTYPE html><html><body></body></html>"),
         ):
             with self.assertRaises(RuntimeError) as ctx:
                 web_article.fetch_markdown("https://example.com/x")
-        self.assertIn("HTML", str(ctx.exception))
+        self.assertIn("無法從這個網頁擷取", str(ctx.exception))
 
 
 class RunJobTests(unittest.TestCase):
