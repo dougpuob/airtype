@@ -14,7 +14,7 @@ from . import clip_requests
 from . import web_article
 from .note_id import note_guid_for_source
 
-Chat = Callable[[str, str], str]
+Chat = Callable[..., str]
 SettingsFn = Callable[[], dict[str, Any]]
 ThreadsFn = Callable[[str], dict[str, Any]]
 PublicPostFn = Callable[[str], dict[str, Any]]
@@ -260,7 +260,7 @@ def _finish_text(
     clip_requests.update(request_id, status="running", progress=80, message="AI 潤稿")
     polished = ""
     try:
-        polished = chat(POLISH_SYSTEM, POLISH_USER.format(source=content)).strip()
+        polished = chat(POLISH_SYSTEM, POLISH_USER.format(source=content), "polish").strip()
     except Exception:
         polished = ""
     if _stopped(request_id):
@@ -272,7 +272,7 @@ def _finish_text(
         clip_requests.update(request_id, progress=90, message="AI 標題")
         system_prompt = str(capture_post.get("title_system_prompt") or "").strip()
         try:
-            generated = chat(system_prompt or "只輸出一個標題。", polished or content).strip()
+            generated = chat(system_prompt or "只輸出一個標題。", polished or content, "title").strip()
             title = _sanitize_title(generated.splitlines()[0] if generated else "") or title
         except Exception:
             title = title or _sanitize_title(content[:30])
@@ -284,7 +284,7 @@ def _finish_text(
         from .ai_tags import build_ai_tags_prompt, normalize_ai_tags
         from .ai_tags import AI_TAGS_SYSTEM_PROMPT
 
-        raw_tags = chat(AI_TAGS_SYSTEM_PROMPT, build_ai_tags_prompt(polished or content, title))
+        raw_tags = chat(AI_TAGS_SYSTEM_PROMPT, build_ai_tags_prompt(polished or content, title), "tags")
         tags = normalize_ai_tags(raw_tags)
     except Exception:
         tags = ""

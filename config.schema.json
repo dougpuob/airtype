@@ -188,6 +188,12 @@
               "type": "string",
               "default": "你是擅長提煉文章重點的繁體中文標題編輯。請根據使用者提供的文章產生一個約 30 個字的標題；不要使用冒號、不要提供多個選項、不要加入引號或解釋，只輸出標題。",
               "description": "System prompt used when the LLM generates workflow titles."
+            },
+            "thinking_steps": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["polish", "title", "tags"] },
+              "default": ["title"],
+              "description": "LLM steps that enable thinking. Other steps follow disable_thinking."
             }
           }
         },

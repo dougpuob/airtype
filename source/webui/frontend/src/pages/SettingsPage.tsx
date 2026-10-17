@@ -68,6 +68,13 @@ export function SettingsPage() {
     }));
   }
 
+  function toggleThinkingStep(step: "polish" | "title" | "tags", enabled: boolean) {
+    const current = draft?.capture_post?.thinking_steps ?? ["title"];
+    const next = enabled ? [...new Set([...current, step])] : current.filter((item) => item !== step);
+    const order = ["polish", "title", "tags"] as const;
+    updateSection("capture_post", { thinking_steps: order.filter((item) => next.includes(item)) });
+  }
+
   async function saveSettings() {
     if (!draft) return;
     const saved = await updateSettings.mutateAsync(draft);
@@ -321,6 +328,36 @@ export function SettingsPage() {
                   }
                   label="Generate workflow titles with AI"
                 />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={(draft?.capture_post?.thinking_steps ?? ["title"]).includes("polish")}
+                      onChange={(event) => toggleThinkingStep("polish", event.target.checked)}
+                    />
+                  }
+                  label="Use thinking when polishing"
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={(draft?.capture_post?.thinking_steps ?? ["title"]).includes("title")}
+                      onChange={(event) => toggleThinkingStep("title", event.target.checked)}
+                    />
+                  }
+                  label="Use thinking when writing titles"
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={(draft?.capture_post?.thinking_steps ?? ["title"]).includes("tags")}
+                      onChange={(event) => toggleThinkingStep("tags", event.target.checked)}
+                    />
+                  }
+                  label="Use thinking when generating tags"
+                />
+                <Typography variant="body2" color="text.secondary">
+                  Titles use thinking by default. You can also turn it on for polishing and tags.
+                </Typography>
                 <TextField
                   size="small"
                   label="Title system prompt"

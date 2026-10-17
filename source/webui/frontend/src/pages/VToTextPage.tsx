@@ -406,7 +406,8 @@ export function VToTextPage() {
           settingsQuery.data || {},
           aiTitleSource.content,
           aiTitleSystemPrompt,
-          apiKey
+          apiKey,
+          "title"
         );
         if (!cancelled) {
           setAiTitle(normalizeAiTitle(response) || fallback);
@@ -467,7 +468,8 @@ export function VToTextPage() {
           settingsQuery.data || {},
           buildAiTagsPrompt(aiTagsSource.content, aiTagsSource.title),
           AI_TAGS_SYSTEM_PROMPT,
-          apiKey
+          apiKey,
+          "tags"
         );
         if (!cancelled) {
           const tags = normalizeAiTags(response);
@@ -820,7 +822,8 @@ export function VToTextPage() {
         settingsQuery.data || {},
         `請將以下社群貼文整理成一篇通順、簡潔、語氣中性的繁體中文文章。\n\n要求：\n1. 移除重複段落、重複敘述、社群介面文字與 hashtag 雜訊；同一事實只保留一次。\n2. 只做必要的語句銜接與錯字修正，不要改寫成花俏、幽默或煽動性的文風。\n3. 保留原本段落與事實順序；不新增標題、標籤、摘要或任何說明。\n4. 只輸出完成後的文章正文。\n\n原始貼文：\n${source}`,
         "你是嚴謹、克制的繁體中文編輯。忠實保留原文的觀點、時間線與事實，不得加入新資訊、評論、推測、俏皮語氣、誇張修辭或宣傳式文字。",
-        apiKey
+        apiKey,
+        "polish"
       );
       setToast("AI polished preview updated");
       return response || source;
@@ -840,7 +843,8 @@ export function VToTextPage() {
         settingsQuery.data || {},
         content,
         settingsQuery.data?.capture_post?.title_system_prompt ?? DEFAULT_AI_TITLE_SYSTEM_PROMPT,
-        apiKey
+        apiKey,
+        "title"
       );
       const title = normalizeAiTitle(response);
       if (title) {
@@ -863,7 +867,8 @@ export function VToTextPage() {
         settingsQuery.data || {},
         buildAiTagsPrompt(source, title),
         AI_TAGS_SYSTEM_PROMPT,
-        apiKey
+        apiKey,
+        "tags"
       );
       const tags = normalizeAiTags(response);
       if (tags) setToast("AI tags generated");

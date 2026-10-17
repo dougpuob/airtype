@@ -50,6 +50,7 @@ export type AppSettings = {
   capture_post?: {
     ai_title_enabled?: boolean;
     title_system_prompt?: string;
+    thinking_steps?: Array<"polish" | "title" | "tags">;
   };
   ime?: {
     correction_enabled?: boolean;

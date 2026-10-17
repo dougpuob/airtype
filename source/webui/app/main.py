@@ -44,6 +44,7 @@ from .config_schema import (
     remove_webui_sections,
     render_webui_settings_toml,
     split_whisper_model_settings,
+    thinking_enabled_for_step,
     whisper_model_path_from_settings,
 )
 from .whisper import WhisperCppNotConfigured, transcriber
@@ -630,6 +631,8 @@ class LocalChatRequest(LocalModelsRequest):
     context_length: Optional[int] = None
     context: Optional[int] = None
     disable_thinking: bool = False
+    enable_thinking: bool = False
+    step: str = ""
 
 
 class AppSettingsRequest(BaseModel):
@@ -837,6 +840,13 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
                 current_capture_post.get(
                     "title_system_prompt",
                     DEFAULT_APP_SETTINGS["capture_post"]["title_system_prompt"],
+                ),
+            ),
+            "thinking_steps": capture_post_input.get(
+                "thinking_steps",
+                capture_post_input.get(
+                    "thinking-steps",
+                    current_capture_post.get("thinking_steps", ["title"]),
                 ),
             ),
         },
@@ -1456,7 +1466,7 @@ async def chat_with_local_model(request: LocalChatRequest):
             raise ValueError("Model is required.")
         if not request.prompt.strip():
             raise ValueError("Prompt is required.")
-        return {"response": _local_chat_response(request)}
+        return {"response": _local_chat_response(_request_with_thinking_step(request))}
 
     except Exception as e:
         append_service_log(
@@ -1734,7 +1744,7 @@ async def get_clip_id(url: str):
     return {"url": url, "source_id": source_id, "guid": note_guid_for_source(url)}
 
 
-def _clip_chat(system: str, prompt: str) -> str:
+def _clip_chat(system: str, prompt: str, step: str = "") -> str:
     settings = _read_app_settings()
     llm = settings.get("llm", {}) if isinstance(settings.get("llm"), dict) else {}
     model = str(llm.get("model") or llm.get("selected_model") or "").strip()
@@ -1755,6 +1765,7 @@ def _clip_chat(system: str, prompt: str) -> str:
             temperature=float(llm.get("temperature", 0.4) or 0.4),
             context_length=int(llm.get("contextLength", 8192) or 8192),
             disable_thinking=bool(llm.get("disable_thinking")),
+            step=step,
         )
     )
 
@@ -2278,6 +2289,7 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
         "[webui.capture-post]",
         f"ai_title_enabled = {'true' if capture_post.get('ai_title_enabled') else 'false'}",
         f"title_system_prompt = {_toml_string(capture_post.get('title_system_prompt', ''))}",
+        f"thinking_steps = {_toml_string_array(capture_post.get('thinking_steps', []))}",
         "",
         "[webui.ime]",
         f"correction_enabled = {'true' if ime.get('correction_enabled') else 'false'}",
@@ -3260,9 +3272,30 @@ def _message_text(message: Dict[str, Any]) -> str:
     return str(message.get("reasoning_content") or message.get("reasoning") or "").strip()
 
 
+def _request_with_thinking_step(request: LocalChatRequest) -> LocalChatRequest:
+    step = str(request.step or "").strip()
+    if not step:
+        return request
+    settings = _read_app_settings()
+    capture_post = settings.get("capture_post") if isinstance(settings.get("capture_post"), dict) else {}
+    if thinking_enabled_for_step(step, capture_post.get("thinking_steps")):
+        return request.model_copy(update={"enable_thinking": True, "disable_thinking": False, "step": step})
+    return request.model_copy(update={"enable_thinking": False, "step": step})
+
+
+def _apply_thinking_payload(payload_body: Dict[str, Any], request: LocalChatRequest) -> None:
+    if request.enable_thinking:
+        payload_body["think"] = True
+        payload_body["chat_template_kwargs"] = {"enable_thinking": True}
+        return
+    if request.disable_thinking:
+        payload_body["think"] = False
+        payload_body["chat_template_kwargs"] = {"enable_thinking": False}
+
+
 def _local_chat_response(request: LocalChatRequest) -> str:
     with _llm_lock:
-        return _local_chat_response_unlocked(request)
+        return _local_chat_response_unlocked(_request_with_thinking_step(request))
 
 
 def _local_chat_response_unlocked(request: LocalChatRequest) -> str:
@@ -3277,8 +3310,7 @@ def _local_chat_response_unlocked(request: LocalChatRequest) -> str:
             "messages": _llm_messages(request.system, request.prompt),
             "options": options,
         }
-        if request.disable_thinking:
-            payload_body["think"] = False
+        _apply_thinking_payload(payload_body, request)
         payload = _http_json(
             "POST",
             _join_url(_llm_base_endpoint(request.endpoint), "/api/chat"),
@@ -3293,9 +3325,7 @@ def _local_chat_response_unlocked(request: LocalChatRequest) -> str:
         "temperature": request.temperature,
         **({"n_ctx": _request_context_length(request)} if request.provider == "llama.cpp" else {}),
     }
-    if request.disable_thinking:
-        payload_body["think"] = False
-        payload_body["chat_template_kwargs"] = {"enable_thinking": False}
+    _apply_thinking_payload(payload_body, request)
     payload = _http_json(
         "POST",
         _join_url(_llm_base_endpoint(request.endpoint), "/v1/chat/completions"),
@@ -4072,6 +4102,7 @@ def _generate_transcription_article(
             temperature=float(llm.get("temperature", 0.4) or 0.4),
             context_length=int(llm.get("contextLength", 8192) or 8192),
             disable_thinking=bool(llm.get("disable_thinking")),
+            step="polish",
         )
     ).strip()
     if not article_text:
@@ -4127,6 +4158,7 @@ def _generate_transcription_tags(content: str, title: str) -> str:
             temperature=float(llm.get("temperature", 0.4) or 0.4),
             context_length=int(llm.get("contextLength", 8192) or 8192),
             disable_thinking=bool(llm.get("disable_thinking")),
+            step="tags",
         )
     )
     tags = normalize_ai_tags(raw)

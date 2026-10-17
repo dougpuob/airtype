@@ -52,6 +52,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
     "capture_post": {
         "ai_title_enabled": True,
         "title_system_prompt": "你是擅長提煉文章重點的繁體中文標題編輯。請根據使用者提供的文章產生一個約 30 個字的標題；不要使用冒號、不要提供多個選項、不要加入引號或解釋，只輸出標題。",
+        "thinking_steps": ["title"],
     },
     "ime": {
         "correction_enabled": False,
@@ -63,6 +64,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "session_days": 14,
     },
 }
+LLM_THINKING_STEPS = ("polish", "title", "tags")
 DEFAULT_WEBUI_DATA_DIR = "~/.airtype/data"
 DEFAULT_CONFIG_SCHEMA_PATH = Path(__file__).resolve().parents[3] / "config.schema.json"
 
@@ -244,6 +246,21 @@ def read_webui_data_dir(path: str | Path) -> str:
     return str(expanded.resolve())
 
 
+def normalize_thinking_steps(value: Any, *, use_default: bool = False) -> list[str]:
+    if use_default and not isinstance(value, list):
+        return list(DEFAULT_APP_SETTINGS["capture_post"]["thinking_steps"])
+    steps: list[str] = []
+    for item in value if isinstance(value, list) else []:
+        step = str(item or "").strip()
+        if step in LLM_THINKING_STEPS and step not in steps:
+            steps.append(step)
+    return steps
+
+
+def thinking_enabled_for_step(step: str, thinking_steps: Any) -> bool:
+    return str(step or "").strip() in normalize_thinking_steps(thinking_steps)
+
+
 def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(settings)
 
@@ -317,8 +334,15 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         capture_post["ai_title_enabled"] = capture_post_input["ai-title-enabled"]
     if "title_system_prompt" not in capture_post_input and "title-system-prompt" in capture_post_input:
         capture_post["title_system_prompt"] = capture_post_input["title-system-prompt"]
+    if "thinking_steps" not in capture_post_input and "thinking-steps" in capture_post_input:
+        capture_post["thinking_steps"] = capture_post_input["thinking-steps"]
     capture_post["ai_title_enabled"] = bool(capture_post.get("ai_title_enabled"))
     capture_post["title_system_prompt"] = str(capture_post.get("title_system_prompt") or "")
+    has_thinking_steps = "thinking_steps" in capture_post_input or "thinking-steps" in capture_post_input
+    capture_post["thinking_steps"] = normalize_thinking_steps(
+        capture_post.get("thinking_steps"),
+        use_default=not has_thinking_steps,
+    )
 
     ime_input = _dict_value(normalized.get("ime"))
     ime = {
@@ -406,6 +430,7 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
         "[webui.capture-post]",
         f"ai_title_enabled = {'true' if capture_post.get('ai_title_enabled') else 'false'}",
         f"title_system_prompt = {_toml_string(capture_post.get('title_system_prompt', ''))}",
+        f"thinking_steps = {_toml_string_array(capture_post.get('thinking_steps', []))}",
         "",
         "[webui.ime]",
         f"correction_enabled = {'true' if ime.get('correction_enabled') else 'false'}",

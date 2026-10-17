@@ -1,7 +1,15 @@
 import { apiRequest } from "./client";
 import type { AppSettings } from "../types/settings";
 
-export async function chatWithLocalLlm(settings: AppSettings, prompt: string, system = "", apiKey?: string) {
+export type LlmStep = "polish" | "title" | "tags";
+
+export async function chatWithLocalLlm(
+  settings: AppSettings,
+  prompt: string,
+  system = "",
+  apiKey?: string,
+  step?: LlmStep
+) {
   const llm = settings.llm || {};
   const model = llm.model || llm.selected_model || "";
   const payload = await apiRequest<{ response: string }>("/api/local-llm/chat", {
@@ -14,6 +22,7 @@ export async function chatWithLocalLlm(settings: AppSettings, prompt: string, sy
       temperature: llm.temperature ?? 0.4,
       context_length: llm.contextLength,
       disable_thinking: Boolean(llm.disable_thinking),
+      step: step || "",
       system,
       prompt
     })

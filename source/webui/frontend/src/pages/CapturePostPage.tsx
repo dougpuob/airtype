@@ -203,7 +203,8 @@ export function CapturePostPage() {
         settingsQuery.data || {},
         `請將以下社群貼文整理成一篇通順、簡潔、語氣中性的繁體中文文章。\n\n要求：\n1. 移除重複段落、重複敘述、社群介面文字與 hashtag 雜訊；同一事實只保留一次。\n2. 只做必要的語句銜接與錯字修正，不要改寫成花俏、幽默或煽動性的文風。\n3. 保留原本段落與事實順序；不新增標題、標籤、摘要或任何說明。\n4. 只輸出完成後的文章正文。\n\n原始貼文：\n${source}`,
         "你是嚴謹、克制的繁體中文編輯。忠實保留原文的觀點、時間線與事實，不得加入新資訊、評論、推測、俏皮語氣、誇張修辭或宣傳式文字。",
-        apiKey
+        apiKey,
+        "polish"
       );
       setToast("AI polished preview updated");
       return response || source;
@@ -223,7 +224,8 @@ export function CapturePostPage() {
         settingsQuery.data || {},
         content,
         settingsQuery.data?.capture_post?.title_system_prompt ?? DEFAULT_AI_TITLE_SYSTEM_PROMPT,
-        apiKey
+        apiKey,
+        "title"
       );
       const title = normalizeAiTitle(response);
       if (title) {
@@ -246,7 +248,8 @@ export function CapturePostPage() {
         settingsQuery.data || {},
         `請根據以下文章產生 5 到 8 組 Obsidian hashtag。\n\n要求：\n1. 每一組包含一個繁體中文 hashtag 與一個對應英文 hashtag。\n2. 英文若有常見縮寫，請優先使用縮寫，例如 AI、LLM、API、GPU、CPU、SaaS。\n3. hashtag 不要有空格、標點或解釋文字。\n4. 每行只輸出一組，格式固定為：#中文標籤 #EnglishTag\n5. 不要輸出編號、前言、結語、Markdown code block。\n\n標題：${title || "未命名"}\n\n文章：\n${source}`,
         "你是擅長資訊整理的繁體中文知識管理助手。只輸出可直接貼進 Obsidian 的 hashtag 清單。",
-        apiKey
+        apiKey,
+        "tags"
       );
       const tags = normalizeAiTags(response);
       if (tags) setToast("AI tags generated");
