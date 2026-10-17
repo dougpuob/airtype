@@ -52,6 +52,7 @@ from . import web_article
 from .ai_tags import AI_TAGS_SYSTEM_PROMPT, build_ai_tags_prompt, normalize_ai_tags
 from .note_id import canonical_source_id, note_guid_for_source
 from .post_weaver import collect_threads_chain, posts_to_markdown
+from .instagram_weaver import extract_instagram_post
 
 app = FastAPI(title="AirType API", description="Aircraft Cabin Configuration & Speech Recognition API")
 
@@ -2810,14 +2811,15 @@ def _best_impersonate_target(downloader_command: tuple[str, ...]) -> str:
 
     target_output = process.stdout or ""
     candidates = [
-        ("chrome-136:macos-15", "Chrome-136", "Macos-15"),
         ("chrome-133:macos-15", "Chrome-133", "Macos-15"),
         ("chrome-131:macos-14", "Chrome-131", "Macos-14"),
         ("chrome-124:macos-14", "Chrome-124", "Macos-14"),
-        ("chrome-136:linux", "Chrome-136", "Linux"),
         ("chrome-133:linux", "Chrome-133", "Linux"),
         ("chrome-131:linux", "Chrome-131", "Linux"),
         ("chrome-124:linux", "Chrome-124", "Linux"),
+        # Bilibili risk control returns a v_voucher-only playurl for UA Chrome/136.
+        ("chrome-136:macos-15", "Chrome-136", "Macos-15"),
+        ("chrome-136:linux", "Chrome-136", "Linux"),
     ]
     for target, client, os_name in candidates:
         if client in target_output and os_name in target_output:
