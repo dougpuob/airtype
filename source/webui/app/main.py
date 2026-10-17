@@ -47,6 +47,8 @@ from .config_schema import (
     whisper_model_path_from_settings,
 )
 from .whisper import WhisperCppNotConfigured, transcriber
+from . import clip_pipeline
+from . import clip_requests
 from . import known_sources
 from . import web_article
 from .ai_tags import AI_TAGS_SYSTEM_PROMPT, build_ai_tags_prompt, normalize_ai_tags
@@ -449,6 +451,9 @@ app.mount("/app", StaticFiles(directory=STATIC_DIR, html=True), name="app_static
 configurations = []
 transcription_jobs: Dict[str, Dict[str, Any]] = {}
 executor = ThreadPoolExecutor(max_workers=1)
+clip_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="clip-request")
+_llm_lock = threading.Lock()
+_voice_publish_guard: set[str] = set()
 
 
 @app.on_event("startup")
@@ -461,6 +466,7 @@ def startup_managed_processes() -> None:
     whisper_settings = settings.get("whisper", {})
     llm = settings.get("llm", {})
     llm_servers = settings.get("llm_servers", [])
+    clip_requests.configure(WEBUI_DATA_DIR)
     append_service_log(
         "webui",
         f"loaded config path={CONFIG_PATH} data_dir={WEBUI_DATA_DIR} records_dir={RECORDS_DIR}",
@@ -584,6 +590,10 @@ class PostImportRequest(BaseModel):
 class WebArticleJobRequest(BaseModel):
     url: str
     guid: str = ""
+
+
+class ClipCreateRequest(BaseModel):
+    url: str
 
 
 class NoteMediaRequest(BaseModel):
@@ -1187,6 +1197,7 @@ async def create_transcription_job(
             "content_type": file.content_type or "unknown",
         }, options),
     )
+    clip_request_id = _attach_clip_request(job_id, "voice", file.filename or "uploaded media")
     temp_path = os.path.join(_job_dir(job_id), f"source{os.path.splitext(file.filename or '')[1] or '.media'}")
     with open(temp_path, "wb") as temp_file:
         temp_file.write(content)
@@ -1199,7 +1210,7 @@ async def create_transcription_job(
         temp_path,
         options,
     )
-    return {"job_id": job_id, **_public_job(transcription_jobs[job_id])}
+    return {"job_id": job_id, "clip_request_id": clip_request_id, **_public_job(transcription_jobs[job_id])}
 
 
 @app.post("/api/local-llm/models")
@@ -1481,6 +1492,7 @@ async def create_url_transcription_job(request: UrlTranscribeRequest):
             "url": request.url,
         }, options),
     )
+    clip_request_id = _attach_clip_request(job_id, "voice", request.url)
     temp_path = os.path.join(_job_dir(job_id), f"source{os.path.splitext(parsed.path)[1] or '.media'}")
     _update_job_source(job_id, temp_path)
     executor.submit(
@@ -1490,7 +1502,7 @@ async def create_url_transcription_job(request: UrlTranscribeRequest):
         temp_path,
         options,
     )
-    return {"job_id": job_id, **_public_job(transcription_jobs[job_id])}
+    return {"job_id": job_id, "clip_request_id": clip_request_id, **_public_job(transcription_jobs[job_id])}
 
 
 @app.get("/api/transcribe/jobs/{job_id}")
@@ -1634,22 +1646,15 @@ async def transcribe_from_url(request: UrlTranscribeRequest):
             os.unlink(temp_path)
 
 
-@app.post("/api/post-weaver/import")
-async def import_social_post(request: PostImportRequest):
-    """Fetch the public preview text for a social post URL.
-
-    Social networks frequently require a signed-in browser, so this intentionally
-    imports only the page's public Open Graph/description preview. The UI also
-    supports pasting copied post text, which is the dependable path for private
-    or login-gated posts.
-    """
-    parsed = urllib.parse.urlparse(request.url.strip())
+def _load_public_post(url: str) -> dict[str, Any]:
+    """Public Open Graph preview for a post URL. Raises ValueError on failure."""
+    parsed = urllib.parse.urlparse(url.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise HTTPException(status_code=400, detail="URL must start with http:// or https://")
+        raise ValueError("URL must start with http:// or https://")
 
     try:
         fetch_request = urllib.request.Request(
-            request.url,
+            url,
             headers={
                 "User-Agent": "Mozilla/5.0 (compatible; AirType Post Weaver/1.0)",
                 "Accept": "text/html,application/xhtml+xml",
@@ -1659,12 +1664,12 @@ async def import_social_post(request: PostImportRequest):
             raw_html = response.read(1_500_000)
             content_type = response.headers.get_content_type()
     except urllib.error.HTTPError as error:
-        raise HTTPException(status_code=error.code, detail=f"Could not open post: {error.reason}") from error
+        raise ValueError(f"Could not open post: {error.reason}") from error
     except urllib.error.URLError as error:
-        raise HTTPException(status_code=400, detail=f"Could not open post: {error.reason}") from error
+        raise ValueError(f"Could not open post: {error.reason}") from error
 
     if content_type not in {"text/html", "application/xhtml+xml"}:
-        raise HTTPException(status_code=400, detail="The URL did not return a web page")
+        raise ValueError("The URL did not return a web page")
 
     page = raw_html.decode("utf-8", errors="replace")
 
@@ -1692,26 +1697,32 @@ async def import_social_post(request: PostImportRequest):
     title = meta_value("og:title", "twitter:title")
     text = meta_value("og:description", "twitter:description", "description")
     if not text:
-        raise HTTPException(
-            status_code=422,
-            detail="This site did not expose post text. Copy the post in your browser and paste it into Post Weaver instead.",
-        )
+        raise ValueError("This site did not expose post text.")
     media_urls = meta_values(
         "og:image", "og:image:url", "og:image:secure_url", "og:video", "og:video:url",
         "og:video:secure_url", "twitter:image", "twitter:player:stream",
     )
     return {
         "kind": "post",
-        "url": request.url,
+        "url": url,
         "title": title,
         "text": text,
         "media_urls": media_urls,
         "markdown": posts_to_markdown(
-            [{"text": text, "url": request.url, "media_urls": media_urls}]
+            [{"text": text, "url": url, "media_urls": media_urls}]
         ),
-        "guid": note_guid_for_source(request.url),
-        "source_id": canonical_source_id(request.url),
+        "guid": note_guid_for_source(url),
+        "source_id": canonical_source_id(url),
     }
+
+
+@app.post("/api/post-weaver/import")
+async def import_social_post(request: PostImportRequest):
+    """Fetch the public preview text for a social post URL."""
+    try:
+        return _load_public_post(request.url)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.get("/api/clip/id")
@@ -1721,6 +1732,171 @@ async def get_clip_id(url: str):
     if not source_id:
         raise HTTPException(status_code=400, detail="URL 必須以 http:// 或 https:// 開頭。")
     return {"url": url, "source_id": source_id, "guid": note_guid_for_source(url)}
+
+
+def _clip_chat(system: str, prompt: str) -> str:
+    settings = _read_app_settings()
+    llm = settings.get("llm", {}) if isinstance(settings.get("llm"), dict) else {}
+    model = str(llm.get("model") or llm.get("selected_model") or "").strip()
+    if not model:
+        models = llm.get("models")
+        if isinstance(models, list):
+            model = next((str(candidate).strip() for candidate in models if str(candidate).strip()), "")
+    if not model:
+        raise ValueError("Local LLM model is not configured")
+    return _local_chat_response(
+        LocalChatRequest(
+            provider=str(llm.get("provider") or "llama.cpp"),
+            endpoint=str(llm.get("endpoint") or "http://127.0.0.1:8080"),
+            api_key=str(llm.get("api_key") or "") or None,
+            model=model,
+            system=system,
+            prompt=prompt,
+            temperature=float(llm.get("temperature", 0.4) or 0.4),
+            context_length=int(llm.get("contextLength", 8192) or 8192),
+            disable_thinking=bool(llm.get("disable_thinking")),
+        )
+    )
+
+
+def _collect_threads_for_clip(url: str) -> dict[str, Any]:
+    ytdlp_settings = _read_backend_config_settings().get("ytdlp", {})
+    cookies_path = str(ytdlp_settings.get("cookies") or "").strip()
+    cookie_header = "" if cookies_path else _threads_storage_cookie_header(url)
+    return collect_threads_chain(
+        url,
+        cookies_path=cookies_path,
+        cookie_header=cookie_header,
+        storage_state_path=THREADS_STORAGE_STATE_PATH,
+    )
+
+
+def _run_article_clip(request_id: str, url: str) -> None:
+    try:
+        clip_pipeline.run_article(request_id, url, settings=_read_app_settings, chat=_clip_chat)
+    except Exception as error:
+        if not clip_requests.is_cancelled(request_id):
+            append_service_log("webui", f"article clip failed: {error}")
+            clip_requests.update(
+                request_id,
+                status="failed",
+                progress=100,
+                message="失敗",
+                error=str(error),
+                published=True,
+            )
+
+
+def _run_post_clip(request_id: str, url: str) -> None:
+    try:
+        clip_pipeline.run_post(
+            request_id,
+            url,
+            settings=_read_app_settings,
+            chat=_clip_chat,
+            collect_threads=_collect_threads_for_clip,
+            fetch_public_post=_load_public_post,
+        )
+    except Exception as error:
+        if not clip_requests.is_cancelled(request_id):
+            append_service_log("webui", f"post clip failed: {error}")
+            clip_requests.update(
+                request_id,
+                status="failed",
+                progress=100,
+                message="失敗",
+                error=str(error),
+                published=True,
+            )
+
+
+@app.get("/api/clip-requests")
+async def list_clip_requests():
+    return {"requests": clip_requests.list_pending()}
+
+
+@app.get("/api/clip-requests/{request_id}")
+async def get_clip_request(request_id: str):
+    record = clip_requests.get(request_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Clip request not found")
+    return record
+
+
+@app.post("/api/clip-requests")
+async def create_clip_request(request: ClipCreateRequest):
+    url = request.url.strip()
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="URL 必須以 http:// 或 https:// 開頭。")
+    pipeline = known_sources.route_for_url(url)
+    if pipeline == "v-to-text":
+        options = _settings_transcribe_options(None, None, None, None, None)
+        job_id = _create_job(
+            url,
+            source_size=None,
+            source_type="remote url",
+            request_info=_settings_request_info({"kind": "url", "url": url}, options),
+        )
+        temp_path = os.path.join(_job_dir(job_id), f"source{os.path.splitext(parsed.path)[1] or '.media'}")
+        _update_job_source(job_id, temp_path)
+        clip_request_id = _attach_clip_request(job_id, "voice", url)
+        executor.submit(_run_url_transcription_job, job_id, url, temp_path, options)
+        record = clip_requests.get(clip_request_id)
+        return record
+    if pipeline == "capture-post":
+        record = clip_requests.create(kind="post", source=url)
+        clip_executor.submit(_run_post_clip, record["id"], url)
+        return record
+    record = clip_requests.create(kind="article", source=url)
+    clip_executor.submit(_run_article_clip, record["id"], url)
+    return record
+
+
+@app.post("/api/clip-requests/{request_id}/save")
+async def save_clip_request(request_id: str):
+    record = clip_requests.mark_saved(request_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Clip request not found")
+    if record.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="這筆還沒完成，不能標成已存進 Obsidian")
+    return record
+
+
+@app.post("/api/clip-requests/{request_id}/cancel")
+async def cancel_clip_request(request_id: str):
+    record = clip_requests.request_cancel(request_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Clip request not found")
+    job_id = str(record.get("job_id") or "")
+    job = transcription_jobs.get(job_id)
+    if job and job.get("status") not in {"completed", "failed", "cancelled"}:
+        job["cancel_event"].set()
+        process = job.get("process")
+        if process and process.poll() is None:
+            process.terminate()
+        _update_job(job_id, status="cancelled", progress=100, message="Stopped by user")
+        record = clip_requests.get(request_id) or record
+    return record
+
+
+@app.delete("/api/clip-requests/{request_id}")
+async def delete_clip_request(request_id: str):
+    record = clip_requests.get(request_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Clip request not found")
+    job_id = str(record.get("job_id") or "")
+    job = transcription_jobs.get(job_id)
+    if job and job.get("status") not in {"completed", "failed", "cancelled"}:
+        job["cancel_event"].set()
+        process = job.get("process")
+        if process and process.poll() is None:
+            process.terminate()
+    if not clip_requests.delete(request_id):
+        raise HTTPException(status_code=404, detail="Clip request not found")
+    if job and job.get("status") not in {"completed", "failed", "cancelled"}:
+        _update_job(job_id, status="cancelled", progress=100, message="Stopped by user")
+    return {"deleted": True}
 
 
 @app.get("/api/web-article/known-sources")
@@ -3085,6 +3261,11 @@ def _message_text(message: Dict[str, Any]) -> str:
 
 
 def _local_chat_response(request: LocalChatRequest) -> str:
+    with _llm_lock:
+        return _local_chat_response_unlocked(request)
+
+
+def _local_chat_response_unlocked(request: LocalChatRequest) -> str:
     if request.provider == "ollama":
         options = {
             "temperature": request.temperature,
@@ -3367,11 +3548,110 @@ def _public_job(job: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _attach_clip_request(job_id: str, kind: str, source: str) -> str:
+    clip = clip_requests.create(kind=kind, source=source)
+    transcription_jobs[job_id]["clip_request_id"] = clip["id"]
+    clip_requests.update(clip["id"], job_id=job_id)
+    return str(clip["id"])
+
+
+def _partial_transcript(job: Dict[str, Any]) -> str:
+    segments = job.get("partial_segments") or []
+    parts = [str(segment.get("text") or "").strip() for segment in segments if isinstance(segment, dict)]
+    return "\n".join(part for part in parts if part)
+
+
+def _sync_voice_clip(job_id: str) -> None:
+    job = transcription_jobs.get(job_id)
+    if not job:
+        return
+    clip_id = str(job.get("clip_request_id") or "")
+    if not clip_id:
+        return
+    current = clip_requests.get(clip_id)
+    if not current or current.get("published"):
+        return
+    status = str(job.get("status") or "")
+    if status == "queued":
+        clip_requests.update(clip_id, status="queued", progress=job.get("progress") or 0, message=job.get("message") or "排隊中")
+        return
+    if status in {"downloading", "running"}:
+        clip_requests.update(
+            clip_id,
+            status="running",
+            progress=job.get("progress") or 0,
+            message=job.get("message") or "進行中",
+            title=str(job.get("title") or ""),
+            content=_partial_transcript(job),
+        )
+        return
+    if job_id in _voice_publish_guard:
+        return
+    _voice_publish_guard.add(job_id)
+    try:
+        fresh = clip_requests.get(clip_id)
+        if not fresh or fresh.get("published"):
+            return
+        if status == "cancelled":
+            clip_requests.update(clip_id, status="failed", progress=100, message="失敗", error="已停止", published=True)
+            return
+        if status == "failed":
+            clip_requests.update(
+                clip_id,
+                status="failed",
+                progress=100,
+                message="失敗",
+                error=str(job.get("error") or "失敗"),
+                published=True,
+            )
+            return
+        if status != "completed":
+            return
+        record = _record_data(job_id, job)
+        transcript = _record_transcript_text(record)
+        article = job.get("article") if isinstance(job.get("article"), dict) else {}
+        article_text = str(article.get("text") or "").strip()
+        if not article_text and transcript:
+            try:
+                generated = _generate_transcription_article(record, transcript_text=transcript)
+                job["article"] = generated
+                article_text = str(generated.get("text") or "").strip()
+            except Exception as error:
+                append_service_log("webui", f"clip article generation failed: {error}")
+        title = str(job.get("title") or job.get("source_name") or "Untitled transcript")
+        tags = str(job.get("ai_tags") or "")
+        if not tags and (article_text or transcript):
+            try:
+                tags = _generate_transcription_tags(article_text or transcript, title)
+                job["ai_tags"] = tags
+            except Exception as error:
+                append_service_log("webui", f"clip tag generation failed: {error}")
+        source_url = _source_url(job)
+        guid = ""
+        if source_url:
+            try:
+                guid = note_guid_for_source(source_url)
+            except Exception:
+                guid = ""
+        clip_pipeline.finish_voice(
+            clip_id,
+            content=transcript,
+            polished=article_text,
+            title=title,
+            ai_tags=tags,
+            sources=[source_url] if source_url else [],
+            guid=guid,
+        )
+    finally:
+        _voice_publish_guard.discard(job_id)
+
+
 def _update_job(job_id: str, **updates: Any) -> None:
     job = transcription_jobs[job_id]
     job.update(updates)
     job["updated_at"] = datetime.now(timezone.utc).isoformat()
     _write_job_record(job_id)
+    _sync_voice_clip(job_id)
 
 
 def _update_job_details(job_id: str, **updates: Any) -> None:

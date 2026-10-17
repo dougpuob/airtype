@@ -7,6 +7,7 @@ import { Box, List, ListItemButton, ListItemIcon, ListItemText, Typography } fro
 import type { MouseEvent, ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useWorkGuard } from "../../hooks/useWorkGuard";
+import { TaskQueue } from "./TaskQueue";
 
 type NavItem = {
   label: string;
@@ -147,7 +148,7 @@ export function Sidebar({ topBarHeight }: SidebarProps) {
         Workspace
       </Typography>
       <NavigationList />
-      <Box sx={{ flex: 1 }} />
+      <TaskQueue />
       <NavigationList items={[settingsNavItem]} />
       <Box sx={{ display: "none", height: topBarHeight * 0 }} />
     </Box>

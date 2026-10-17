@@ -71,6 +71,7 @@ export function useUploadTranscriptionJobMutation() {
       uploadTranscriptionJob(file, { language, whisperEndpoint, onProgress }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["transcription-records"] });
+      queryClient.invalidateQueries({ queryKey: ["clip-requests"] });
     }
   });
 }

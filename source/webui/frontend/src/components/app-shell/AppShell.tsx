@@ -1,6 +1,7 @@
 import { Box, Drawer, Typography } from "@mui/material";
 import type { PropsWithChildren } from "react";
 import { useState } from "react";
+import { TaskQueue } from "./TaskQueue";
 import { NavigationList, Sidebar, settingsNavItem } from "./Sidebar";
 import { TopAppBar } from "./TopAppBar";
 
@@ -48,7 +49,7 @@ export function AppShell({ children }: PropsWithChildren) {
           Workspace
         </Typography>
         <NavigationList onNavigate={() => setMobileNavOpen(false)} />
-        <Box sx={{ flex: 1 }} />
+        <TaskQueue />
         <NavigationList items={[settingsNavItem]} onNavigate={() => setMobileNavOpen(false)} />
       </Drawer>
       <Box

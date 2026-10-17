@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuthStatusQuery } from "./api/auth";
 import { AppShell } from "./components/app-shell/AppShell";
+import { ClipRequestProvider } from "./components/app-shell/ClipRequestContext";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ImeHistoryPage } from "./pages/ImeHistoryPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -46,6 +47,7 @@ export default function App() {
   }
 
   return (
+    <ClipRequestProvider>
     <AppShell>
       <Routes>
         <Route path="/" element={<DashboardPage />} />
@@ -58,5 +60,6 @@ export default function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>
+    </ClipRequestProvider>
   );
 }

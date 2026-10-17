@@ -11,6 +11,7 @@ export type TranscriptSegment = {
 
 export type TranscriptionJob = {
   job_id: string;
+  clip_request_id?: string;
   status: "queued" | "downloading" | "running" | "completed" | "failed" | "cancelled" | string;
   progress: number;
   message?: string;

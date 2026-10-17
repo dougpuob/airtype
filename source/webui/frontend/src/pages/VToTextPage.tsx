@@ -20,6 +20,7 @@ import { chatWithLocalLlm } from "../api/localLlm";
 import { uploadNoteMedia } from "../api/immich";
 import type { NoteMediaImage } from "../api/immich";
 import { chainWarningsFromPayload, useImportPostMutation } from "../api/postWeaver";
+import { useCreateClipRequestMutation, useSaveClipRequestMutation } from "../api/clipRequests";
 import { useSettingsQuery } from "../api/settings";
 import { fetchClipId, fetchWebArticleJob, startWebArticleJob } from "../api/webArticle";
 import type { WebArticleImage, WebArticleJob } from "../api/webArticle";
@@ -30,6 +31,8 @@ import {
   useTranscriptionRecordQuery,
   useUploadTranscriptionJobMutation
 } from "../api/transcription";
+import { clipStatusLabel, formatClipTime } from "../components/app-shell/TaskQueue";
+import { useClipRequestSelection } from "../components/app-shell/ClipRequestContext";
 import { LlmApiKeyDialog } from "../components/llm/LlmApiKeyDialog";
 import { ObsidianNotePreview } from "../components/obsidian/ObsidianNotePreview";
 import { compactStepperSx } from "../components/workflow/stepperStyles";
@@ -126,7 +129,10 @@ export function VToTextPage() {
   const recordLookupId = selectedRecordId || activeJobId;
   const recordQuery = useTranscriptionRecordQuery(recordLookupId, Boolean(activeJobId));
   const createUrlJob = useCreateUrlTranscriptionJobMutation();
+  const createClipRequest = useCreateClipRequestMutation();
+  const saveClipRequest = useSaveClipRequestMutation();
   const uploadJob = useUploadTranscriptionJobMutation();
+  const clipSelection = useClipRequestSelection();
   const cancelJob = useCancelTranscriptionJobMutation();
   const importPost = useImportPostMutation();
   const llmApiKey = useLlmApiKey();
@@ -190,22 +196,12 @@ export function VToTextPage() {
     ? "AI article is not available for this transcript."
     : "AI publishing was unavailable for this capture.";
 
-  const workflowStepIndex = visibleRoute === "voice"
-    ? voiceWorkflowStepIndex({
-        status: activeJob?.status || selectedRecord?.status,
-        hasRecord: Boolean(selectedRecord),
-        hasTitleSource: Boolean(aiTitleSource.key),
-        titleDone: aiTitleDone,
-        hasTagSource: Boolean(storedAiTags || aiTagsSource.key),
-        tagsDone:
-          Boolean(storedAiTags) ||
-          !aiTagsRequestKey ||
-          (aiTagsSourceKey === aiTagsRequestKey && !isGeneratingAiTags),
-        isSubmitting: uploadProgress !== null || createUrlJob.isPending || uploadJob.isPending,
-        isGeneratingAiTitle,
-        isGeneratingAiTags
-      })
-    : postStepToIndex(postStep, visibleRoute === "article");
+  const stepperRoute: ClipperRoute = clipSelection.selected
+    ? kindToRoute(clipSelection.selected.kind)
+    : visibleRoute === "auto"
+      ? "article"
+      : visibleRoute;
+  const workflowStepIndex = clipSelection.selected ? clipActiveStep(clipSelection.selected, stepperRoute) : 0;
   const activeProgress = visibleRoute === "voice"
     ? voiceProgress({
         activeJob,
@@ -236,19 +232,8 @@ export function VToTextPage() {
   useGuardedWork({
     id: "obsidian-clipper",
     label: "Obsidian Clipper",
-    isActive: isWorking,
-    onConfirmLeave: async () => {
-      if (activeJobId) {
-        await cancelJob.mutateAsync(activeJobId);
-        setActiveJobId(null);
-        setUploadProgress(null);
-      }
-      if (postIsWorking) {
-        setPostStep("idle");
-        setArticleJobId(null);
-        setArticleJob(null);
-      }
-    }
+    isActive: false,
+    onConfirmLeave: async () => {}
   });
 
   useEffect(() => {
@@ -295,70 +280,6 @@ export function VToTextPage() {
     postStep,
     postError,
     chainWarnings,
-    guid,
-    captureKind,
-    shareUrl,
-    mediaMap,
-    mediaImages,
-    articleJobId,
-    articleImages
-  ]);
-
-  useEffect(() => {
-    if (!isWorking) return;
-    function handlePageHide() {
-      if (activeJobId) {
-        navigator.sendBeacon?.(`/api/transcribe/jobs/${activeJobId}/cancel`, new Blob());
-      }
-      writePersistedObsidianClipperState({
-        activeRoute,
-        activeJobId: null,
-        selectedRecordId,
-        sourceUrl,
-        aiTitle,
-        aiTitleSourceKey,
-        aiTags,
-        aiTagsSourceKey,
-        postUrl: sourceUrl,
-        posts,
-        capturedUrl,
-        capturedTitle,
-        polishedContent,
-        postAiTags,
-        postStep: postIsWorking ? "idle" : postStep,
-        postError,
-        chainWarnings,
-        guid,
-        captureKind,
-        shareUrl,
-        mediaMap,
-        mediaImages,
-        articleJobId,
-        articleImages
-      });
-    }
-
-    window.addEventListener("pagehide", handlePageHide);
-    return () => window.removeEventListener("pagehide", handlePageHide);
-  }, [
-    activeJobId,
-    activeRoute,
-    aiTags,
-    aiTagsSourceKey,
-    aiTitle,
-    aiTitleSourceKey,
-    capturedTitle,
-    capturedUrl,
-    chainWarnings,
-    isWorking,
-    polishedContent,
-    postAiTags,
-    postError,
-    postIsWorking,
-    postStep,
-    posts,
-    selectedRecordId,
-    sourceUrl,
     guid,
     captureKind,
     shareUrl,
@@ -589,18 +510,15 @@ export function VToTextPage() {
       setToast("Paste a URL first");
       return;
     }
-
-    const route = routeForUrl(url);
-    setActiveRoute(route);
-    if (route === "voice") {
-      await startUrlJob(url);
-      return;
+    try {
+      const created = await createClipRequest.mutateAsync(url);
+      clipSelection.select(created.id);
+      setSourceUrl("");
+      setActiveRoute(routeForUrl(url));
+      setToast("已加入左側清單");
+    } catch (caught) {
+      setToast(caught instanceof Error ? caught.message : "Could not start this request");
     }
-    if (route === "article") {
-      await captureArticle(url);
-      return;
-    }
-    await capturePost(url);
   }
 
   async function startUrlJob(url: string) {
@@ -683,6 +601,7 @@ export function VToTextPage() {
       articleImages
     });
     setActiveJobId(job.job_id);
+    if (job.clip_request_id) clipSelection.select(job.clip_request_id);
     setToast("Upload complete; transcription queued");
   }
 
@@ -957,21 +876,20 @@ export function VToTextPage() {
   }
 
   async function saveToObsidian() {
-    if (!activeDraft) {
-      setToast(
-        visibleRoute === "voice"
-          ? "Complete a transcript before saving"
-          : visibleRoute === "article"
-            ? "Capture an article before saving"
-            : "Capture a post before saving"
-      );
+    const selected = clipSelection.selected;
+    if (!selected || selected.status !== "completed" || !selected.note) {
+      setToast("選一筆已完成的請求再存到 Obsidian");
       return;
     }
     try {
-      await openObsidianDraft(activeDraft, {
-        defaultFolder: settingsQuery.data?.obsidian?.default_folder,
-        vaultName: settingsQuery.data?.obsidian?.vault_name
-      });
+      await openObsidianDraft(
+        { noteTitle: selected.note_title || selected.title || "Untitled", note: selected.note },
+        {
+          defaultFolder: settingsQuery.data?.obsidian?.default_folder,
+          vaultName: settingsQuery.data?.obsidian?.vault_name
+        }
+      );
+      await saveClipRequest.mutateAsync(selected.id);
       setToast("Note copied. Opening Obsidian");
     } catch (caught) {
       setToast(caught instanceof Error ? caught.message : "Could not open Obsidian");
@@ -984,14 +902,28 @@ export function VToTextPage() {
     uploadJob.isError ||
     (jobQuery.isError && !selectedRecord) ||
     (selectedRecordId && recordQuery.isError);
-  const mainActionText = voiceJobWorking ? "Stop" : visibleRoute === "voice" ? "Transcribe" : "Capture";
-  const mainActionDisabled =
-    postIsWorking ||
-    isGeneratingAiTitle ||
-    isGeneratingAiTags ||
-    createUrlJob.isPending ||
-    uploadJob.isPending ||
-    cancelJob.isPending;
+  const submitLocked = createClipRequest.isPending || uploadJob.isPending;
+  const mainActionText = visibleRoute === "voice" ? "Transcribe" : "Capture";
+  const mainActionDisabled = submitLocked;
+  const selectedClip = clipSelection.selected;
+  const selectedDraft = selectedClip?.content
+    ? {
+        noteTitle: selectedClip.note_title || selectedClip.title || selectedClip.source,
+        content: selectedClip.content,
+        polishedContent: selectedClip.polished_content,
+        aiTags: selectedClip.ai_tags,
+        sources: selectedClip.sources || [],
+        tags: selectedClip.tags || [],
+        datetime: selectedClip.datetime,
+        guid: selectedClip.guid,
+        shareUrl: selectedClip.share_url
+      }
+    : null;
+  const previewEmptyMessage = selectedClip
+    ? selectedClip.status === "failed"
+      ? selectedClip.error || "這筆失敗了"
+      : "這筆還在處理，完成後會出現在這裡。"
+    : emptyMessage;
 
   return (
     <PageScaffold>
@@ -1007,7 +939,7 @@ export function VToTextPage() {
             }}
           >
             <Box sx={{ alignContent: "center", minWidth: 0, overflowX: "auto", pb: 0.5 }}>
-              <WorkflowStepper activeStep={workflowStepIndex} route={visibleRoute} aiTitleEnabled={aiTitleEnabled} />
+              <WorkflowStepper activeStep={workflowStepIndex} route={stepperRoute} aiTitleEnabled={aiTitleEnabled} />
             </Box>
             <Box
               sx={{
@@ -1022,7 +954,7 @@ export function VToTextPage() {
                 <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
                   <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
                     <Typography variant="body2" color="text.secondary" fontWeight={700} noWrap>
-                      {activeMessage}
+                      {selectedClip ? selectedClip.message || clipStatusLabel(selectedClip.status) : "選擇左側的請求，或送出一個新的"}
                     </Typography>
                     <Chip
                       size="small"
@@ -1032,15 +964,15 @@ export function VToTextPage() {
                     />
                   </Stack>
                   <Typography variant="body2" color="text.secondary" fontWeight={700} sx={{ flexShrink: 0 }}>
-                    {Math.round(activeProgress)}%
+                    {Math.round(selectedClip?.progress || 0)}%
                   </Typography>
                 </Stack>
-                <LinearProgress value={Math.min(100, activeProgress)} variant="determinate" />
+                <LinearProgress value={Math.min(100, selectedClip?.progress || 0)} variant="determinate" />
               </Stack>
               <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignSelf: "end", minWidth: 0 }}>
                 <Button
                   variant="outlined"
-                  disabled={isWorking}
+                  disabled={submitLocked}
                   onClick={pasteClipboardUrl}
                   sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
                 >
@@ -1048,9 +980,9 @@ export function VToTextPage() {
                 </Button>
                 <Button
                   variant="contained"
-                  color={voiceJobWorking ? "error" : "primary"}
+                  color="primary"
                   disabled={mainActionDisabled}
-                  onClick={voiceJobWorking ? stopActiveJob : () => void runClipperUrl()}
+                  onClick={() => void runClipperUrl()}
                   sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
                 >
                   {mainActionText}
@@ -1058,7 +990,7 @@ export function VToTextPage() {
                 <Button
                   variant="outlined"
                   component="label"
-                  disabled={isWorking}
+                  disabled={submitLocked}
                   sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0, minWidth: 112 }}
                 >
                   Choose File
@@ -1134,15 +1066,27 @@ export function VToTextPage() {
       <WorkspacePanel>
         <Stack spacing={1.5}>
           <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1}>
-            <Typography variant="h3">Obsidian Preview</Typography>
-            <Button variant="contained" disabled={!activeDraft || isWorking} onClick={saveToObsidian} sx={{ whiteSpace: "nowrap" }}>
+            <Stack spacing={0.25} sx={{ minWidth: 0 }}>
+              <Typography variant="h3">Obsidian Preview</Typography>
+              {selectedClip ? (
+                <Typography variant="body2" color="text.secondary" noWrap>
+                  {formatClipTime(selectedClip.id)} · {clipStatusLabel(selectedClip.status)} · {selectedClip.source}
+                </Typography>
+              ) : null}
+            </Stack>
+            <Button
+              variant="contained"
+              disabled={!selectedClip || selectedClip.status !== "completed" || !selectedClip.note}
+              onClick={saveToObsidian}
+              sx={{ whiteSpace: "nowrap" }}
+            >
               Save to Obsidian
             </Button>
           </Stack>
           <Divider />
           <ObsidianNotePreview
-            draft={activeDraft}
-            emptyMessage={emptyMessage}
+            draft={selectedDraft}
+            emptyMessage={previewEmptyMessage}
             polishedFallback={polishedFallback}
             originalTitle={originalTitle}
           />
@@ -1201,6 +1145,41 @@ function WorkflowStepper({
       </Stepper>
     </Stack>
   );
+}
+
+function kindToRoute(kind: string): ClipperRoute {
+  if (kind === "voice") return "voice";
+  if (kind === "article") return "article";
+  if (kind === "post") return "post";
+  return "auto";
+}
+
+function clipActiveStep(request: { status: string; step?: number; message?: string; kind: string }, route: ClipperRoute) {
+  const count = route === "post" ? 6 : 5;
+  if (request.status === "completed") return count;
+  const stored = typeof request.step === "number" ? request.step : stepFromMessage(request.kind, request.message || "");
+  return Math.max(0, Math.min(stored, count - 1));
+}
+
+function stepFromMessage(kind: string, message: string) {
+  const text = message.toLowerCase();
+  if (kind === "voice") {
+    if (text.includes("tag") || message.includes("標籤")) return 3;
+    if (text.includes("title") || text.includes("article") || message.includes("標題") || message.includes("潤稿")) return 2;
+    if (text.includes("transcri") || text.includes("segment")) return 1;
+    return 0;
+  }
+  if (kind === "post") {
+    if (text.includes("tag") || message.includes("標籤")) return 4;
+    if (text.includes("title") || message.includes("標題")) return 3;
+    if (text.includes("polish") || message.includes("潤稿")) return 2;
+    if (text.includes("photo") || message.includes("照片")) return 1;
+    return 0;
+  }
+  if (text.includes("tag") || message.includes("標籤")) return 3;
+  if (text.includes("title") || message.includes("標題")) return 2;
+  if (text.includes("polish") || message.includes("潤稿")) return 1;
+  return 0;
 }
 
 function routeForUrl(value: string): ClipperRoute {
