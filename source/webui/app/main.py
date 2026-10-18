@@ -3725,7 +3725,7 @@ def _sync_voice_clip(job_id: str) -> None:
                 guid = ""
         clip_pipeline.finish_voice(
             clip_id,
-            content=source_text,
+            content=_note_transcript(source_text),
             polished=article_text,
             title=title,
             ai_tags=tags,
@@ -4087,17 +4087,28 @@ def _save_transcription_record(job_id: str, record: Dict[str, Any], record_type:
 
 def _record_transcript_text(record: Dict[str, Any]) -> str:
     transcript = record.get("transcript") if isinstance(record.get("transcript"), dict) else {}
-    text = str(transcript.get("text") or "").strip()
-    if text:
-        return text
     segments = transcript.get("segments") if isinstance(transcript, dict) else []
     if isinstance(segments, list):
-        return "\n".join(
+        lines = [
             str(segment.get("text") or "").strip()
             for segment in segments
             if isinstance(segment, dict) and str(segment.get("text") or "").strip()
-        )
-    return ""
+        ]
+        if lines:
+            return "\n".join(lines)
+    return str(transcript.get("text") or "").strip()
+
+
+def _note_transcript(text: str) -> str:
+    """Keep each ASR line in Obsidian. A plain newline renders as a space."""
+    lines = []
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            lines.append("")
+            continue
+        lines.append(f"{stripped}    ")
+    return "\n".join(lines).strip()
 
 
 def _article_system_prompt() -> str:

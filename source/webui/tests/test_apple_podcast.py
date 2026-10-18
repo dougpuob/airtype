@@ -142,6 +142,19 @@ class AppleEpisodeResolutionTests(unittest.TestCase):
         self.assertLess(combined.index("節目敘述"), combined.index("主字稿第一句"))
         self.assertEqual(apple_podcast.original_content("", "只有逐字稿"), "只有逐字稿")
 
+    def test_transcript_keeps_one_line_per_asr_segment(self) -> None:
+        text = webui._record_transcript_text(
+            {
+                "transcript": {
+                    "text": "第一句 第二句",
+                    "segments": [{"text": " 第一句 "}, {"text": "第二句"}],
+                }
+            }
+        )
+        self.assertEqual(text, "第一句\n第二句")
+        note = webui._note_transcript(text)
+        self.assertEqual(note, "第一句    \n第二句")
+
     def test_voice_clip_source_keeps_apple_notes_above_transcript(self) -> None:
         combined = webui._voice_clip_source_text(
             {"episode_preface": "節目敘述", "source_metadata": {}},

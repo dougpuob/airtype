@@ -498,7 +498,7 @@ class WhisperCppTranscriber:
         for segment in segments:
             if segment_callback:
                 segment_callback(segment)
-        text = " ".join(segment["text"].strip() for segment in segments).strip()
+        text = "\n".join(segment["text"].strip() for segment in segments if segment["text"].strip())
         if not text:
             text = self._convert_text_language(payload.get("text", ""), output_language)
         duration = segments[-1]["end"] if segments else 0
