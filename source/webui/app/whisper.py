@@ -213,6 +213,10 @@ class WhisperCppTranscriber:
 
         command = [
             "ffmpeg",
+            "-hide_banner",
+            "-nostats",
+            "-loglevel",
+            "error",
             "-y",
             "-i",
             source_path,
@@ -225,16 +229,31 @@ class WhisperCppTranscriber:
             "pcm_s16le",
             wav_path,
         ]
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if process_callback:
-            process_callback(process)
-        while process.poll() is None:
-            self._raise_if_cancelled(cancel_event, process)
-            time.sleep(0.25)
-        stdout, stderr = process.communicate()
+        process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        stderr_parts: list[str] = []
+
+        def _drain_stderr() -> None:
+            stream = process.stderr
+            if stream is None:
+                return
+            try:
+                stderr_parts.append(stream.read())
+            finally:
+                stream.close()
+
+        drain = threading.Thread(target=_drain_stderr, name="ffmpeg-stderr", daemon=True)
+        drain.start()
+        try:
+            if process_callback:
+                process_callback(process)
+            while process.poll() is None:
+                self._raise_if_cancelled(cancel_event, process)
+                time.sleep(0.25)
+        finally:
+            drain.join(timeout=5)
         self._raise_if_cancelled(cancel_event)
         if process.returncode != 0:
-            raise RuntimeError(f"ffmpeg failed: {(stderr or stdout).strip()}")
+            raise RuntimeError(f"ffmpeg failed: {''.join(stderr_parts).strip()}")
         return "ffmpeg"
 
     def _elapsed_ms(self, started_at: float) -> int:
