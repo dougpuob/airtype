@@ -10,6 +10,8 @@ from pathlib import Path
 import functools
 import asyncio
 import base64
+import contextlib
+import contextvars
 import binascii
 import hashlib
 import hmac
@@ -52,6 +54,7 @@ from . import clip_pipeline
 from . import clip_requests
 from . import known_sources
 from . import web_article
+from . import usage_stats
 from .ai_tags import AI_TAGS_SYSTEM_PROMPT, build_ai_tags_prompt, normalize_ai_tags
 from .note_id import canonical_source_id, note_guid_for_source
 from .post_weaver import collect_threads_chain, posts_to_markdown
@@ -454,6 +457,17 @@ transcription_jobs: Dict[str, Dict[str, Any]] = {}
 executor = ThreadPoolExecutor(max_workers=1)
 clip_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="clip-request")
 _llm_lock = threading.Lock()
+_llm_job_id: contextvars.ContextVar[str] = contextvars.ContextVar("llm_job_id", default="")
+
+
+@contextlib.contextmanager
+def _llm_job(job_id: str):
+    """Tag LLM calls made inside this block with job_id in llm-usage.jsonl."""
+    token = _llm_job_id.set(str(job_id or ""))
+    try:
+        yield
+    finally:
+        _llm_job_id.reset(token)
 _voice_publish_guard: set[str] = set()
 
 
@@ -1528,6 +1542,13 @@ async def list_transcription_records(record_type: Optional[str] = None):
     return {"records": _list_transcription_records(record_type)}
 
 
+@app.get("/api/stats")
+async def get_usage_stats(days: int = 30):
+    """Dashboard numbers: captures by site, failures, IME and LLM usage."""
+    days = max(7, min(int(days or 30), 365))
+    return await asyncio.to_thread(usage_stats.compute_stats, WEBUI_DATA_DIR, days=days)
+
+
 @app.get("/api/transcribe/records/{job_id}")
 async def get_transcription_record(job_id: str, record_type: Optional[str] = None):
     record = _read_transcription_record(job_id, record_type)
@@ -1784,7 +1805,8 @@ def _collect_threads_for_clip(url: str) -> dict[str, Any]:
 
 def _run_article_clip(request_id: str, url: str) -> None:
     try:
-        clip_pipeline.run_article(request_id, url, settings=_read_app_settings, chat=_clip_chat)
+        with _llm_job(request_id):
+            clip_pipeline.run_article(request_id, url, settings=_read_app_settings, chat=_clip_chat)
     except Exception as error:
         if not clip_requests.is_cancelled(request_id):
             append_service_log("webui", f"article clip failed: {error}")
@@ -1800,14 +1822,15 @@ def _run_article_clip(request_id: str, url: str) -> None:
 
 def _run_post_clip(request_id: str, url: str) -> None:
     try:
-        clip_pipeline.run_post(
-            request_id,
-            url,
-            settings=_read_app_settings,
-            chat=_clip_chat,
-            collect_threads=_collect_threads_for_clip,
-            fetch_public_post=_load_public_post,
-        )
+        with _llm_job(request_id):
+            clip_pipeline.run_post(
+                request_id,
+                url,
+                settings=_read_app_settings,
+                chat=_clip_chat,
+                collect_threads=_collect_threads_for_clip,
+                fetch_public_post=_load_public_post,
+            )
     except Exception as error:
         if not clip_requests.is_cancelled(request_id):
             append_service_log("webui", f"post clip failed: {error}")
@@ -3295,10 +3318,45 @@ def _apply_thinking_payload(payload_body: Dict[str, Any], request: LocalChatRequ
 
 def _local_chat_response(request: LocalChatRequest) -> str:
     with _llm_lock:
-        return _local_chat_response_unlocked(_request_with_thinking_step(request))
+        request = _request_with_thinking_step(request)
+        started = time.monotonic()
+        result: tuple[str, Any] = ("", None)
+        success = False
+        try:
+            result = _local_chat_completion(request)
+            success = True
+            return result[0]
+        finally:
+            _record_llm_usage(request, result[1], result[0], started, success)
+
+
+def _record_llm_usage(request: LocalChatRequest, payload: Any, text: str, started: float, success: bool) -> None:
+    """Append the call to llm-usage.jsonl; never raises."""
+    try:
+        usage_stats.log_llm_usage(
+            WEBUI_DATA_DIR,
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "step": str(request.step or "chat"),
+                "job_id": _llm_job_id.get() or None,
+                "provider": request.provider,
+                "model": request.model,
+                **usage_stats.usage_from_payload(payload),
+                "input_chars": len(request.system or "") + len(request.prompt or ""),
+                "output_chars": len(text or ""),
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "success": success,
+            },
+        )
+    except Exception:
+        pass
 
 
 def _local_chat_response_unlocked(request: LocalChatRequest) -> str:
+    return _local_chat_completion(request)[0]
+
+
+def _local_chat_completion(request: LocalChatRequest) -> tuple[str, Dict[str, Any]]:
     if request.provider == "ollama":
         options = {
             "temperature": request.temperature,
@@ -3317,7 +3375,7 @@ def _local_chat_response_unlocked(request: LocalChatRequest) -> str:
             payload_body,
             api_key=request.api_key,
         )
-        return _strip_thinking_blocks(_message_text(payload.get("message") or {}))
+        return _strip_thinking_blocks(_message_text(payload.get("message") or {})), payload
 
     payload_body = {
         "model": request.model,
@@ -3334,8 +3392,8 @@ def _local_chat_response_unlocked(request: LocalChatRequest) -> str:
     )
     choices = payload.get("choices", [])
     if not choices:
-        return ""
-    return _strip_thinking_blocks(_message_text(choices[0].get("message") or {}))
+        return "", payload
+    return _strip_thinking_blocks(_message_text(choices[0].get("message") or {})), payload
 
 
 def _request_context_length(request: LocalChatRequest) -> int:
@@ -3652,7 +3710,7 @@ def _sync_voice_clip(job_id: str) -> None:
         tags = str(job.get("ai_tags") or "")
         if not tags and (article_text or transcript):
             try:
-                tags = _generate_transcription_tags(article_text or transcript, title)
+                tags = _generate_transcription_tags(article_text or transcript, title, job_id)
                 job["ai_tags"] = tags
             except Exception as error:
                 append_service_log("webui", f"clip tag generation failed: {error}")
@@ -4091,20 +4149,21 @@ def _generate_transcription_article(
         f"server={server_name} provider={provider} "
         f"endpoint={_llm_base_endpoint(endpoint)} model={model} chars={request_chars}",
     )
-    article_text = _local_chat_response(
-        LocalChatRequest(
-            provider=provider,
-            endpoint=endpoint,
-            api_key=api_key or None,
-            model=model,
-            system=system_prompt,
-            prompt=user_prompt,
-            temperature=float(llm.get("temperature", 0.4) or 0.4),
-            context_length=int(llm.get("contextLength", 8192) or 8192),
-            disable_thinking=bool(llm.get("disable_thinking")),
-            step="polish",
-        )
-    ).strip()
+    with _llm_job(str(record.get("job_id") or _llm_job_id.get())):
+        article_text = _local_chat_response(
+            LocalChatRequest(
+                provider=provider,
+                endpoint=endpoint,
+                api_key=api_key or None,
+                model=model,
+                system=system_prompt,
+                prompt=user_prompt,
+                temperature=float(llm.get("temperature", 0.4) or 0.4),
+                context_length=int(llm.get("contextLength", 8192) or 8192),
+                disable_thinking=bool(llm.get("disable_thinking")),
+                step="polish",
+            )
+        ).strip()
     if not article_text:
         raise RuntimeError("Local LLM returned an empty article")
 
@@ -4121,7 +4180,7 @@ def _generate_transcription_article(
     }
 
 
-def _generate_transcription_tags(content: str, title: str) -> str:
+def _generate_transcription_tags(content: str, title: str, job_id: str = "") -> str:
     source = str(content or "").strip()
     if not source:
         raise ValueError("Tag source text is empty")
@@ -4147,20 +4206,21 @@ def _generate_transcription_tags(content: str, title: str) -> str:
         f"server={server_name} provider={provider} "
         f"endpoint={_llm_base_endpoint(endpoint)} model={model} chars={len(user_prompt)}",
     )
-    raw = _local_chat_response(
-        LocalChatRequest(
-            provider=provider,
-            endpoint=endpoint,
-            api_key=api_key or None,
-            model=model,
-            system=AI_TAGS_SYSTEM_PROMPT,
-            prompt=user_prompt,
-            temperature=float(llm.get("temperature", 0.4) or 0.4),
-            context_length=int(llm.get("contextLength", 8192) or 8192),
-            disable_thinking=bool(llm.get("disable_thinking")),
-            step="tags",
+    with _llm_job(job_id or _llm_job_id.get()):
+        raw = _local_chat_response(
+            LocalChatRequest(
+                provider=provider,
+                endpoint=endpoint,
+                api_key=api_key or None,
+                model=model,
+                system=AI_TAGS_SYSTEM_PROMPT,
+                prompt=user_prompt,
+                temperature=float(llm.get("temperature", 0.4) or 0.4),
+                context_length=int(llm.get("contextLength", 8192) or 8192),
+                disable_thinking=bool(llm.get("disable_thinking")),
+                step="tags",
+            )
         )
-    )
     tags = normalize_ai_tags(raw)
     if not tags:
         raise RuntimeError("Local LLM returned no hashtags")
@@ -4328,7 +4388,7 @@ def _run_url_transcription_job(
         tag_source = article_text or transcript_text
         tag_title = str(transcription_jobs[job_id].get("title") or record.get("title") or "")
         try:
-            tags = _generate_transcription_tags(tag_source, tag_title)
+            tags = _generate_transcription_tags(tag_source, tag_title, job_id)
             if tags:
                 transcription_jobs[job_id]["ai_tags"] = tags
             _update_job(
