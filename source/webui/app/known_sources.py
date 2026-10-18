@@ -28,7 +28,8 @@ class KnownSource:
 
 # Pipeline ids:
 #   "capture-post" — Threads chain collection (app/post_weaver.py)
-#   "v-to-text"    — yt-dlp media download + whisper transcription
+#   "v-to-text"    — media download + whisper transcription
+#                    (Apple Podcasts resolves the episode enclosure first)
 KNOWN_SOURCE_HOSTS: tuple[KnownSource, ...] = (
     KnownSource(host="threads.com", pipeline="capture-post"),
     KnownSource(host="threads.net", pipeline="capture-post"),
@@ -38,6 +39,7 @@ KNOWN_SOURCE_HOSTS: tuple[KnownSource, ...] = (
     KnownSource(host="b23.tv", pipeline="v-to-text"),
     KnownSource(host="instagram.com", pipeline="v-to-text"),
     KnownSource(host="tiktok.com", pipeline="v-to-text"),
+    KnownSource(host="podcasts.apple.com", pipeline="v-to-text"),
 )
 
 # Any path containing this marker is a known video source (YouTube Shorts)

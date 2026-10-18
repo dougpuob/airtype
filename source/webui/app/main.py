@@ -50,6 +50,7 @@ from .config_schema import (
     whisper_model_path_from_settings,
 )
 from .whisper import WhisperCppNotConfigured, transcriber
+from . import apple_podcast
 from . import clip_pipeline
 from . import clip_requests
 from . import known_sources
@@ -3670,7 +3671,7 @@ def _sync_voice_clip(job_id: str) -> None:
             progress=job.get("progress") or 0,
             message=job.get("message") or "進行中",
             title=str(job.get("title") or ""),
-            content=_partial_transcript(job),
+            content=_voice_clip_source_text(job, _partial_transcript(job)),
         )
         return
     if job_id in _voice_publish_guard:
@@ -3697,20 +3698,21 @@ def _sync_voice_clip(job_id: str) -> None:
             return
         record = _record_data(job_id, job)
         transcript = _record_transcript_text(record)
+        source_text = _voice_clip_source_text(job, transcript)
         article = job.get("article") if isinstance(job.get("article"), dict) else {}
         article_text = str(article.get("text") or "").strip()
-        if not article_text and transcript:
+        if not article_text and source_text:
             try:
-                generated = _generate_transcription_article(record, transcript_text=transcript)
+                generated = _generate_transcription_article(record, transcript_text=source_text)
                 job["article"] = generated
                 article_text = str(generated.get("text") or "").strip()
             except Exception as error:
                 append_service_log("webui", f"clip article generation failed: {error}")
         title = str(job.get("title") or job.get("source_name") or "Untitled transcript")
         tags = str(job.get("ai_tags") or "")
-        if not tags and (article_text or transcript):
+        if not tags and (article_text or source_text):
             try:
-                tags = _generate_transcription_tags(article_text or transcript, title, job_id)
+                tags = _generate_transcription_tags(article_text or source_text, title, job_id)
                 job["ai_tags"] = tags
             except Exception as error:
                 append_service_log("webui", f"clip tag generation failed: {error}")
@@ -3723,7 +3725,7 @@ def _sync_voice_clip(job_id: str) -> None:
                 guid = ""
         clip_pipeline.finish_voice(
             clip_id,
-            content=transcript,
+            content=source_text,
             polished=article_text,
             title=title,
             ai_tags=tags,
@@ -4274,6 +4276,52 @@ def _record_summary(record: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _episode_preface(job: Dict[str, Any]) -> str:
+    preface = str(job.get("episode_preface") or "").strip()
+    if preface:
+        return preface
+    metadata = job.get("source_metadata") if isinstance(job.get("source_metadata"), dict) else {}
+    if metadata.get("download_method") == "apple-podcast":
+        return str(metadata.get("description") or "").strip()
+    return ""
+
+
+def _voice_clip_source_text(job: Dict[str, Any], transcript: str) -> str:
+    """Original clip text. Apple episodes keep show notes above the transcript."""
+    preface = _episode_preface(job)
+    if preface:
+        return apple_podcast.original_content(preface, transcript)
+    return (transcript or "").strip()
+
+
+def _begin_apple_episode_download(job_id: str, url: str, temp_path: str) -> tuple[str, str]:
+    """Resolve an Apple episode and return the enclosure URL to download.
+
+    The Apple page stays the note source. YouTube links on that page are not opened.
+    """
+    episode = apple_podcast.resolve_episode(url)
+    audio_ext = os.path.splitext(urllib.parse.urlparse(episode.audio_url).path)[1]
+    if audio_ext and os.path.splitext(temp_path)[1].lower() != audio_ext.lower():
+        temp_path = os.path.splitext(temp_path)[0] + audio_ext
+        _update_job_source(job_id, temp_path)
+    _update_job(
+        job_id,
+        title=episode.title,
+        source_name=episode.title,
+        episode_preface=episode.description,
+        source_metadata={
+            "download_method": "apple-podcast",
+            "title": episode.title,
+            "description": episode.description,
+            "webpage_url": url,
+            "url": url,
+            "resolved_url": episode.audio_url,
+        },
+        message="Episode notes loaded",
+    )
+    return episode.audio_url, temp_path
+
+
 def _run_url_transcription_job(
     job_id: str,
     url: str,
@@ -4283,25 +4331,30 @@ def _run_url_transcription_job(
     try:
         if _is_job_cancelled(job_id):
             return
-        _update_job(job_id, status="downloading", progress=3, message="Reading media title")
-        preview_metadata = _preview_url_metadata(url)
-        preview_title = _metadata_title(preview_metadata)
-        if preview_metadata:
-            _update_job_details(
-                job_id,
-                total_bytes=_metadata_file_size(preview_metadata),
-                duration=_metadata_duration(preview_metadata),
-            )
-        if preview_title:
-            _update_job(
-                job_id,
-                title=preview_title,
-                source_name=preview_title,
-                source_metadata=preview_metadata,
-                message="Media title loaded",
-            )
-        elif preview_metadata:
-            _update_job(job_id, source_metadata=preview_metadata)
+        download_url = url
+        if apple_podcast.is_apple_podcast_url(url):
+            _update_job(job_id, status="downloading", progress=3, message="Reading episode notes")
+            download_url, temp_path = _begin_apple_episode_download(job_id, url, temp_path)
+        else:
+            _update_job(job_id, status="downloading", progress=3, message="Reading media title")
+            preview_metadata = _preview_url_metadata(url)
+            preview_title = _metadata_title(preview_metadata)
+            if preview_metadata:
+                _update_job_details(
+                    job_id,
+                    total_bytes=_metadata_file_size(preview_metadata),
+                    duration=_metadata_duration(preview_metadata),
+                )
+            if preview_title:
+                _update_job(
+                    job_id,
+                    title=preview_title,
+                    source_name=preview_title,
+                    source_metadata=preview_metadata,
+                    message="Media title loaded",
+                )
+            elif preview_metadata:
+                _update_job(job_id, source_metadata=preview_metadata)
         if _is_job_cancelled(job_id):
             return
         _update_job(job_id, status="downloading", progress=5, message="Downloading source URL")
@@ -4324,16 +4377,25 @@ def _run_url_transcription_job(
                 message=f"Downloading {format_bytes(downloaded_bytes)}",
             )
 
-        metadata = _download_url(url, temp_path, progress_callback=on_download_progress)
+        metadata = _download_url(download_url, temp_path, progress_callback=on_download_progress)
         downloaded_path = metadata.get("downloaded_path") if isinstance(metadata.get("downloaded_path"), str) else temp_path
         metadata_title = _metadata_title(metadata)
+        keep_episode_title = bool(_episode_preface(transcription_jobs[job_id]))
+        if metadata and keep_episode_title:
+            metadata = dict(metadata)
+            existing = transcription_jobs[job_id].get("source_metadata") or {}
+            metadata["download_method"] = "apple-podcast"
+            metadata["description"] = existing.get("description") or metadata.get("description")
+            metadata["webpage_url"] = existing.get("webpage_url") or url
+            metadata["title"] = transcription_jobs[job_id].get("title") or metadata.get("title")
+            metadata["url"] = url
         if metadata:
             _update_job_details(
                 job_id,
                 total_bytes=_metadata_file_size(metadata),
                 duration=_metadata_duration(metadata),
             )
-        if metadata_title:
+        if metadata_title and not keep_episode_title:
             _update_job(
                 job_id,
                 title=metadata_title,
@@ -4352,7 +4414,10 @@ def _run_url_transcription_job(
             return
 
         record = _record_data(job_id, transcription_jobs[job_id])
-        transcript_text = _record_transcript_text(record)
+        transcript_text = _voice_clip_source_text(
+            transcription_jobs[job_id],
+            _record_transcript_text(record),
+        )
         _, _, article_request_chars = _article_request_payload(record, transcript_text)
         _update_job_details(job_id, article_request_chars=article_request_chars)
         _update_job(

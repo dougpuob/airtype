@@ -1220,6 +1220,8 @@ function isVoiceUrl(value: string) {
     host.endsWith(".b23.tv") ||
     host.includes("tiktok.com") ||
     host.includes("instagram.com") ||
+    host === "podcasts.apple.com" ||
+    host.endsWith(".podcasts.apple.com") ||
     path.includes("/shorts/") ||
     mediaExtension.test(`${path}${parsed.search}`)
   );

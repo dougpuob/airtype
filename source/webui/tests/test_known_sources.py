@@ -36,6 +36,14 @@ class KnownSourceRoutingTests(unittest.TestCase):
             "v-to-text",
         )
 
+    def test_apple_podcast_episode_routes_to_v_to_text(self) -> None:
+        episode = "https://podcasts.apple.com/tw/podcast/ep706/id1500839292?i=1000796775119"
+        self.assertEqual(known_sources.route_for_url(episode), "v-to-text")
+        self.assertEqual(
+            known_sources.match_known_source("https://podcasts.apple.com/us/podcast/show/id1").pipeline,
+            "v-to-text",
+        )
+
     def test_instagram_and_tiktok(self) -> None:
         self.assertEqual(
             known_sources.match_known_source("https://www.instagram.com/reel/abc/").pipeline,
