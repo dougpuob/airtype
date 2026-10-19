@@ -155,6 +155,24 @@ class AppleEpisodeResolutionTests(unittest.TestCase):
         note = webui._note_transcript(text)
         self.assertEqual(note, "第一句    \n第二句")
 
+    def test_typo_correction_chunks_long_transcripts_and_keeps_bad_rewrites(self) -> None:
+        lines = [f"第{index}句錯自" for index in range(5)]
+        chunks = webui._chunk_transcript_lines(lines, limit=8)
+        self.assertGreater(len(chunks), 1)
+        self.assertEqual([line for chunk in chunks for line in chunk], lines)
+        self.assertEqual(webui._accepted_typo_lines(["錯自"], "錯字"), ["錯字"])
+        self.assertEqual(webui._accepted_typo_lines(["錯自", "第二句"], "錯字"), ["錯自", "第二句"])
+        self.assertEqual(webui._accepted_typo_lines(["錯自"], "```\n錯字\n```"), ["錯字"])
+
+    def test_asr_result_keeps_corrected_lines_on_each_segment(self) -> None:
+        result = webui._correct_asr_result(
+            "missing-job",
+            {"text": "錯自\n第二句", "segments": [{"text": " 錯自 "}, {"text": "第二句"}]},
+            correct_chunk=lambda job_id, chunk: "\n".join("錯字" if line == "錯自" else line for line in chunk),
+        )
+        self.assertEqual(result["text"], "錯字\n第二句")
+        self.assertEqual([segment["text"] for segment in result["segments"]], ["錯字", "第二句"])
+
     def test_voice_clip_source_keeps_apple_notes_above_transcript(self) -> None:
         combined = webui._voice_clip_source_text(
             {"episode_preface": "節目敘述", "source_metadata": {}},

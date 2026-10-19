@@ -4099,6 +4099,172 @@ def _record_transcript_text(record: Dict[str, Any]) -> str:
     return str(transcript.get("text") or "").strip()
 
 
+TYPO_CHUNK_CHARS = 2000
+TYPO_SYSTEM_PROMPT = (
+    "你是逐字稿校對員。只修正明顯錯字、同音誤識與專有名詞，"
+    "不得摘要、刪句、合併或拆開行、改寫語氣，也不得加入新資訊。"
+)
+TYPO_USER_PROMPT = """請修正以下逐字稿的錯字。
+
+要求：
+1. 每一行各自保留，行數必須與原文相同。
+2. 只改錯字與同音誤識，不潤飾、不摘要、不增刪句子。
+3. 只輸出修正後的逐字稿，不要說明。
+
+逐字稿：
+{source}"""
+
+
+def _chunk_transcript_lines(lines: list[str], limit: int = TYPO_CHUNK_CHARS) -> list[list[str]]:
+    chunks: list[list[str]] = []
+    current: list[str] = []
+    size = 0
+    for line in lines:
+        line_size = len(line) + 1
+        if current and size + line_size > limit:
+            chunks.append(current)
+            current = []
+            size = 0
+        current.append(line)
+        size += line_size
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _strip_model_fence(text: str) -> str:
+    stripped = str(text or "").strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].startswith("```"):
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def _accepted_typo_lines(source_lines: list[str], corrected_text: str) -> list[str]:
+    """Keep the original chunk when the model drops, merges, or rewrites it."""
+    corrected = [line.strip() for line in _strip_model_fence(corrected_text).splitlines() if line.strip()]
+    if len(corrected) != len(source_lines):
+        return list(source_lines)
+    source_len = sum(len(line) for line in source_lines)
+    corrected_len = sum(len(line) for line in corrected)
+    if source_len and not (source_len * 0.7 <= corrected_len <= source_len * 1.6):
+        return list(source_lines)
+    return corrected
+
+
+def _llm_correct_transcript_chunk(job_id: str, lines: list[str]) -> str:
+    settings = _read_app_settings()
+    llm = settings.get("llm", {}) if isinstance(settings.get("llm"), dict) else {}
+    model = str(llm.get("model") or llm.get("selected_model") or "").strip()
+    if not model:
+        models = llm.get("models")
+        if isinstance(models, list):
+            model = next((str(candidate).strip() for candidate in models if str(candidate).strip()), "")
+    if not model:
+        raise ValueError("Local LLM model is not configured")
+
+    source = "\n".join(lines)
+    provider = str(llm.get("provider") or "llama.cpp")
+    endpoint = str(llm.get("endpoint") or "http://127.0.0.1:8080")
+    server_name = str(llm.get("name") or settings.get("default_llm_server_name") or "default")
+    append_service_log(
+        "webui",
+        "requesting Local LLM typo correction: "
+        f"server={server_name} provider={provider} model={model} chars={len(source)}",
+    )
+    with _llm_job(job_id or _llm_job_id.get()):
+        return _local_chat_response(
+            LocalChatRequest(
+                provider=provider,
+                endpoint=endpoint,
+                api_key=str(llm.get("api_key") or "") or None,
+                model=model,
+                system=TYPO_SYSTEM_PROMPT,
+                prompt=TYPO_USER_PROMPT.format(source=source),
+                temperature=0.1,
+                context_length=int(llm.get("contextLength", 8192) or 8192),
+                disable_thinking=bool(llm.get("disable_thinking")),
+                step="correct",
+            )
+        )
+
+
+def _correct_transcript_lines(
+    job_id: str,
+    lines: list[str],
+    correct_chunk: Optional[Callable[..., str]] = None,
+) -> list[str]:
+    spoken = [line.strip() for line in lines if line.strip()]
+    if not spoken:
+        return []
+    chunks = _chunk_transcript_lines(spoken)
+    corrected: list[str] = []
+    total = len(chunks)
+    for index, chunk in enumerate(chunks, start=1):
+        if _is_job_cancelled(job_id):
+            corrected.extend(chunk)
+            continue
+        if job_id in transcription_jobs:
+            _update_job(
+                job_id,
+                status="running",
+                progress=93,
+                message=f"Correcting transcript typos ({index}/{total})",
+            )
+        try:
+            raw = (correct_chunk or _llm_correct_transcript_chunk)(job_id, chunk)
+            corrected.extend(_accepted_typo_lines(chunk, raw))
+        except Exception as error:
+            append_service_log("webui", f"transcript typo correction failed: {error}")
+            corrected.extend(chunk)
+    return corrected
+
+
+def _correct_asr_result(
+    job_id: str,
+    result: Dict[str, Any],
+    correct_chunk: Optional[Callable[..., str]] = None,
+) -> Dict[str, Any]:
+    """Replace ASR text with a typo-corrected copy. Show notes stay untouched."""
+    segments = result.get("segments") if isinstance(result.get("segments"), list) else []
+    source_lines = [
+        str(segment.get("text") or "").strip()
+        for segment in segments
+        if isinstance(segment, dict) and str(segment.get("text") or "").strip()
+    ]
+    if not source_lines:
+        source_lines = [line.strip() for line in str(result.get("text") or "").splitlines() if line.strip()]
+    if not source_lines:
+        return result
+
+    corrected_lines = _correct_transcript_lines(job_id, source_lines, correct_chunk=correct_chunk)
+    updated_segments = []
+    cursor = 0
+    for segment in segments:
+        if not isinstance(segment, dict):
+            updated_segments.append(segment)
+            continue
+        text = str(segment.get("text") or "").strip()
+        if not text or cursor >= len(corrected_lines):
+            updated_segments.append(segment)
+            continue
+        updated = dict(segment)
+        updated["text"] = corrected_lines[cursor]
+        updated["text_length"] = len(corrected_lines[cursor])
+        updated_segments.append(updated)
+        cursor += 1
+
+    updated = dict(result)
+    if updated_segments:
+        updated["segments"] = updated_segments
+    updated["text"] = "\n".join(corrected_lines)
+    return updated
+
+
 def _note_transcript(text: str) -> str:
     """Keep each ASR line in Obsidian. A plain newline renders as a space."""
     lines = []
@@ -4545,6 +4711,9 @@ def _run_transcription_job(
             segment_callback=on_segment,
             **options,
         )
+        if _is_job_cancelled(job_id):
+            return
+        result = _correct_asr_result(job_id, result)
         if _is_job_cancelled(job_id):
             return
         _update_job(
