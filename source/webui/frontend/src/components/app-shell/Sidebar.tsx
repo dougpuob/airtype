@@ -2,6 +2,7 @@ import DashboardOutlinedIcon from "@mui/icons-material/DashboardOutlined";
 import GraphicEqOutlinedIcon from "@mui/icons-material/GraphicEqOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import LoginOutlinedIcon from "@mui/icons-material/LoginOutlined";
+import NotificationsActiveOutlinedIcon from "@mui/icons-material/NotificationsActiveOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import { Box, List, ListItemButton, ListItemIcon, ListItemText, Typography } from "@mui/material";
 import type { MouseEvent, ReactNode } from "react";
@@ -19,6 +20,7 @@ export const navItems: NavItem[] = [
   { label: "Dashboard", path: "/", icon: <DashboardOutlinedIcon /> },
   { label: "Obsidian Clipper", path: "/v-to-text", icon: <GraphicEqOutlinedIcon /> },
   { label: "IME History", path: "/ime-history", icon: <HistoryOutlinedIcon /> },
+  { label: "Watch 追蹤", path: "/watch", icon: <NotificationsActiveOutlinedIcon /> },
   { label: "Threads Login", path: "/threads-login", icon: <LoginOutlinedIcon /> }
 ];
 

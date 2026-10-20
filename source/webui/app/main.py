@@ -12,6 +12,7 @@ import asyncio
 import base64
 import contextlib
 import contextvars
+import fcntl
 import binascii
 import hashlib
 import hmac
@@ -56,6 +57,7 @@ from . import clip_requests
 from . import known_sources
 from . import web_article
 from . import usage_stats
+from . import threads_watch
 from .ai_tags import AI_TAGS_SYSTEM_PROMPT, build_ai_tags_prompt, normalize_ai_tags
 from .note_id import canonical_source_id, note_guid_for_source
 from .post_weaver import collect_threads_chain, posts_to_markdown
@@ -610,6 +612,24 @@ class WebArticleJobRequest(BaseModel):
 
 class ClipCreateRequest(BaseModel):
     url: str
+
+
+class WatchCreateRequest(BaseModel):
+    target: str
+    label: str = ""
+    interval_minutes: int = threads_watch.DEFAULT_INTERVAL_MINUTES
+    enabled: bool = True
+    queue_latest: int = 0
+
+
+class WatchUpdateRequest(BaseModel):
+    label: Optional[str] = None
+    interval_minutes: Optional[int] = None
+    enabled: Optional[bool] = None
+
+
+class WatchProbeRequest(BaseModel):
+    target: str
 
 
 class NoteMediaRequest(BaseModel):
@@ -1860,10 +1880,18 @@ async def get_clip_request(request_id: str):
 
 @app.post("/api/clip-requests")
 async def create_clip_request(request: ClipCreateRequest):
-    url = request.url.strip()
+    try:
+        return _submit_clip_url(request.url)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _submit_clip_url(url: str) -> Dict[str, Any]:
+    """Queue one URL in the Obsidian Clipper (shared by the API and Watch)."""
+    url = str(url or "").strip()
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise HTTPException(status_code=400, detail="URL 必須以 http:// 或 https:// 開頭。")
+        raise ValueError("URL 必須以 http:// 或 https:// 開頭。")
     pipeline = known_sources.route_for_url(url)
     if pipeline == "v-to-text":
         options = _settings_transcribe_options(None, None, None, None, None)
@@ -1886,6 +1914,232 @@ async def create_clip_request(request: ClipCreateRequest):
     record = clip_requests.create(kind="article", source=url)
     clip_executor.submit(_run_article_clip, record["id"], url)
     return record
+
+
+# --------------------------------------------------------------------------- #
+# Watch: scheduled checks of Threads profiles
+# --------------------------------------------------------------------------- #
+
+_watch_store = threads_watch.WatchStore(WEBUI_DATA_DIR)
+_watch_check_lock = threading.Lock()
+_watch_stop = threading.Event()
+_watch_thread: Optional[threading.Thread] = None
+WATCH_TICK_SECONDS = 60
+
+
+def _watch_fetch(username: str) -> Dict[str, Any]:
+    return threads_watch.fetch_profile_posts(username, cookie_header_fn=_threads_storage_cookie_header)
+
+
+def _watch_public(target: Dict[str, Any]) -> Dict[str, Any]:
+    """Target for the API, with live status of each queued clip request."""
+    item = {key: value for key, value in target.items() if key != "_check"}
+    posts = []
+    for post in reversed(item.get("posts") or []):
+        post = dict(post)
+        request_id = str(post.get("clip_request_id") or "")
+        if request_id:
+            try:
+                record = clip_requests.get(request_id)
+            except Exception:
+                record = None
+            if record:
+                post["status"] = "saved" if record.get("obsidian_save") == "complete" else str(record.get("status") or post.get("status"))
+                if record.get("error"):
+                    post["error"] = str(record.get("error"))[:300]
+        posts.append(post)
+    item["posts"] = posts
+    item["post_count"] = len(posts)
+    item["queued_count"] = sum(1 for post in posts if post.get("clip_request_id"))
+    return item
+
+
+def _watch_run_check(target_id: str, *, queue: bool) -> Dict[str, Any]:
+    with _watch_check_lock:
+        target = _watch_store.get(target_id)
+        if not target:
+            raise KeyError(target_id)
+        checked = threads_watch.run_check(target, fetch_fn=_watch_fetch, queue_fn=_submit_clip_url, queue=queue)
+        result = checked.pop("_check", {})
+        if queue:
+            current = _watch_store.get(target_id)
+            if current is None:  # deleted while fetching
+                return {"target": None, "result": result}
+            for key in ("label", "enabled", "interval_minutes"):
+                checked[key] = current.get(key, checked.get(key))
+            _watch_store.save(checked)
+            append_service_log(
+                "webui",
+                f"watch check @{checked.get('username')}: {result.get('code')} found={result.get('posts_found')} queued={result.get('new_posts')}",
+            )
+        return {"target": _watch_public(checked), "result": result}
+
+
+def _run_due_watches() -> None:
+    now = datetime.now(timezone.utc).astimezone()
+    for target in _watch_store.list():
+        if _watch_stop.is_set():
+            return
+        if threads_watch.is_due(target, now):
+            try:
+                _watch_run_check(str(target["id"]), queue=True)
+            except Exception as error:
+                append_service_log("webui", f"watch check failed for {target.get('id')}: {error}")
+
+
+def _watch_scheduler_loop() -> None:
+    """One scheduler per data dir: an flock keeps a second process (e.g. an
+    overlapping --reload worker) idle until the first one exits."""
+    os.makedirs(_watch_store.dir, exist_ok=True)
+    lock_handle = open(os.path.join(_watch_store.dir, ".scheduler.lock"), "a+")
+    have_lock = False
+    try:
+        while not _watch_stop.is_set():
+            if not have_lock:
+                try:
+                    fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    have_lock = True
+                    append_service_log("webui", f"watch scheduler running pid={os.getpid()}")
+                except OSError:
+                    _watch_stop.wait(30)
+                    continue
+            try:
+                _run_due_watches()
+            except Exception as error:
+                append_service_log("webui", f"watch scheduler tick failed: {error}")
+            _watch_stop.wait(WATCH_TICK_SECONDS)
+    finally:
+        if have_lock:
+            try:
+                fcntl.flock(lock_handle, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        lock_handle.close()
+
+
+def _start_watch_scheduler() -> None:
+    global _watch_thread
+    if _watch_thread is not None and _watch_thread.is_alive():
+        return
+    _watch_stop.clear()
+    _watch_thread = threading.Thread(target=_watch_scheduler_loop, name="watch-scheduler", daemon=True)
+    _watch_thread.start()
+
+
+@app.on_event("startup")
+def startup_watch_scheduler() -> None:
+    if os.environ.get("AIRTYPE_DISABLE_WATCH_SCHEDULER") == "1":
+        return
+    _start_watch_scheduler()
+
+
+@app.on_event("shutdown")
+def shutdown_watch_scheduler() -> None:
+    _watch_stop.set()
+
+
+@app.get("/api/watches")
+async def list_watches():
+    targets = await asyncio.to_thread(_watch_store.list)
+    return {
+        "watches": [_watch_public(target) for target in targets],
+        "min_interval_minutes": threads_watch.MIN_INTERVAL_MINUTES,
+        "scheduler_running": bool(_watch_thread and _watch_thread.is_alive()),
+    }
+
+
+@app.post("/api/watches/probe")
+async def probe_watch(request: WatchProbeRequest):
+    """Test a username/URL before adding it. Nothing is stored or queued."""
+    try:
+        username = threads_watch.normalize_threads_username(request.target)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    target = threads_watch.new_target(username)
+    checked = await asyncio.to_thread(
+        threads_watch.run_check, target, fetch_fn=_watch_fetch, queue_fn=_submit_clip_url, queue=False
+    )
+    return {"username": username, "profile_url": threads_watch.profile_url(username), "result": checked.get("_check")}
+
+
+@app.post("/api/watches")
+async def create_watch(request: WatchCreateRequest):
+    try:
+        username = threads_watch.normalize_threads_username(request.target)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if _watch_store.find_by_username(username):
+        raise HTTPException(status_code=409, detail=f"@{username} 已經在追蹤清單裡。")
+    target = threads_watch.new_target(
+        username,
+        label=request.label,
+        interval_minutes=request.interval_minutes,
+        enabled=request.enabled,
+        queue_latest=request.queue_latest,
+    )
+    _watch_store.save(target)
+    if target["enabled"]:
+        # First check right away: records the baseline (and queues the newest
+        # N posts only when queue_latest > 0).
+        try:
+            return await asyncio.to_thread(_watch_run_check, target["id"], queue=True)
+        except KeyError:
+            pass
+    return {"target": _watch_public(target), "result": None}
+
+
+@app.patch("/api/watches/{target_id}")
+async def update_watch(target_id: str, request: WatchUpdateRequest):
+    with _watch_check_lock:
+        try:
+            target = _watch_store.get(target_id)
+        except ValueError:
+            target = None
+        if not target:
+            raise HTTPException(status_code=404, detail="Watch not found")
+        if request.label is not None:
+            target["label"] = request.label.strip() or f"@{target['username']}"
+        if request.interval_minutes is not None:
+            target["interval_minutes"] = threads_watch.clamp_interval(request.interval_minutes)
+            if target.get("last_checked_at"):
+                threads_watch.schedule_next(target, datetime.fromisoformat(target["last_checked_at"]))
+        if request.enabled is not None:
+            was_enabled = bool(target.get("enabled"))
+            target["enabled"] = bool(request.enabled)
+            if target["enabled"] and not was_enabled:
+                target["next_check_at"] = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+        target["updated_at"] = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+        _watch_store.save(target)
+    return {"target": _watch_public(target)}
+
+
+@app.delete("/api/watches/{target_id}")
+async def delete_watch(target_id: str):
+    try:
+        deleted = _watch_store.delete(target_id)
+    except ValueError:
+        deleted = False
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Watch not found")
+    return {"deleted": True}
+
+
+@app.post("/api/watches/{target_id}/test")
+async def test_watch(target_id: str):
+    """Fetch and show the latest posts without queuing or saving anything."""
+    try:
+        return await asyncio.to_thread(_watch_run_check, target_id, queue=False)
+    except (KeyError, ValueError) as error:
+        raise HTTPException(status_code=404, detail="Watch not found") from error
+
+
+@app.post("/api/watches/{target_id}/check")
+async def check_watch_now(target_id: str):
+    """Run a real check now: new posts are queued in the Obsidian Clipper."""
+    try:
+        return await asyncio.to_thread(_watch_run_check, target_id, queue=True)
+    except (KeyError, ValueError) as error:
+        raise HTTPException(status_code=404, detail="Watch not found") from error
 
 
 @app.post("/api/clip-requests/{request_id}/save")
