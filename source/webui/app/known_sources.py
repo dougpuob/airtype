@@ -128,9 +128,9 @@ def known_source_hint(url: str) -> str:
     source = match_known_source(url)
     if source:
         label = PIPELINE_LABELS.get(source.pipeline, source.pipeline)
-        return f"此連結屬於{label}支援的來源（{source.host}），請改用{label}。"
+        return f"This URL is a {label} source ({source.host}). Use {label} instead."
     if is_shorts_url(url) or has_media_file_extension(url):
-        return "此連結是媒體檔或影片連結，請改用 V-to-Text。"
+        return "This URL is a media file or video link. Use V-to-Text instead."
     return ""
 
 

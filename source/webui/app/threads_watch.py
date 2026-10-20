@@ -61,20 +61,20 @@ def normalize_threads_username(value: str) -> str:
     """Accept ``@name``, ``name`` or a profile/post URL; return ``name``."""
     text = str(value or "").strip()
     if not text:
-        raise ValueError("請輸入 Threads 帳號或個人頁網址。")
+        raise ValueError("Enter a Threads username or profile URL.")
     if re.match(r"^(https?://)?(www\.)?threads\.(com|net)(/|$)", text, re.I):
         if not re.match(r"^https?://", text, re.I):
             text = "https://" + text
         parsed = urllib.parse.urlparse(text)
         if (parsed.hostname or "").lower() not in _THREADS_HOSTS:
-            raise ValueError("只支援 threads.com / threads.net 網址。")
+            raise ValueError("Only threads.com / threads.net URLs are supported.")
         first = urllib.parse.unquote(parsed.path).strip("/").split("/")[0]
         if not first.startswith("@"):
-            raise ValueError("網址裡找不到 @帳號，例如 https://www.threads.com/@name")
+            raise ValueError("Could not find an @username in the URL, for example https://www.threads.com/@name")
         text = first
     name = text.lstrip("@").strip()
     if not _USERNAME.match(name):
-        raise ValueError(f"「{value}」不是有效的 Threads 帳號（只能有英數字、底線與句點）。")
+        raise ValueError(f"“{value}” is not a valid Threads username (letters, numbers, underscores, and periods only).")
     return name.lower()
 
 
@@ -220,36 +220,36 @@ def fetch_profile_posts(
         try:
             status, final_url, page = http_get(url, cookie_value, timeout)
         except Exception as error:  # network error
-            last = {"code": "network", "message": f"連不上 Threads：{error}"}
+            last = {"code": "network", "message": f"Could not reach Threads: {error}"}
             errors.append(last)
             continue
         if status == 404:
-            last = {"code": "not_found", "message": f"找不到帳號 @{username}（HTTP 404）。"}
+            last = {"code": "not_found", "message": f"Account @{username} was not found (HTTP 404)."}
             errors.append(last)
             continue
         if status >= 400:
-            last = {"code": "http_error", "message": f"Threads 回應 HTTP {status}。"}
+            last = {"code": "http_error", "message": f"Threads returned HTTP {status}."}
             errors.append(last)
             continue
         if "/login" in urllib.parse.urlparse(final_url).path:
-            last = {"code": "login_wall", "message": f"Threads 把 @{username} 導到登入頁：通常代表帳號不存在或拼錯；若是私人／限制帳號，需先準備已登入的 Threads cookies（Settings 的 yt-dlp cookies，或既有的 storage-state.json）。"}
+            last = {"code": "login_wall", "message": f"Threads sent @{username} to the login page: the account is usually missing or misspelled. For a private or restricted account, provide signed-in Threads cookies (yt-dlp cookies in Settings, or an existing storage-state.json)."}
             errors.append(last)
             continue
         parsed = parse_profile_page(page, username)
         if parsed["posts"]:
             return {"username": username, "profile_url": url, "fetch": mode, "posts": parsed["posts"]}
         if not parsed["profile_seen"]:
-            last = {"code": "not_found", "message": f"頁面裡沒有 @{username} 的個人資料，帳號可能不存在、已改名或是私人帳號。"}
+            last = {"code": "not_found", "message": f"The page has no profile for @{username}. The account may be missing, renamed, or private."}
         else:
             last = {
                 "code": "no_posts",
-                "message": "找到帳號，但頁面裡沒有公開貼文（可能沒有貼文、是私人帳號，或需要登入才看得到）。",
+                "message": "The account exists, but the page has no public posts (it may have none, be private, or require login).",
             }
         errors.append(last)
     priority = ["not_found", "no_posts", "login_wall", "http_error", "network"]
     errors = [e for e in errors if e] or [{}]
     best = min(errors, key=lambda e: priority.index(e["code"]) if e.get("code") in priority else len(priority))
-    raise WatchFetchError(best.get("code", "unknown"), best.get("message", "無法讀取 Threads 個人頁。"))
+    raise WatchFetchError(best.get("code", "unknown"), best.get("message", "Could not read the Threads profile."))
 
 
 # --------------------------------------------------------------------------- #
@@ -391,7 +391,7 @@ def run_check(
         result.update(code=error.code, message=str(error), posts_found=0, new_posts=0, latest=[])
         return _finish(target, result, current, queue)
     except Exception as error:
-        result.update(code="unknown", message=f"檢查失敗：{error}", posts_found=0, new_posts=0, latest=[])
+        result.update(code="unknown", message=f"Check failed: {error}", posts_found=0, new_posts=0, latest=[])
         return _finish(target, result, current, queue)
 
     posts = fetched.get("posts") or []
@@ -420,17 +420,19 @@ def run_check(
                 queued += _queue_into(entry, queue_fn, failures)
             target.setdefault("posts", []).append(entry)
         target["baseline_done"] = True
-        result["message"] = f"首次檢查：找到 {len(posts)} 篇，記為基準" + (f"，並排入最新 {queued} 篇" if queued else "，不排入佇列")
+        result["message"] = f"First check: found {len(posts)} posts and recorded a baseline" + (
+            f", queued the latest {queued}" if queued else ", nothing queued"
+        )
     else:
         for post in fresh:
             entry = _log_entry(post, stamp, baseline=False)
             queued += _queue_into(entry, queue_fn, failures)
             target.setdefault("posts", []).append(entry)
-        result["message"] = f"找到 {len(posts)} 篇，其中 {len(fresh)} 篇是新的" + (f"，已排入 {queued} 篇" if fresh else "")
+        result["message"] = f"Found {len(posts)} posts, {len(fresh)} new" + (f", queued {queued}" if fresh else "")
     if failures:
         result["ok"] = False
         result["code"] = "queue_failed"
-        result["message"] += f"；{len(failures)} 篇排入失敗：{failures[0]}"
+        result["message"] += f"; {len(failures)} failed to queue: {failures[0]}"
     result["new_posts"] = queued
     target["posts"] = (target.get("posts") or [])[-MAX_LOG_POSTS:]
     return _finish(target, result, current, queue)
@@ -438,8 +440,8 @@ def run_check(
 
 def _test_message(target: dict[str, Any], posts: list[dict[str, Any]], fresh: list[dict[str, Any]]) -> str:
     if not target.get("baseline_done"):
-        return f"設定正確：找到 {len(posts)} 篇貼文。第一次正式檢查會把它們記為基準，不會排入佇列。"
-    return f"設定正確：找到 {len(posts)} 篇貼文，其中 {len(fresh)} 篇尚未處理（測試不會排入佇列）。"
+        return f"Settings look good: found {len(posts)} posts. The first real check will record them as a baseline and will not queue them."
+    return f"Settings look good: found {len(posts)} posts, {len(fresh)} not processed yet (test will not queue them)."
 
 
 def _log_entry(post: dict[str, Any], stamp: str, *, baseline: bool) -> dict[str, Any]:

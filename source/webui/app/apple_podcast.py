@@ -89,12 +89,12 @@ def resolve_episode(
     """
     parsed = parse_episode_url(url)
     if not parsed:
-        raise AppleEpisodeError("這不是 Apple Podcasts 的單集連結。")
+        raise AppleEpisodeError("This is not an Apple Podcasts episode URL.")
     show_id, episode_id, slug = parsed
     payload = (lookup or _lookup_show)(show_id)
     results = payload.get("results") if isinstance(payload, dict) else None
     if not isinstance(results, list):
-        raise AppleEpisodeError("iTunes 沒有回傳這一集的節目資料。")
+        raise AppleEpisodeError("iTunes did not return show data for this episode.")
 
     feed_url = ""
     for item in results:
@@ -108,11 +108,11 @@ def resolve_episode(
             feed_url = item["feedUrl"].strip()
 
     if not feed_url:
-        raise AppleEpisodeError("找不到這一集的音檔或節目敘述。")
+        raise AppleEpisodeError("Could not find audio or show notes for this episode.")
     feed_xml = (fetch_feed or _fetch_text)(feed_url)
     episode = _episode_from_feed(url, show_id, episode_id, slug, feed_xml)
     if not episode:
-        raise AppleEpisodeError("找不到這一集的音檔或節目敘述。")
+        raise AppleEpisodeError("Could not find audio or show notes for this episode.")
     return episode
 
 
@@ -214,9 +214,9 @@ def _lookup_show(show_id: str) -> dict:
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as error:
-        raise AppleEpisodeError("iTunes 沒有回傳這一集的節目資料。") from error
+        raise AppleEpisodeError("iTunes did not return show data for this episode.") from error
     if not isinstance(payload, dict):
-        raise AppleEpisodeError("iTunes 沒有回傳這一集的節目資料。")
+        raise AppleEpisodeError("iTunes did not return show data for this episode.")
     return payload
 
 
@@ -229,7 +229,7 @@ def _fetch_text(url: str) -> str:
         with urllib.request.urlopen(request, timeout=30) as response:
             return response.read().decode("utf-8", errors="replace")
     except Exception as error:
-        raise AppleEpisodeError(f"無法讀取節目資料：{error}") from error
+        raise AppleEpisodeError(f"Could not load show data: {error}") from error
 
 
 def _plain_text(value: str) -> str:

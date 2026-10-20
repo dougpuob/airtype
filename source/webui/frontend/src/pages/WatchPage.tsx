@@ -47,14 +47,14 @@ import { formatDateTime } from "../utils/format";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
 const statusChip: Record<string, { label: string; color: "default" | "info" | "success" | "error" | "warning" }> = {
-  baseline: { label: "基準（未排入）", color: "default" },
-  pending: { label: "待排入", color: "warning" },
-  queued: { label: "已排入", color: "info" },
-  running: { label: "處理中", color: "info" },
-  completed: { label: "待存檔", color: "success" },
-  saved: { label: "已存進 Obsidian", color: "success" },
-  failed: { label: "失敗", color: "error" },
-  queue_failed: { label: "排入失敗", color: "error" }
+  baseline: { label: "Baseline (not queued)", color: "default" },
+  pending: { label: "Pending", color: "warning" },
+  queued: { label: "Queued", color: "info" },
+  running: { label: "Processing", color: "info" },
+  completed: { label: "Ready to save", color: "success" },
+  saved: { label: "Saved to Obsidian", color: "success" },
+  failed: { label: "Failed", color: "error" },
+  queue_failed: { label: "Queue failed", color: "error" }
 };
 
 function errorText(error: unknown) {
@@ -62,9 +62,9 @@ function errorText(error: unknown) {
 }
 
 function mediaText(post: { text_length: number; image_count: number; video_count: number }) {
-  const parts = [`${post.text_length} 字`];
-  if (post.image_count) parts.push(`${post.image_count} 圖`);
-  if (post.video_count) parts.push(`${post.video_count} 影片`);
+  const parts = [`${post.text_length} chars`];
+  if (post.image_count) parts.push(`${post.image_count} images`);
+  if (post.video_count) parts.push(`${post.video_count} videos`);
   return parts.join(" · ");
 }
 
@@ -72,18 +72,18 @@ function CheckResultView({ result }: { result: WatchCheckResult }) {
   return (
     <Stack spacing={1}>
       <Alert severity={result.ok ? "success" : "error"} variant="outlined">
-        {result.dry_run ? "【測試】" : ""}
+        {result.dry_run ? "[Test] " : ""}
         {result.message}
-        {result.fetch ? `（讀取方式：${result.fetch === "cookies" ? "登入 cookies" : "公開頁面"}）` : ""}
+        {result.fetch ? ` (via ${result.fetch === "cookies" ? "signed-in cookies" : "public page"})` : ""}
       </Alert>
       {result.latest?.length ? (
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>貼文</TableCell>
-              <TableCell sx={{ whiteSpace: "nowrap" }}>發文時間</TableCell>
-              <TableCell sx={{ whiteSpace: "nowrap" }}>內容</TableCell>
-              <TableCell align="right">狀態</TableCell>
+              <TableCell>Post</TableCell>
+              <TableCell sx={{ whiteSpace: "nowrap" }}>Posted</TableCell>
+              <TableCell sx={{ whiteSpace: "nowrap" }}>Content</TableCell>
+              <TableCell align="right">Status</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -99,7 +99,7 @@ function CheckResultView({ result }: { result: WatchCheckResult }) {
                 <TableCell sx={{ whiteSpace: "nowrap" }}>{formatDateTime(post.post_created_at ?? undefined)}</TableCell>
                 <TableCell sx={{ whiteSpace: "nowrap" }}>{mediaText(post)}</TableCell>
                 <TableCell align="right">
-                  <Chip size="small" variant="outlined" label={post.seen ? "已看過" : "新"} color={post.seen ? "default" : "primary"} />
+                  <Chip size="small" variant="outlined" label={post.seen ? "Seen" : "New"} color={post.seen ? "default" : "primary"} />
                 </TableCell>
               </TableRow>
             ))}
@@ -131,9 +131,10 @@ function AddWatchPanel({ minInterval }: { minInterval: number }) {
     <WorkspacePanel>
       <Stack spacing={2}>
         <Box>
-          <Typography variant="h3">新增追蹤</Typography>
+          <Typography variant="h3">Add a watch</Typography>
           <Typography variant="caption" color="text.secondary">
-            貼上 Threads 帳號（@name）或個人頁網址。新增後會先記下目前的貼文當基準，之後有新貼文才排進 Obsidian Clipper，存檔仍由你手動按。
+            Paste a Threads username (@name) or profile URL. The first check records current posts as a baseline;
+            later new posts are queued into Obsidian Clipper. You still save them yourself.
           </Typography>
         </Box>
         <Grid container spacing={2}>
@@ -141,24 +142,24 @@ function AddWatchPanel({ minInterval }: { minInterval: number }) {
             <TextField
               fullWidth
               size="small"
-              label="Threads 帳號或網址"
-              placeholder="@n.ina3373 或 https://www.threads.com/@n.ina3373"
+              label="Threads username or URL"
+              placeholder="@n.ina3373 or https://www.threads.com/@n.ina3373"
               value={target}
               onChange={(event) => setTarget(event.target.value)}
             />
           </Grid>
           <Grid size={{ xs: 12, md: 3 }}>
-            <TextField fullWidth size="small" label="名稱（可留空）" value={label} onChange={(event) => setLabel(event.target.value)} />
+            <TextField fullWidth size="small" label="Label (optional)" value={label} onChange={(event) => setLabel(event.target.value)} />
           </Grid>
           <Grid size={{ xs: 6, md: 2 }}>
             <TextField
               fullWidth
               size="small"
               type="number"
-              label="檢查間隔（分鐘）"
+              label="Interval (minutes)"
               value={interval}
               error={intervalError}
-              helperText={intervalError ? `最少 ${minInterval} 分鐘` : " "}
+              helperText={intervalError ? `Minimum ${minInterval} minutes` : " "}
               slotProps={{ htmlInput: { min: minInterval, step: 15 } }}
               onChange={(event) => setInterval(Number(event.target.value))}
             />
@@ -168,16 +169,16 @@ function AddWatchPanel({ minInterval }: { minInterval: number }) {
               fullWidth
               size="small"
               type="number"
-              label="同時排入最新 N 篇"
+              label="Queue latest N posts"
               value={queueLatest}
-              helperText="0 = 只記基準"
+              helperText="0 = baseline only"
               slotProps={{ htmlInput: { min: 0, max: 10 } }}
               onChange={(event) => setQueueLatest(Math.max(0, Math.min(10, Number(event.target.value) || 0)))}
             />
           </Grid>
         </Grid>
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-          <FormControlLabel control={<Switch checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />} label="啟用排程" />
+          <FormControlLabel control={<Switch checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />} label="Enable schedule" />
           <Box sx={{ flex: 1 }} />
           <Button
             variant="outlined"
@@ -185,7 +186,7 @@ function AddWatchPanel({ minInterval }: { minInterval: number }) {
             disabled={!target.trim() || probe.isPending}
             onClick={() => probe.mutate(target)}
           >
-            測試
+            Test
           </Button>
           <Button
             variant="contained"
@@ -193,7 +194,7 @@ function AddWatchPanel({ minInterval }: { minInterval: number }) {
             disabled={!target.trim() || intervalError || create.isPending}
             onClick={() => void handleCreate().catch(() => undefined)}
           >
-            新增
+            Add
           </Button>
         </Stack>
         {probe.isError ? <Alert severity="error">{errorText(probe.error)}</Alert> : null}
@@ -201,7 +202,7 @@ function AddWatchPanel({ minInterval }: { minInterval: number }) {
         {probe.data ? (
           <Stack spacing={1}>
             <Typography variant="body2">
-              解析為{" "}
+              Parsed as{" "}
               <Link href={probe.data.profile_url} target="_blank" rel="noreferrer">
                 @{probe.data.username}
               </Link>
@@ -221,17 +222,17 @@ function EditDialog({ target, minInterval, onClose }: { target: WatchTarget; min
   const intervalError = interval < minInterval;
   return (
     <Dialog open onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle>編輯 @{target.username}</DialogTitle>
+      <DialogTitle>Edit @{target.username}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
-          <TextField size="small" label="名稱" value={label} onChange={(event) => setLabel(event.target.value)} />
+          <TextField size="small" label="Label" value={label} onChange={(event) => setLabel(event.target.value)} />
           <TextField
             size="small"
             type="number"
-            label="檢查間隔（分鐘）"
+            label="Interval (minutes)"
             value={interval}
             error={intervalError}
-            helperText={intervalError ? `最少 ${minInterval} 分鐘` : " "}
+            helperText={intervalError ? `Minimum ${minInterval} minutes` : " "}
             slotProps={{ htmlInput: { min: minInterval, step: 15 } }}
             onChange={(event) => setInterval(Number(event.target.value))}
           />
@@ -239,13 +240,13 @@ function EditDialog({ target, minInterval, onClose }: { target: WatchTarget; min
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>取消</Button>
+        <Button onClick={onClose}>Cancel</Button>
         <Button
           variant="contained"
           disabled={intervalError || update.isPending}
           onClick={() => void update.mutateAsync({ id: target.id, label, interval_minutes: interval }).then(onClose, () => undefined)}
         >
-          儲存
+          Save
         </Button>
       </DialogActions>
     </Dialog>
@@ -253,16 +254,16 @@ function EditDialog({ target, minInterval, onClose }: { target: WatchTarget; min
 }
 
 function PostLogTable({ posts }: { posts: WatchPostLog[] }) {
-  if (!posts.length) return <Typography color="text.secondary">還沒有紀錄。</Typography>;
+  if (!posts.length) return <Typography color="text.secondary">No posts recorded yet.</Typography>;
   return (
     <Table size="small">
       <TableHead>
         <TableRow>
-          <TableCell>貼文</TableCell>
-          <TableCell sx={{ whiteSpace: "nowrap" }}>發文時間</TableCell>
-          <TableCell sx={{ whiteSpace: "nowrap" }}>發現 / 排入</TableCell>
-          <TableCell sx={{ whiteSpace: "nowrap" }}>內容</TableCell>
-          <TableCell align="right">狀態</TableCell>
+          <TableCell>Post</TableCell>
+          <TableCell sx={{ whiteSpace: "nowrap" }}>Posted</TableCell>
+          <TableCell sx={{ whiteSpace: "nowrap" }}>Found / queued</TableCell>
+          <TableCell sx={{ whiteSpace: "nowrap" }}>Content</TableCell>
+          <TableCell align="right">Status</TableCell>
         </TableRow>
       </TableHead>
       <TableBody>
@@ -332,17 +333,17 @@ function WatchCard({ target, minInterval }: { target: WatchTarget; minInterval: 
                 @{target.username}
               </Link>
               <Chip size="small" variant="outlined" label="Threads" />
-              <Chip size="small" variant="outlined" label={`每 ${target.interval_minutes} 分鐘`} />
-              {!target.enabled ? <Chip size="small" label="已停用" /> : null}
+              <Chip size="small" variant="outlined" label={`Every ${target.interval_minutes} min`} />
+              {!target.enabled ? <Chip size="small" label="Disabled" /> : null}
             </Stack>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              上次檢查 {formatDateTime(target.last_checked_at ?? undefined)} · 下次檢查{" "}
-              {target.enabled ? formatDateTime(target.next_check_at ?? undefined) : "--（已停用）"} · 共記錄 {target.post_count} 篇，已排入{" "}
-              {target.queued_count} 篇
+              Last check {formatDateTime(target.last_checked_at ?? undefined)} · Next check{" "}
+              {target.enabled ? formatDateTime(target.next_check_at ?? undefined) : "-- (disabled)"} · {target.post_count}{" "}
+              posts recorded, {target.queued_count} queued
             </Typography>
           </Box>
           <Stack direction="row" spacing={0.5} alignItems="center">
-            <Tooltip title={target.enabled ? "停用排程" : "啟用排程"}>
+            <Tooltip title={target.enabled ? "Disable schedule" : "Enable schedule"}>
               <Switch
                 checked={target.enabled}
                 disabled={update.isPending}
@@ -356,9 +357,9 @@ function WatchCard({ target, minInterval }: { target: WatchTarget; minInterval: 
               disabled={run.isPending}
               onClick={() => runCheck("test")}
             >
-              測試
+              Test
             </Button>
-            <Tooltip title="現在就檢查一次，新貼文會排進 Obsidian Clipper">
+            <Tooltip title="Check now. New posts will be queued into Obsidian Clipper.">
               <span>
                 <Button
                   size="small"
@@ -367,7 +368,7 @@ function WatchCard({ target, minInterval }: { target: WatchTarget; minInterval: 
                   disabled={run.isPending}
                   onClick={() => runCheck("check")}
                 >
-                  立即檢查
+                  Check now
                 </Button>
               </span>
             </Tooltip>
@@ -384,12 +385,12 @@ function WatchCard({ target, minInterval }: { target: WatchTarget; minInterval: 
         </Stack>
         {result ? (
           <Alert severity={result.ok ? "success" : "error"} variant="outlined" sx={{ py: 0 }}>
-            {formatDateTime(result.checked_at)}：{result.message}
-            {result.ok ? `（本次新貼文 ${result.new_posts} 篇）` : ""}
+            {formatDateTime(result.checked_at)}: {result.message}
+            {result.ok ? ` (${result.new_posts} new posts this run)` : ""}
           </Alert>
         ) : (
           <Alert severity="info" variant="outlined" sx={{ py: 0 }}>
-            尚未檢查。{target.enabled ? "排程會在一分鐘內做第一次檢查（記為基準）。" : "啟用後才會排程檢查。"}
+            Not checked yet. {target.enabled ? "The schedule will run the first check within a minute and record a baseline." : "Enable the schedule to start checking."}
           </Alert>
         )}
         {run.isError ? <Alert severity="error">{errorText(run.error)}</Alert> : null}
@@ -398,7 +399,7 @@ function WatchCard({ target, minInterval }: { target: WatchTarget; minInterval: 
             {lastRun ? <CheckResultView result={lastRun} /> : null}
             <Box>
               <Typography variant="body2" fontWeight={700} sx={{ mb: 0.5 }}>
-                貼文紀錄
+                Post log
               </Typography>
               <PostLogTable posts={target.posts} />
             </Box>
@@ -407,14 +408,16 @@ function WatchCard({ target, minInterval }: { target: WatchTarget; minInterval: 
       </Stack>
       {editing ? <EditDialog target={target} minInterval={minInterval} onClose={() => setEditing(false)} /> : null}
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)}>
-        <DialogTitle>刪除追蹤？</DialogTitle>
+        <DialogTitle>Delete this watch?</DialogTitle>
         <DialogContent>
-          <Typography>會刪除 @{target.username} 的設定與貼文紀錄；已排進 Obsidian Clipper 的項目不受影響。</Typography>
+          <Typography>
+            This removes @{target.username}'s settings and post log. Items already queued in Obsidian Clipper are not affected.
+          </Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConfirmDelete(false)}>取消</Button>
+          <Button onClick={() => setConfirmDelete(false)}>Cancel</Button>
           <Button color="error" variant="contained" disabled={remove.isPending} onClick={() => remove.mutate(target.id)}>
-            刪除
+            Delete
           </Button>
         </DialogActions>
       </Dialog>
@@ -426,14 +429,14 @@ export function WatchPage() {
   const watches = useWatchesQuery();
   const minInterval = watches.data?.min_interval_minutes ?? 15;
   return (
-    <PageScaffold title="Watch 追蹤" eyebrow="Scheduled checks">
+    <PageScaffold title="Watch" eyebrow="Scheduled checks">
       <AddWatchPanel minInterval={minInterval} />
-      {watches.isError ? <Alert severity="error">無法讀取追蹤清單：{errorText(watches.error)}</Alert> : null}
+      {watches.isError ? <Alert severity="error">Could not load watches: {errorText(watches.error)}</Alert> : null}
       {watches.data && !watches.data.scheduler_running ? (
-        <Alert severity="warning">排程目前沒有在這個 WebUI 程序裡執行，只能手動檢查。</Alert>
+        <Alert severity="warning">The scheduler is not running in this WebUI process. You can only check manually.</Alert>
       ) : null}
       {watches.data?.watches.length === 0 ? (
-        <Typography color="text.secondary">還沒有追蹤任何帳號。</Typography>
+        <Typography color="text.secondary">No accounts are being watched yet.</Typography>
       ) : null}
       {watches.data?.watches.map((target) => <WatchCard key={target.id} target={target} minInterval={minInterval} />)}
     </PageScaffold>

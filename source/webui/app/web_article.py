@@ -62,14 +62,14 @@ def blocked_host_reason(url: str) -> str:
     try:
         parsed = urllib.parse.urlparse(url)
     except ValueError:
-        return "無法解析這個網址。"
+        return "Could not parse this URL."
     host = (parsed.hostname or "").lower()
     if not host:
-        return "網址沒有可解析的主機名稱。"
+        return "The URL has no parseable hostname."
     if host in BLOCKED_HOSTS:
-        return f"{host} 不能透過網頁文章管線抓取。"
+        return f"{host} cannot be fetched through the web-article pipeline."
     if host.endswith(BLOCKED_HOST_SUFFIXES) or BLOCKED_HOST_PATTERN.match(host):
-        return f"私有或本機位址（{host}）不能透過網頁文章管線抓取。"
+        return f"Private or local address ({host}) cannot be fetched through the web-article pipeline."
     return ""
 
 
@@ -172,10 +172,10 @@ def fetch_html(url: str, *, timeout_seconds: int = 60) -> str:
                 target, headers=headers, timeout=timeout_seconds, allow_redirects=True
             )
         if response.status_code >= 400:
-            raise RuntimeError(f"網頁回應 {response.status_code}：{target}")
+            raise RuntimeError(f"Page returned {response.status_code}: {target}")
         html = response.text
         if not (html or "").strip():
-            raise RuntimeError(f"網頁內容是空的：{target}")
+            raise RuntimeError(f"Page content is empty: {target}")
         return html
     except ImportError:
         try:
@@ -183,20 +183,20 @@ def fetch_html(url: str, *, timeout_seconds: int = 60) -> str:
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 html = response.read().decode("utf-8", errors="replace")
                 if not html.strip():
-                    raise RuntimeError(f"網頁內容是空的：{target}")
+                    raise RuntimeError(f"Page content is empty: {target}")
                 return html
         except urllib.error.HTTPError as error:
-            raise RuntimeError(f"網頁回應 {error.code}：{error.reason}") from error
+            raise RuntimeError(f"Page returned {error.code}: {error.reason}") from error
         except urllib.error.URLError as error:
-            raise RuntimeError(f"無法連上這個網頁：{error.reason}") from error
+            raise RuntimeError(f"Could not reach this page: {error.reason}") from error
         except RuntimeError:
             raise
         except Exception as error:
-            raise RuntimeError(f"抓取文章失敗：{error}") from error
+            raise RuntimeError(f"Article capture failed: {error}") from error
     except RuntimeError:
         raise
     except Exception as error:
-        raise RuntimeError(f"抓取文章失敗：{error}") from error
+        raise RuntimeError(f"Article capture failed: {error}") from error
 
 
 def _extract_page_title(html: str, url: str = "") -> str:
@@ -233,7 +233,7 @@ def html_to_markdown(html: str, *, url: str = "") -> str:
     try:
         import trafilatura
     except ImportError as error:
-        raise RuntimeError("尚未安裝 trafilatura，無法擷取網頁文章。") from error
+        raise RuntimeError("trafilatura is not installed, so web articles cannot be captured.") from error
 
     markdown = trafilatura.extract(
         html,
@@ -248,7 +248,7 @@ def html_to_markdown(html: str, *, url: str = "") -> str:
     )
     if not (markdown or "").strip():
         raise RuntimeError(
-            "無法從這個網頁擷取文章內容。這個網站可能需要登入、阻擋擷取，或主要是動態載入。"
+            "Could not extract an article from this page. The site may require login, block extraction, or load most of its content dynamically."
         )
 
     title = _extract_page_title(html, url)
@@ -277,10 +277,10 @@ def _read_capped(chunks, max_bytes: int, url: str) -> bytes:
         buffer.extend(chunk)
         if len(buffer) > max_bytes:
             raise RuntimeError(
-                f"圖片超過大小上限（{max_bytes // (1024 * 1024)}MB）：{url}"
+                f"Image exceeds the size limit ({max_bytes // (1024 * 1024)}MB): {url}"
             )
     if not buffer:
-        raise RuntimeError(f"圖片內容是空的：{url}")
+        raise RuntimeError(f"Image content is empty: {url}")
     return bytes(buffer)
 
 
@@ -308,7 +308,7 @@ def download_image(
             url, headers=headers, timeout=timeout_seconds, stream=True
         )
         if response.status_code >= 400:
-            raise RuntimeError(f"圖片伺服器回應 {response.status_code}：{url}")
+            raise RuntimeError(f"Image server returned {response.status_code}: {url}")
         content_type = _clean_content_type(response.headers.get("Content-Type"))
         data = _read_capped(response.iter_content(chunk_size=64 * 1024), max_bytes, url)
     except ImportError:
@@ -318,15 +318,15 @@ def download_image(
                 content_type = _clean_content_type(response.headers.get("Content-Type"))
                 data = _read_capped(iter(lambda: response.read(64 * 1024), b""), max_bytes, url)
         except urllib.error.HTTPError as error:
-            raise RuntimeError(f"圖片下載失敗（HTTP {error.code}）：{url}") from error
+            raise RuntimeError(f"Image download failed (HTTP {error.code}): {url}") from error
         except RuntimeError:
             raise
         except Exception as error:
-            raise RuntimeError(f"圖片下載失敗：{url}（{error}）") from error
+            raise RuntimeError(f"Image download failed: {url} ({error})") from error
     except RuntimeError:
         raise
     except Exception as error:
-        raise RuntimeError(f"圖片下載失敗：{url}（{error}）") from error
+        raise RuntimeError(f"Image download failed: {url} ({error})") from error
 
     content_type = _ensure_image_content_type(url, content_type)
     return data, content_type
@@ -342,7 +342,7 @@ def _ensure_image_content_type(url: str, content_type: str) -> str:
     guessed = mimetypes.guess_type(url)[0] or ""
     if guessed.startswith("image/"):
         return guessed
-    raise RuntimeError(f"連結不是圖片（{content_type or '未知類型'}）：{url}")
+    raise RuntimeError(f"URL is not an image ({content_type or 'unknown type'}): {url}")
 
 
 def image_filename(index: int, content_type: str) -> str:
@@ -367,7 +367,7 @@ def _validated_note_guid(value: str) -> str:
     try:
         return str(uuid.UUID(trimmed))
     except (ValueError, AttributeError, TypeError) as error:
-        raise ValueError("GUID 必須是有效的 UUID 格式。") from error
+        raise ValueError("GUID must be a valid UUID.") from error
 
 
 def store_note_media(
@@ -405,12 +405,12 @@ def store_note_media(
     images: list[dict[str, Any]] = []
     warnings: list[str] = []
     if image_urls and not client.configured:
-        warnings.append("尚未設定 Immich（server_url / api_key），圖片保留原始連結。")
+        warnings.append("Immich is not configured (server_url / api_key); keeping original image URLs.")
 
     total = len(image_urls)
     asset_ids: list[str] = []
     for index, image_url in enumerate(image_urls):
-        progress(20 + int(35 * (index / max(total, 1))), f"處理圖片 {index + 1}/{total}…")
+        progress(20 + int(35 * (index / max(total, 1))), f"Processing image {index + 1}/{total}…")
         if not client.configured:
             break
         try:
@@ -439,11 +439,11 @@ def store_note_media(
                 "duplicate": bool(uploaded.get("duplicate")),
             }
         except Exception as error:
-            warnings.append(f"圖片上傳失敗，保留原始連結：{image_url}（{error}）")
+            warnings.append(f"Image upload failed, keeping original URL: {image_url} ({error})")
             record = {"url": image_url, "asset_id": "", "status": "remote", "warning": str(error)}
         images.append(record)
 
-    progress(60, "建立 GUID 標籤與分享連結…")
+    progress(60, "Creating GUID tag and share link…")
     share_url = ""
     album_id = ""
     mapping: dict[str, str] = {}
@@ -459,7 +459,7 @@ def store_note_media(
             if create_album and title:
                 album_id = client.create_album(title, asset_ids)
         except ImmichError as error:
-            warnings.append(f"Immich 標籤或分享連結建立失敗：{error}")
+            warnings.append(f"Immich tag or share link failed: {error}")
 
     for record in images:
         embedded = mapping.get(record.get("url"))
@@ -535,7 +535,7 @@ def start_job(
     except ValueError:
         parsed = None
     if parsed is None or parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("URL 必須以 http:// 或 https:// 開頭。")
+        raise ValueError("URL must start with http:// or https://.")
     source = known_sources.match_known_source(url)
     if source:
         raise KnownSourceError(known_sources.known_source_hint(url))
@@ -550,7 +550,7 @@ def start_job(
         "url": url,
         "status": "queued",
         "progress": 0,
-        "message": "排隊中",
+        "message": "Queued",
         "guid": note_guid,
         "title": "",
         "markdown": "",
@@ -595,7 +595,7 @@ def _run_job(job_id: str, url: str, options: dict[str, Any]) -> None:
         update(progress=percent, message=message)
 
     try:
-        progress(5, "擷取網頁文章…")
+        progress(5, "Capturing article…")
         markdown = fetch_markdown(
             url,
             timeout_seconds=options["timeout_seconds"],
@@ -603,14 +603,14 @@ def _run_job(job_id: str, url: str, options: dict[str, Any]) -> None:
         guid = options["guid"]
         title = extract_title(markdown)
         update(guid=guid, title=title)
-        progress(20, "文章擷取完成")
+        progress(20, "Article captured")
 
         warnings: list[str] = []
         body_chars = article_body_chars(markdown)
         if body_chars < SHORT_BODY_CHARS:
             warnings.append(
-                f"只抓到極少的內文（{body_chars} 字，多半只有標題）。"
-                "這個網站可能是動態載入、需要登入，或有擷取保護。"
+                f"Captured very little body text ({body_chars} characters, mostly the title). "
+                "This site may load content dynamically, require login, or block extraction."
             )
 
         image_urls = extract_image_urls(markdown, base_url=url)
@@ -633,13 +633,13 @@ def _run_job(job_id: str, url: str, options: dict[str, Any]) -> None:
             if stored:
                 stored["images"] = [dict(item) for item in media["images"]]
 
-        progress(85, "重寫筆記中的圖片連結…")
+        progress(85, "Rewriting image links in the note…")
         mapping = {
             record["url"]: record["embedded_url"]
             for record in media["images"]
             if record.get("embedded_url")
         }
         final_markdown = rewrite_image_links(markdown, mapping)
-        update(status="completed", progress=100, message="完成", markdown=final_markdown, warnings=warnings)
+        update(status="completed", progress=100, message="Completed", markdown=final_markdown, warnings=warnings)
     except Exception as error:
-        update(status="error", message="失敗", error=str(error))
+        update(status="error", message="Failed", error=str(error))

@@ -96,8 +96,8 @@ class UsageStatsTests(unittest.TestCase):
         self.assertEqual(sites["Threads"]["total"], 1)
         self.assertEqual(sites["example.com"]["cancelled"], 1)
         reasons = {item["reason"]: item["count"] for item in captures["failure_reasons"]}
-        self.assertEqual(reasons["找不到影片格式 (No video formats found)"], 1)
-        self.assertEqual(reasons["使用者停止"], 1)
+        self.assertEqual(reasons["No video formats found"], 1)
+        self.assertEqual(reasons["Stopped by user"], 1)
         self.assertEqual(len(captures["by_day"]), 7)
         self.assertEqual(stats["ime"]["count"], 1)
         self.assertEqual(stats["ime"]["total_duration_seconds"], 5.5)

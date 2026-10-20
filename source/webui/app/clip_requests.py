@@ -30,8 +30,8 @@ def configure(data_dir: str) -> None:
             if record.get("status") in {"queued", "running"}:
                 record["status"] = "failed"
                 record["progress"] = 100
-                record["message"] = "失敗"
-                record["error"] = record.get("error") or "伺服器重啟時這筆已中斷"
+                record["message"] = "Failed"
+                record["error"] = record.get("error") or "Interrupted when the server restarted"
                 record["updated_at"] = _now()
                 _write(record)
 
@@ -53,7 +53,7 @@ def create(*, kind: str, source: str, now: Optional[datetime] = None) -> dict[st
             "status": "queued",
             "step": 0,
             "progress": 0,
-            "message": "排隊中",
+            "message": "Queued",
             "error": "",
             "obsidian_save": "pending",
             "published": False,
@@ -136,8 +136,8 @@ def request_cancel(request_id: str) -> Optional[dict[str, Any]]:
         if record.get("status") == "queued":
             record["status"] = "failed"
             record["progress"] = 100
-            record["message"] = "失敗"
-            record["error"] = "已停止"
+            record["message"] = "Failed"
+            record["error"] = "Stopped by user"
             record["published"] = True
             record["updated_at"] = _now()
             _write(record)

@@ -77,9 +77,9 @@ def posts_to_markdown(posts: Iterable[Any]) -> str:
     return "\n\n".join(blocks)
 
 
-WARNING_NOT_OP_CHAIN = "不是樓主連發，沒有收連續篇"
-WARNING_UNCONFIRMED_OP = "無法確認樓主，這串可能不完整"
-WARNING_INCOMPLETE = "這串可能不完整"
+WARNING_NOT_OP_CHAIN = "Not a consecutive OP thread; follow-up posts were not collected"
+WARNING_UNCONFIRMED_OP = "Could not confirm the original poster; this thread may be incomplete"
+WARNING_INCOMPLETE = "This thread may be incomplete"
 
 
 @dataclass(frozen=True)

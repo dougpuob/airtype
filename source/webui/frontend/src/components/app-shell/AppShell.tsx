@@ -5,7 +5,7 @@ import { TaskQueue } from "./TaskQueue";
 import { NavigationList, Sidebar, settingsNavItem } from "./Sidebar";
 import { TopAppBar } from "./TopAppBar";
 
-const sidebarWidth = 236;
+const sidebarWidth = 354;
 const topBarHeight = 58;
 
 export function AppShell({ children }: PropsWithChildren) {

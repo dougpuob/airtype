@@ -41,7 +41,7 @@ ORIGINAL_HEADING = {"article": "Original Content", "post": "Original Content", "
 def run_article(request_id: str, url: str, *, settings: SettingsFn, chat: Chat) -> None:
     if _stopped(request_id):
         return
-    clip_requests.update(request_id, status="running", progress=5, message="擷取網頁文章")
+    clip_requests.update(request_id, status="running", progress=5, message="Capturing article")
     app_settings = settings()
     web_to_markdown = app_settings.get("web_to_markdown") or {}
     immich = app_settings.get("immich") or {}
@@ -96,7 +96,7 @@ def run_post(
 ) -> None:
     if _stopped(request_id):
         return
-    clip_requests.update(request_id, status="running", progress=8, message="擷取貼文")
+    clip_requests.update(request_id, status="running", progress=8, message="Capturing post")
     host = urlparse(url).hostname or ""
     if host.endswith("threads.com") or host.endswith("threads.net"):
         payload = collect_threads(url)
@@ -118,7 +118,7 @@ def run_post(
         media_urls = list(payload.get("media_urls") or [])
         fallback_title = str(payload.get("title") or "") or _first_line(content)
     if not content:
-        raise RuntimeError("沒有取得貼文內容")
+        raise RuntimeError("No post content was captured")
     if _stopped(request_id):
         return
     app_settings = settings()
@@ -127,7 +127,7 @@ def run_post(
     image_urls = [item for item in media_urls if isinstance(item, str) and not _looks_like_video(item)]
     share_url = ""
     if image_urls:
-        clip_requests.update(request_id, progress=25, message="上傳照片")
+        clip_requests.update(request_id, progress=25, message="Uploading photos")
         media = web_article.store_note_media(
             image_urls,
             source_url=url,
@@ -187,7 +187,7 @@ def finish_voice(
         request_id,
         status="completed",
         progress=100,
-        message="已完成",
+        message="Completed",
         error="",
         published=True,
         **fields,
@@ -257,7 +257,7 @@ def _finish_text(
 ) -> None:
     if _stopped(request_id):
         return
-    clip_requests.update(request_id, status="running", progress=80, message="AI 潤稿")
+    clip_requests.update(request_id, status="running", progress=80, message="AI polish")
     polished = ""
     try:
         polished = chat(POLISH_SYSTEM, POLISH_USER.format(source=content), "polish").strip()
@@ -269,7 +269,7 @@ def _finish_text(
     capture_post = app_settings.get("capture_post") or {}
     title = _sanitize_title(fallback_title)
     if capture_post.get("ai_title_enabled", True):
-        clip_requests.update(request_id, progress=90, message="AI 標題")
+        clip_requests.update(request_id, progress=90, message="AI title")
         system_prompt = str(capture_post.get("title_system_prompt") or "").strip()
         try:
             generated = chat(system_prompt or "只輸出一個標題。", polished or content, "title").strip()
@@ -278,7 +278,7 @@ def _finish_text(
             title = title or _sanitize_title(content[:30])
     if _stopped(request_id):
         return
-    clip_requests.update(request_id, progress=96, message="AI 標籤")
+    clip_requests.update(request_id, progress=96, message="AI tags")
     tags = ""
     try:
         from .ai_tags import build_ai_tags_prompt, normalize_ai_tags
@@ -304,7 +304,7 @@ def _finish_text(
         request_id,
         status="completed",
         progress=100,
-        message="已完成",
+        message="Completed",
         error="",
         published=True,
         **fields,
@@ -320,8 +320,8 @@ def _stopped(request_id: str) -> bool:
             request_id,
             status="failed",
             progress=100,
-            message="失敗",
-            error="已停止",
+            message="Failed",
+            error="Stopped by user",
             published=True,
         )
     return True

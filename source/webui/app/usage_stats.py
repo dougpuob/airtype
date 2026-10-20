@@ -111,23 +111,23 @@ def site_for_url(url: str, *, kind: str = "") -> str:
 
 
 _FAILURE_RULES: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"Stopped by user|已停止|cancel", re.I), "使用者停止"),
-    (re.compile(r"(?s)(?=.*HTTP Error 403)(?=.*(JavaScript|deno))", re.I), "YouTube 403：無法解 JS challenge (deno)"),
-    (re.compile(r"HTTP Error 403|403: Forbidden", re.I), "下載被拒 (HTTP 403)"),
-    (re.compile(r"JavaScript runtime|challenge solver|\bdeno\b", re.I), "YouTube 缺少 JS runtime (deno)"),
-    (re.compile(r"No video formats found", re.I), "找不到影片格式 (No video formats found)"),
-    (re.compile(r"There is no video in this post", re.I), "貼文沒有影片"),
-    (re.compile(r"did not contain a public MP4", re.I), "Threads 沒有公開 MP4"),
-    (re.compile(r"empty media response|not granting access|login", re.I), "Instagram 拒絕存取 / 需登入"),
-    (re.compile(r"timed? ?out", re.I), "逾時"),
-    (re.compile(r"Local LLM|LLM", re.I), "LLM 失敗"),
+    (re.compile(r"Stopped by user|已停止|cancel", re.I), "Stopped by user"),
+    (re.compile(r"(?s)(?=.*HTTP Error 403)(?=.*(JavaScript|deno))", re.I), "YouTube 403: could not solve JS challenge (deno)"),
+    (re.compile(r"HTTP Error 403|403: Forbidden", re.I), "Download denied (HTTP 403)"),
+    (re.compile(r"JavaScript runtime|challenge solver|\bdeno\b", re.I), "YouTube missing JS runtime (deno)"),
+    (re.compile(r"No video formats found", re.I), "No video formats found"),
+    (re.compile(r"There is no video in this post", re.I), "Post has no video"),
+    (re.compile(r"did not contain a public MP4", re.I), "Threads has no public MP4"),
+    (re.compile(r"empty media response|not granting access|login", re.I), "Instagram denied access / login required"),
+    (re.compile(r"timed? ?out", re.I), "Timed out"),
+    (re.compile(r"Local LLM|LLM", re.I), "LLM failed"),
 ]
 
 
 def failure_reason(error: str) -> str:
     text = str(error or "").strip()
     if not text:
-        return "未知原因"
+        return "Unknown reason"
     for pattern, label in _FAILURE_RULES:
         if pattern.search(text):
             return label

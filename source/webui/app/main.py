@@ -1640,7 +1640,7 @@ async def get_clip_id(url: str):
     """UUID v5 and canonical source id for a clip URL."""
     source_id = canonical_source_id(url)
     if not source_id:
-        raise HTTPException(status_code=400, detail="URL 必須以 http:// 或 https:// 開頭。")
+        raise HTTPException(status_code=400, detail="URL must start with http:// or https://.")
     return {"url": url, "source_id": source_id, "guid": note_guid_for_source(url)}
 
 
@@ -1693,7 +1693,7 @@ def _run_article_clip(request_id: str, url: str) -> None:
                 request_id,
                 status="failed",
                 progress=100,
-                message="失敗",
+                message="Failed",
                 error=str(error),
                 published=True,
             )
@@ -1717,7 +1717,7 @@ def _run_post_clip(request_id: str, url: str) -> None:
                 request_id,
                 status="failed",
                 progress=100,
-                message="失敗",
+                message="Failed",
                 error=str(error),
                 published=True,
             )
@@ -1749,7 +1749,7 @@ def _submit_clip_url(url: str) -> Dict[str, Any]:
     url = str(url or "").strip()
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("URL 必須以 http:// 或 https:// 開頭。")
+        raise ValueError("URL must start with http:// or https://.")
     pipeline = known_sources.route_for_url(url)
     if pipeline == "v-to-text":
         options = _settings_transcribe_options(None, None, None, None, None)
@@ -1927,7 +1927,7 @@ async def create_watch(request: WatchCreateRequest):
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     if _watch_store.find_by_username(username):
-        raise HTTPException(status_code=409, detail=f"@{username} 已經在追蹤清單裡。")
+        raise HTTPException(status_code=409, detail=f"@{username} is already on the watch list.")
     target = threads_watch.new_target(
         username,
         label=request.label,
@@ -2006,7 +2006,7 @@ async def save_clip_request(request_id: str):
     if not record:
         raise HTTPException(status_code=404, detail="Clip request not found")
     if record.get("status") != "completed":
-        raise HTTPException(status_code=409, detail="這筆還沒完成，不能標成已存進 Obsidian")
+        raise HTTPException(status_code=409, detail="This request is not completed yet, so it cannot be marked as saved to Obsidian.")
     return record
 
 
@@ -2104,7 +2104,7 @@ async def create_note_media(request: NoteMediaRequest):
     try:
         guid = str(uuid.UUID(str(request.guid or "").strip()))
     except (ValueError, AttributeError, TypeError) as error:
-        raise HTTPException(status_code=400, detail="GUID 必須是有效的 UUID 格式。") from error
+        raise HTTPException(status_code=400, detail="GUID must be a valid UUID.") from error
 
     urls: list[str] = []
     for value in request.urls or []:
@@ -2112,10 +2112,10 @@ async def create_note_media(request: NoteMediaRequest):
         if not url or url in urls:
             continue
         if not url.lower().startswith(("http://", "https://")):
-            raise HTTPException(status_code=400, detail="圖片網址必須以 http:// 或 https:// 開頭。")
+            raise HTTPException(status_code=400, detail="Image URLs must start with http:// or https://.")
         urls.append(url)
     if len(urls) > MAX_NOTE_MEDIA_URLS:
-        raise HTTPException(status_code=400, detail=f"一次最多上傳 {MAX_NOTE_MEDIA_URLS} 張照片。")
+        raise HTTPException(status_code=400, detail=f"Upload at most {MAX_NOTE_MEDIA_URLS} photos at a time.")
     if not urls:
         return {"images": [], "share_url": "", "album_id": "", "warnings": []}
 
@@ -3695,14 +3695,14 @@ def _sync_voice_clip(job_id: str) -> None:
         return
     status = str(job.get("status") or "")
     if status == "queued":
-        clip_requests.update(clip_id, status="queued", progress=job.get("progress") or 0, message=job.get("message") or "排隊中")
+        clip_requests.update(clip_id, status="queued", progress=job.get("progress") or 0, message=job.get("message") or "Queued")
         return
     if status in {"downloading", "running"}:
         clip_requests.update(
             clip_id,
             status="running",
             progress=job.get("progress") or 0,
-            message=job.get("message") or "進行中",
+            message=job.get("message") or "In progress",
             title=str(job.get("title") or ""),
             content=_voice_clip_source_text(job, _partial_transcript(job)),
         )
@@ -3715,15 +3715,15 @@ def _sync_voice_clip(job_id: str) -> None:
         if not fresh or fresh.get("published"):
             return
         if status == "cancelled":
-            clip_requests.update(clip_id, status="failed", progress=100, message="失敗", error="已停止", published=True)
+            clip_requests.update(clip_id, status="failed", progress=100, message="Failed", error="Stopped by user", published=True)
             return
         if status == "failed":
             clip_requests.update(
                 clip_id,
                 status="failed",
                 progress=100,
-                message="失敗",
-                error=str(job.get("error") or "失敗"),
+                message="Failed",
+                error=str(job.get("error") or "Failed"),
                 published=True,
             )
             return

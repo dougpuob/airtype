@@ -45,13 +45,15 @@ class ClipRequestStoreTests(unittest.TestCase):
         self.assertIsNotNone(stored)
         assert stored is not None
         self.assertEqual(stored["status"], "failed")
-        self.assertIn("重啟", stored["error"])
+        self.assertIn("restarted", stored["error"])
 
     def test_step_follows_the_message_and_delete_removes_the_file(self) -> None:
         self.assertEqual(infer_step("voice", "running", "Transcribing segment 3"), 1)
+        self.assertEqual(infer_step("article", "running", "AI polish"), 1)
         self.assertEqual(infer_step("article", "running", "AI 潤稿"), 1)
+        self.assertEqual(infer_step("post", "running", "AI tags"), 4)
         self.assertEqual(infer_step("post", "running", "AI 標籤"), 4)
-        self.assertEqual(infer_step("voice", "completed", "已完成"), 100)
+        self.assertEqual(infer_step("voice", "completed", "Completed"), 100)
         created = clip_requests.create(kind="voice", source="https://example.com/a")
         clip_requests.update(created["id"], status="running", message="Transcribing segment 1")
         stored = clip_requests.get(created["id"])

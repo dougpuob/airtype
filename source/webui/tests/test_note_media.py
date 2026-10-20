@@ -105,7 +105,7 @@ class StoreNoteMediaTests(unittest.TestCase):
         # reported, so every link stays original.
         self.assertEqual(result["images"], [])
         self.assertEqual(result["share_url"], "")
-        self.assertTrue(any("尚未設定 Immich" in warning for warning in result["warnings"]))
+        self.assertTrue(any("Immich is not configured" in warning for warning in result["warnings"]))
 
     def test_duplicate_asset_still_uses_immich_url(self) -> None:
         clients: list[_FakeImmich] = []

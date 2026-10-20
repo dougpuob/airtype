@@ -8,10 +8,10 @@ import { useSaveClipRequestMutation } from "../../api/clipRequests";
 import { useClipRequestSelection } from "./ClipRequestContext";
 
 const statusLabel: Record<string, string> = {
-  queued: "排隊中",
-  running: "進行中",
-  completed: "已完成",
-  failed: "失敗"
+  queued: "Queued",
+  running: "In progress",
+  completed: "Done",
+  failed: "Failed"
 };
 
 const statusColor: Record<string, string> = {
@@ -61,12 +61,12 @@ export function TaskQueue() {
           textTransform: "none"
         }}
       >
-        尚未存進 Obsidian
+        Not saved to Obsidian
       </Typography>
       <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", px: 0.5 }}>
         {requests.length === 0 ? (
           <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 1 }}>
-            沒有待處理的請求
+            No pending requests
           </Typography>
         ) : (
           requests.map((task) => {
@@ -88,7 +88,7 @@ export function TaskQueue() {
                 }}
               >
                 <IconButton
-                  aria-label="刪除"
+                  aria-label="Delete"
                   size="small"
                   onClick={(event) => {
                     event.stopPropagation();
@@ -100,7 +100,7 @@ export function TaskQueue() {
                     right: 2,
                     width: 22,
                     height: 22,
-                    color: "error.main"
+                    color: "text.secondary"
                   }}
                 >
                   <CloseRoundedIcon sx={{ fontSize: 16 }} />
@@ -123,7 +123,7 @@ export function TaskQueue() {
                 {task.status === "running" ? (
                   <Box sx={{ mt: 0.75 }}>
                     <Typography variant="caption" color="text.secondary">
-                      {task.message || "進行中"} {Math.round(task.progress || 0)}%
+                      {task.message || "In progress"} {Math.round(task.progress || 0)}%
                     </Typography>
                     <LinearProgress
                       variant="determinate"
@@ -149,7 +149,7 @@ export function TaskQueue() {
                     }}
                     sx={{ mt: 0.75, minHeight: 28, py: 0, fontSize: 12 }}
                   >
-                    停止
+                    Stop
                   </Button>
                 ) : null}
                 {task.status === "completed" ? (
@@ -164,7 +164,7 @@ export function TaskQueue() {
                     }}
                     sx={{ mt: 0.75, minHeight: 28, py: 0, fontSize: 12 }}
                   >
-                    存到 Obsidian
+                    Save to Obsidian
                   </Button>
                 ) : null}
               </Box>

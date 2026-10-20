@@ -194,7 +194,7 @@ class FetchMarkdownTests(unittest.TestCase):
     def test_html_to_markdown_empty_body_raises(self) -> None:
         with self.assertRaises(RuntimeError) as ctx:
             web_article.html_to_markdown("<html><body></body></html>")
-        self.assertIn("無法從這個網頁擷取", str(ctx.exception))
+        self.assertIn("Could not extract an article", str(ctx.exception))
 
     def test_fetch_markdown_requests_article_url(self) -> None:
         captured: dict = {}
@@ -226,7 +226,7 @@ class FetchMarkdownTests(unittest.TestCase):
         ):
             with self.assertRaises(RuntimeError) as ctx:
                 web_article.fetch_markdown("https://example.com/x")
-        self.assertIn("無法從這個網頁擷取", str(ctx.exception))
+        self.assertIn("Could not extract an article", str(ctx.exception))
 
 
 class RunJobTests(unittest.TestCase):
@@ -296,14 +296,14 @@ class RunJobTests(unittest.TestCase):
         self.assertEqual(payload["status"], "completed")
         statuses = [item["status"] for item in payload["images"]]
         self.assertEqual(statuses, ["uploaded", "remote"])
-        self.assertEqual(payload["warnings"][-1].startswith("圖片上傳失敗"), True)
+        self.assertEqual(payload["warnings"][-1].startswith("Image upload failed"), True)
         self.assertIn("https://cdn.example.com/b.jpg", payload["markdown"])
         self.assertIn("api/assets/a0/thumbnail", payload["markdown"])
 
     def test_without_immich_keeps_all_original_links(self) -> None:
         payload = _run_article_job_unconfigured()
         self.assertEqual(payload["status"], "completed")
-        self.assertTrue(any("尚未設定 Immich" in warning for warning in payload["warnings"]))
+        self.assertTrue(any("Immich is not configured" in warning for warning in payload["warnings"]))
         self.assertNotIn("immich.example", payload["markdown"])
         self.assertIn("https://cdn.example.com/a.png", payload["markdown"])
 
@@ -317,7 +317,7 @@ class RunJobTests(unittest.TestCase):
         )
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["title"], "只有標題")
-        self.assertTrue(any("極少的內文" in warning for warning in payload["warnings"]))
+        self.assertTrue(any("very little body text" in warning for warning in payload["warnings"]))
 
 
 def _run_article_job_unconfigured() -> dict:

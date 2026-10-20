@@ -517,7 +517,7 @@ export function VToTextPage() {
       clipSelection.select(created.id);
       setSourceUrl("");
       setActiveRoute(routeForUrl(url));
-      setToast("已加入左側清單");
+      setToast("Added to the list on the left");
     } catch (caught) {
       setToast(caught instanceof Error ? caught.message : "Could not start this request");
     }
@@ -808,7 +808,7 @@ export function VToTextPage() {
         photoUrls.map((url) => ({ url, asset_id: "", status: "remote" as const, warning: message }))
       );
       return {
-        warnings: [`照片上傳 Immich 失敗，保留原始連結：${message}`],
+        warnings: [`Photo upload to Immich failed; keeping original links: ${message}`],
         mediaMap: {}
       };
     }
@@ -883,7 +883,7 @@ export function VToTextPage() {
   async function saveToObsidian() {
     const selected = clipSelection.selected;
     if (!selected || selected.status !== "completed" || !selected.note) {
-      setToast("選一筆已完成的請求再存到 Obsidian");
+      setToast("Select a completed request before saving to Obsidian");
       return;
     }
     try {
@@ -926,8 +926,8 @@ export function VToTextPage() {
     : null;
   const previewEmptyMessage = selectedClip
     ? selectedClip.status === "failed"
-      ? selectedClip.error || "這筆失敗了"
-      : "這筆還在處理，完成後會出現在這裡。"
+      ? selectedClip.error || "This request failed"
+      : "This request is still running. The draft will show up here when it finishes."
     : emptyMessage;
 
   return (
@@ -959,7 +959,7 @@ export function VToTextPage() {
                 <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
                   <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
                     <Typography variant="body2" color="text.secondary" fontWeight={700} noWrap>
-                      {selectedClip ? selectedClip.message || clipStatusLabel(selectedClip.status) : "選擇左側的請求，或送出一個新的"}
+                      {selectedClip ? selectedClip.message || clipStatusLabel(selectedClip.status) : "Select a request on the left, or submit a new one"}
                     </Typography>
                     <Chip
                       size="small"
