@@ -232,7 +232,7 @@ def fetch_profile_posts(
             errors.append(last)
             continue
         if "/login" in urllib.parse.urlparse(final_url).path:
-            last = {"code": "login_wall", "message": f"Threads 把 @{username} 導到登入頁：通常代表帳號不存在或拼錯；若是私人／限制帳號，需先到 Threads Login 頁登入。"}
+            last = {"code": "login_wall", "message": f"Threads 把 @{username} 導到登入頁：通常代表帳號不存在或拼錯；若是私人／限制帳號，需先準備已登入的 Threads cookies（Settings 的 yt-dlp cookies，或既有的 storage-state.json）。"}
             errors.append(last)
             continue
         parsed = parse_profile_page(page, username)

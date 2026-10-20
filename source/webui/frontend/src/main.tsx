@@ -12,8 +12,7 @@ import "./styles.css";
 const reloadScopedStateKeys = [
   "airtype:obsidian-clipper:state",
   "airtype:v-to-text:state",
-  "airtype:capture-post:state",
-  "airtype:ime-history:state"
+  "airtype:capture-post:state"
 ];
 
 function clearReloadScopedState() {

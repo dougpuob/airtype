@@ -5,10 +5,8 @@ import { useAuthStatusQuery } from "./api/auth";
 import { AppShell } from "./components/app-shell/AppShell";
 import { ClipRequestProvider } from "./components/app-shell/ClipRequestContext";
 import { DashboardPage } from "./pages/DashboardPage";
-import { ImeHistoryPage } from "./pages/ImeHistoryPage";
 import { LoginPage } from "./pages/LoginPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { ThreadsLoginPage } from "./pages/ThreadsLoginPage";
 import { VToTextPage } from "./pages/VToTextPage";
 import { WatchPage } from "./pages/WatchPage";
 
@@ -55,9 +53,7 @@ export default function App() {
         <Route path="/v-to-text" element={<VToTextPage />} />
         <Route path="/web-article" element={<Navigate to="/v-to-text" replace />} />
         <Route path="/capture-post" element={<Navigate to="/v-to-text" replace />} />
-        <Route path="/ime-history" element={<ImeHistoryPage />} />
         <Route path="/watch" element={<WatchPage />} />
-        <Route path="/threads-login" element={<ThreadsLoginPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
