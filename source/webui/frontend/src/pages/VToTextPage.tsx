@@ -8,9 +8,6 @@ import {
   LinearProgress,
   Snackbar,
   Stack,
-  Step,
-  StepLabel,
-  Stepper,
   TextField,
   Typography
 } from "@mui/material";
@@ -35,7 +32,6 @@ import { clipStatusLabel, formatClipTime } from "../components/app-shell/TaskQue
 import { useClipRequestSelection } from "../components/app-shell/ClipRequestContext";
 import { LlmApiKeyDialog } from "../components/llm/LlmApiKeyDialog";
 import { ObsidianNotePreview } from "../components/obsidian/ObsidianNotePreview";
-import { compactStepperSx } from "../components/workflow/stepperStyles";
 import { useLlmApiKey } from "../hooks/useLlmApiKey";
 import { useGuardedWork } from "../hooks/useWorkGuard";
 import type { ThreadsChainResponse, WovenPost } from "../types/postWeaver";
@@ -51,6 +47,7 @@ import {
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
 const OBSIDIAN_CLIPPER_STATE_KEY = "airtype:obsidian-clipper:state";
+const CAPTURE_NOTES_KEY = "airtype:obsidian-clipper:capture-notes";
 const ARTICLE_POLL_INTERVAL_MS = 1500;
 // Threads/media providers attach og:video to posts; those files are not
 // uploaded to Immich (the pipeline only stores images) and keep their links.
@@ -120,6 +117,7 @@ export function VToTextPage() {
   const [articleJob, setArticleJob] = useState<WebArticleJob | null>(null);
   const [articleImages, setArticleImages] = useState<WebArticleImage[]>(restoredState.articleImages);
   const [toast, setToast] = useState("");
+  const [captureNotes, setCaptureNotes] = useState(readPersistedCaptureNotes);
   const captureSeqRef = useRef(0);
   const postStepRef = useRef(restoredState.postStep);
   const ingestedArticleJobsRef = useRef<Set<string>>(new Set());
@@ -166,8 +164,8 @@ export function VToTextPage() {
   const storedAiTags = selectedRecord?.status === "completed" ? String(selectedRecord.ai_tags || "").trim() : "";
   const visibleAiTags = aiTags || storedAiTags;
   const transcriptDraft = useMemo(
-    () => buildTranscriptObsidianDraft(selectedRecord, visibleAiTags, effectiveAiTitle, guid),
-    [effectiveAiTitle, guid, selectedRecord, visibleAiTags]
+    () => buildTranscriptObsidianDraft(selectedRecord, visibleAiTags, effectiveAiTitle, guid, captureNotes),
+    [captureNotes, effectiveAiTitle, guid, selectedRecord, visibleAiTags]
   );
   const postDraft = useMemo(
     () =>
@@ -180,9 +178,10 @@ export function VToTextPage() {
         aiTags: postAiTags,
         guid,
         shareUrl,
-        mediaMap
+        mediaMap,
+        notes: captureNotes
       }),
-    [captureKind, capturedTitle, capturedUrl, guid, mediaMap, polishedContent, postAiTags, posts, shareUrl]
+    [captureKind, capturedTitle, capturedUrl, captureNotes, guid, mediaMap, polishedContent, postAiTags, posts, shareUrl]
   );
   const activeDraft = visibleRoute === "voice" ? transcriptDraft : postDraft;
   const originalTitle =
@@ -196,12 +195,6 @@ export function VToTextPage() {
     ? "AI article is not available for this transcript."
     : "AI publishing was unavailable for this capture.";
 
-  const stepperRoute: ClipperRoute = clipSelection.selected
-    ? kindToRoute(clipSelection.selected.kind)
-    : visibleRoute === "auto"
-      ? "article"
-      : visibleRoute;
-  const workflowStepIndex = clipSelection.selected ? clipActiveStep(clipSelection.selected, stepperRoute) : 0;
   const activeProgress = visibleRoute === "voice"
     ? voiceProgress({
         activeJob,
@@ -288,6 +281,10 @@ export function VToTextPage() {
     articleJobId,
     articleImages
   ]);
+
+  useEffect(() => {
+    writePersistedCaptureNotes(captureNotes);
+  }, [captureNotes]);
 
   function pasteClipboardUrl() {
     const input = sourceUrlInputRef.current;
@@ -513,9 +510,10 @@ export function VToTextPage() {
       return;
     }
     try {
-      const created = await createClipRequest.mutateAsync(url);
+      const created = await createClipRequest.mutateAsync({ url, notes: captureNotes });
       clipSelection.select(created.id);
       setSourceUrl("");
+      setCaptureNotes("");
       setActiveRoute(routeForUrl(url));
       setToast("Added to the list on the left");
     } catch (caught) {
@@ -572,10 +570,12 @@ export function VToTextPage() {
     setGuid(captureGuid);
     const job = await uploadJob.mutateAsync({
       file,
+      notes: captureNotes,
       language: whisper.language || null,
       whisperEndpoint: whisper.remote_endpoint || null,
       onProgress: setUploadProgress
     });
+    setCaptureNotes("");
     writePersistedObsidianClipperState({
       activeRoute: "voice",
       activeJobId: job.job_id,
@@ -921,7 +921,8 @@ export function VToTextPage() {
         tags: selectedClip.tags || [],
         datetime: selectedClip.datetime,
         guid: selectedClip.guid,
-        shareUrl: selectedClip.share_url
+        shareUrl: selectedClip.share_url,
+        notes: selectedClip.notes || ""
       }
     : null;
   const previewEmptyMessage = selectedClip
@@ -931,91 +932,34 @@ export function VToTextPage() {
     : emptyMessage;
 
   return (
-    <PageScaffold>
+    <PageScaffold fill>
       <WorkspacePanel>
         <Stack spacing={2.25} sx={{ minWidth: 0 }}>
           <Box
             sx={{
               alignItems: "stretch",
               display: "grid",
-              gap: { xs: 1.5, md: 2.5 },
+              gap: { xs: 1.5, md: 2 },
               gridTemplateColumns: { xs: "1fr", md: "minmax(0, 3fr) minmax(0, 7fr)" },
+              gridTemplateAreas: { xs: `"panel" "actions"`, md: `"panel actions"` },
               minWidth: 0
             }}
           >
-            <Box sx={{ alignContent: "center", minWidth: 0, overflowX: "auto", pb: 0.5 }}>
-              <WorkflowStepper activeStep={workflowStepIndex} route={stepperRoute} aiTitleEnabled={aiTitleEnabled} />
-            </Box>
-            <Box
-              sx={{
-                alignItems: "stretch",
-                display: "grid",
-                gap: { xs: 1.25, sm: 1.5 },
-                gridTemplateColumns: { xs: "1fr", sm: "minmax(0, 1fr) auto" },
-                minWidth: 0
-              }}
-            >
-              <Stack spacing={1} sx={{ minWidth: 0 }}>
-                <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
-                  <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
-                    <Typography variant="body2" color="text.secondary" fontWeight={700} noWrap>
-                      {selectedClip ? selectedClip.message || clipStatusLabel(selectedClip.status) : "Select a request on the left, or submit a new one"}
-                    </Typography>
-                    <Chip
-                      size="small"
-                      label={`Route: ${routeLabel(visibleRoute)}`}
-                      variant="outlined"
-                      sx={{ flexShrink: 0, fontWeight: 750 }}
-                    />
-                  </Stack>
-                  <Typography variant="body2" color="text.secondary" fontWeight={700} sx={{ flexShrink: 0 }}>
-                    {Math.round(selectedClip?.progress || 0)}%
-                  </Typography>
-                </Stack>
-                <LinearProgress value={Math.min(100, selectedClip?.progress || 0)} variant="determinate" />
-              </Stack>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignSelf: "end", minWidth: 0 }}>
-                <Button
-                  variant="outlined"
-                  disabled={submitLocked}
-                  onClick={pasteClipboardUrl}
-                  sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
-                >
-                  Paste
-                </Button>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  disabled={mainActionDisabled}
-                  onClick={() => void runClipperUrl()}
-                  sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0 }}
-                >
-                  {mainActionText}
-                </Button>
-                <Button
-                  variant="outlined"
-                  component="label"
-                  disabled={submitLocked}
-                  sx={{ height: 40, whiteSpace: "nowrap", flexShrink: 0, minWidth: 112 }}
-                >
-                  Choose File
-                  <input
-                    ref={fileInputRef}
-                    hidden
-                    type="file"
-                    accept="audio/*,video/*"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      if (file) void startFileJob(file);
-                      event.target.value = "";
-                    }}
-                  />
-                </Button>
-              </Stack>
+            <TextField
+              label="Notes"
+              placeholder="Why are you capturing this?"
+              multiline
+              minRows={2}
+              maxRows={6}
+              value={captureNotes}
+              onChange={(event) => setCaptureNotes(event.target.value)}
+              sx={{ gridArea: "panel", minWidth: 0 }}
+            />
+            <Stack className="clipper-actions" spacing={1.25} sx={{ gridArea: "actions", minWidth: 0 }}>
               <TextField
                 fullWidth
                 size="small"
-                sx={{ gridColumn: { sm: "1 / -1" }, "& .MuiOutlinedInput-root": { height: 40 } }}
+                sx={{ minWidth: 0, "& .MuiOutlinedInput-root": { height: 40 } }}
                 inputRef={sourceUrlInputRef}
                 value={sourceUrl}
                 onChange={(event) => {
@@ -1027,7 +971,58 @@ export function VToTextPage() {
                   startAdornment: <LinkOutlinedIcon color="disabled" fontSize="small" sx={{ mr: 1 }} />
                 }}
               />
-            </Box>
+              <Box className="clipper-action-row">
+                <Stack className="clipper-progress" spacing={0.75}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+                    <Typography variant="body2" color="text.secondary" fontWeight={700} noWrap>
+                      {selectedClip ? selectedClip.message || clipStatusLabel(selectedClip.status) : "Select a request, or submit a new one"}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" fontWeight={700} sx={{ flexShrink: 0 }}>
+                      {Math.round(selectedClip?.progress || 0)}%
+                    </Typography>
+                  </Stack>
+                  <LinearProgress value={Math.min(100, selectedClip?.progress || 0)} variant="determinate" />
+                </Stack>
+                <Box className="clipper-action-buttons">
+                  <Button
+                    variant="outlined"
+                    disabled={submitLocked}
+                    onClick={pasteClipboardUrl}
+                    sx={{ height: 40, whiteSpace: "nowrap" }}
+                  >
+                    Paste
+                  </Button>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    disabled={mainActionDisabled}
+                    onClick={() => void runClipperUrl()}
+                    sx={{ height: 40, whiteSpace: "nowrap" }}
+                  >
+                    {mainActionText}
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    component="label"
+                    disabled={submitLocked}
+                    sx={{ height: 40, whiteSpace: "nowrap", minWidth: { md: 112 } }}
+                  >
+                    Choose File
+                    <input
+                      ref={fileInputRef}
+                      hidden
+                      type="file"
+                      accept="audio/*,video/*"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) void startFileJob(file);
+                        event.target.value = "";
+                      }}
+                    />
+                  </Button>
+                </Box>
+              </Box>
+            </Stack>
           </Box>
           <Divider />
           {showError ? (
@@ -1068,9 +1063,9 @@ export function VToTextPage() {
         </Stack>
       </WorkspacePanel>
 
-      <WorkspacePanel>
-        <Stack spacing={1.5}>
-          <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1}>
+      <WorkspacePanel fill>
+        <Stack spacing={1.5} sx={{ flex: 1, minHeight: 0 }}>
+          <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1} sx={{ flexShrink: 0 }}>
             <Stack spacing={0.25} sx={{ minWidth: 0 }}>
               <Typography variant="h3">Obsidian Preview</Typography>
               {selectedClip ? (
@@ -1089,12 +1084,14 @@ export function VToTextPage() {
             </Button>
           </Stack>
           <Divider />
-          <ObsidianNotePreview
-            draft={selectedDraft}
-            emptyMessage={previewEmptyMessage}
-            polishedFallback={polishedFallback}
-            originalTitle={originalTitle}
-          />
+          <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <ObsidianNotePreview
+              draft={selectedDraft}
+              emptyMessage={previewEmptyMessage}
+              polishedFallback={polishedFallback}
+              originalTitle={originalTitle}
+            />
+          </Box>
         </Stack>
       </WorkspacePanel>
 
@@ -1114,77 +1111,6 @@ export function VToTextPage() {
       />
     </PageScaffold>
   );
-}
-
-function WorkflowStepper({
-  activeStep,
-  route,
-  aiTitleEnabled
-}: {
-  activeStep: number;
-  route: ClipperRoute;
-  aiTitleEnabled: boolean;
-}) {
-  const steps = route === "voice"
-    ? ["Source", "AI Transcribe", aiTitleEnabled ? "AI Title" : "Title", "AI Tags", "Ready"]
-    : route === "article"
-      ? ["Capture", "AI Polish", aiTitleEnabled ? "AI Title" : "Title", "AI Tags", "Ready"]
-      : ["Capture", "Photos", "AI Polish", aiTitleEnabled ? "AI Title" : "Title", "AI Tags", "Ready"];
-  return (
-    <Stack spacing={1}>
-      <Typography
-        variant="body2"
-        color="text.primary"
-        fontWeight={700}
-        sx={{ textAlign: "center" }}
-      >
-        Obsidian Clipper
-      </Typography>
-      <LinearProgress aria-hidden value={0} variant="determinate" />
-      <Stepper activeStep={activeStep} alternativeLabel sx={compactStepperSx}>
-        {steps.map((step, index) => (
-          <Step key={step} completed={index < activeStep}>
-            <StepLabel>{step}</StepLabel>
-          </Step>
-        ))}
-      </Stepper>
-    </Stack>
-  );
-}
-
-function kindToRoute(kind: string): ClipperRoute {
-  if (kind === "voice") return "voice";
-  if (kind === "article") return "article";
-  if (kind === "post") return "post";
-  return "auto";
-}
-
-function clipActiveStep(request: { status: string; step?: number; message?: string; kind: string }, route: ClipperRoute) {
-  const count = route === "post" ? 6 : 5;
-  if (request.status === "completed") return count;
-  const stored = typeof request.step === "number" ? request.step : stepFromMessage(request.kind, request.message || "");
-  return Math.max(0, Math.min(stored, count - 1));
-}
-
-function stepFromMessage(kind: string, message: string) {
-  const text = message.toLowerCase();
-  if (kind === "voice") {
-    if (text.includes("tag") || message.includes("標籤")) return 3;
-    if (text.includes("title") || text.includes("article") || message.includes("標題") || message.includes("潤稿")) return 2;
-    if (text.includes("transcri") || text.includes("segment")) return 1;
-    return 0;
-  }
-  if (kind === "post") {
-    if (text.includes("tag") || message.includes("標籤")) return 4;
-    if (text.includes("title") || message.includes("標題")) return 3;
-    if (text.includes("polish") || message.includes("潤稿")) return 2;
-    if (text.includes("photo") || message.includes("照片")) return 1;
-    return 0;
-  }
-  if (text.includes("tag") || message.includes("標籤")) return 3;
-  if (text.includes("title") || message.includes("標題")) return 2;
-  if (text.includes("polish") || message.includes("潤稿")) return 1;
-  return 0;
 }
 
 function routeForUrl(value: string): ClipperRoute {
@@ -1521,4 +1447,23 @@ function createNoteGuid() {
     const value = char === "x" ? random : (random & 0x3) | 0x8;
     return value.toString(16);
   });
+}
+
+function readPersistedCaptureNotes() {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.sessionStorage.getItem(CAPTURE_NOTES_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function writePersistedCaptureNotes(value: string) {
+  if (typeof window === "undefined") return;
+  try {
+    if (value) window.sessionStorage.setItem(CAPTURE_NOTES_KEY, value);
+    else window.sessionStorage.removeItem(CAPTURE_NOTES_KEY);
+  } catch {
+    // The in-memory notes field still works if storage is unavailable.
+  }
 }

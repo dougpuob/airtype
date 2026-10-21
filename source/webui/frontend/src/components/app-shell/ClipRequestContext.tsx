@@ -16,6 +16,10 @@ export function ClipRequestProvider({ children }: { children: ReactNode }) {
   const [selectedId, setSelectedId] = useState("");
   const seenIds = useRef(new Set<string>());
 
+  function select(id: string) {
+    setSelectedId(id);
+  }
+
   useEffect(() => {
     requests.forEach((item) => seenIds.current.add(item.id));
     if (!selectedId) {
@@ -39,7 +43,7 @@ export function ClipRequestProvider({ children }: { children: ReactNode }) {
       requests,
       selectedId,
       selected,
-      select: setSelectedId
+      select
     }),
     [requests, selected, selectedId]
   );

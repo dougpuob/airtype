@@ -21,7 +21,7 @@ const statusColor: Record<string, string> = {
   failed: "#B42318"
 };
 
-export function TaskQueue() {
+export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}) {
   const { requests, selectedId, select } = useClipRequestSelection();
   const cancelClip = useCancelClipRequestMutation();
   const deleteClip = useDeleteClipRequestMutation();
@@ -33,6 +33,7 @@ export function TaskQueue() {
   function openRequest(id: string) {
     select(id);
     if (location.pathname !== "/v-to-text") navigate("/v-to-text");
+    onOpenRequest?.();
   }
 
   async function saveRequest(request: ClipRequest) {
@@ -54,7 +55,7 @@ export function TaskQueue() {
         sx={{
           color: "text.secondary",
           fontSize: 11,
-          fontWeight: 800,
+          fontWeight: 700,
           letterSpacing: 0.4,
           px: 1.5,
           mb: 1,
@@ -106,10 +107,10 @@ export function TaskQueue() {
                   <CloseRoundedIcon sx={{ fontSize: 16 }} />
                 </IconButton>
                 <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, mb: 0.25 }}>
-                  <Typography variant="caption" fontWeight={750} noWrap>
+                  <Typography variant="caption" fontWeight={600} noWrap>
                     {formatClipTime(task.id)}
                   </Typography>
-                  <Typography variant="caption" fontWeight={750} noWrap sx={{ color: statusColor[task.status] || "#647084" }}>
+                  <Typography variant="caption" fontWeight={600} noWrap sx={{ color: statusColor[task.status] || "#647084" }}>
                     {statusLabel[task.status] || task.status}
                   </Typography>
                 </Box>
@@ -120,6 +121,15 @@ export function TaskQueue() {
                 >
                   {task.source}
                 </Typography>
+                {task.notes?.trim() ? (
+                  <Typography
+                    variant="caption"
+                    color="text.primary"
+                    sx={{ display: "block", mt: 0.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  >
+                    {task.notes}
+                  </Typography>
+                ) : null}
                 {task.status === "running" ? (
                   <Box sx={{ mt: 0.75 }}>
                     <Typography variant="caption" color="text.secondary">

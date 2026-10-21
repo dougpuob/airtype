@@ -182,6 +182,7 @@ def finish_voice(
         sources=sources,
         guid=guid,
         share_url=share_url,
+        notes=_request_notes(request_id),
     )
     clip_requests.update(
         request_id,
@@ -204,6 +205,7 @@ def build_draft(
     sources: list[str],
     guid: str,
     share_url: str,
+    notes: str = "",
 ) -> dict[str, Any]:
     date_parts = _date_parts()
     clean_title = _sanitize_title(title) or "Untitled"
@@ -216,6 +218,7 @@ def build_draft(
         *_domain_tags(source_list),
         *[part.strip() for part in ai_tags.replace("，", ",").split(",") if part.strip()],
     ])
+    user_notes = str(notes or "")
     note = _note(
         kind=kind,
         title=clean_title,
@@ -227,6 +230,7 @@ def build_draft(
         guid=guid,
         share_url=share_url,
         date_parts=date_parts,
+        notes=user_notes,
     )
     return {
         "title": clean_title,
@@ -238,6 +242,7 @@ def build_draft(
         "datetime": date_parts["datetime"],
         "guid": guid,
         "share_url": share_url,
+        "notes": user_notes,
         "note_title": note_title,
         "note": note,
     }
@@ -299,6 +304,7 @@ def _finish_text(
         sources=sources,
         guid=guid,
         share_url=share_url,
+        notes=_request_notes(request_id),
     )
     clip_requests.update(
         request_id,
@@ -339,11 +345,13 @@ def _note(
     guid: str,
     share_url: str,
     date_parts: dict[str, str],
+    notes: str = "",
 ) -> str:
     source_yaml = "\n".join(f'  - "{_yaml_quote(item)}"' for item in sources)
     tag_yaml = "\n".join(f"  - {item}" for item in tags)
     share_line = f"immich_share: {share_url}\n" if share_url else ""
     heading = ORIGINAL_HEADING.get(kind, "Original Content")
+    notes_block = f"{notes}\n\n" if notes.strip() else "\n\n"
     return (
         f"---\n"
         f"title: {date_parts['date']} {title}\n"
@@ -352,10 +360,16 @@ def _note(
         f"{share_line}"
         f"datetime: {date_parts['datetime']}\n"
         f"tags:\n{tag_yaml}\n"
-        f"---\n\n---\n\n# Title\n\n{title}\n\n---\n\n# Notes\n\n\n\n---\n\n"
+        f"notes: {_yaml_text(notes)}\n"
+        f"---\n\n---\n\n# Title\n\n{title}\n\n---\n\n# Notes\n\n{notes_block}---\n\n"
         f"# AI Tags\n\n{ai_tags}\n\n---\n\n# AI Polished Article\n\n{polished}\n\n---\n\n"
         f"# {heading}\n\n{content}\n\n---\n\nEND"
     )
+
+
+def _request_notes(request_id: str) -> str:
+    current = clip_requests.get(request_id) or {}
+    return str(current.get("notes") or "")
 
 
 def _date_parts() -> dict[str, str]:
@@ -371,6 +385,14 @@ def _sanitize_title(text: str) -> str:
 
 def _yaml_quote(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _yaml_text(value: str) -> str:
+    text = str(value or "")
+    if "\n" in text:
+        body = "\n".join(f"  {line}" for line in text.split("\n"))
+        return f"|\n{body}"
+    return f'"{_yaml_quote(text)}"'
 
 
 def _domain_tags(urls: list[str]) -> list[str]:

@@ -100,7 +100,7 @@ export function NavigationList({ items = navItems, orientation = "vertical", onN
             primary={item.label}
             primaryTypographyProps={{
               fontSize: horizontal ? 10 : 13,
-              fontWeight: 750,
+              fontWeight: 600,
               textAlign: horizontal ? "center" : "left",
               noWrap: true
             }}
@@ -137,7 +137,7 @@ export function Sidebar({ topBarHeight }: SidebarProps) {
         sx={{
           color: "text.secondary",
           fontSize: 11,
-          fontWeight: 800,
+          fontWeight: 700,
           letterSpacing: 0.4,
           px: 1.5,
           mb: 1

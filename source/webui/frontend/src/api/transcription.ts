@@ -10,6 +10,7 @@ type UrlJobInput = {
 
 type UploadJobInput = {
   file: File;
+  notes?: string;
   language?: string | null;
   whisperEndpoint?: string | null;
   onProgress?: (progress: number) => void;
@@ -67,8 +68,8 @@ export function useCreateUrlTranscriptionJobMutation() {
 export function useUploadTranscriptionJobMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ file, language, whisperEndpoint, onProgress }: UploadJobInput) =>
-      uploadTranscriptionJob(file, { language, whisperEndpoint, onProgress }),
+    mutationFn: async ({ file, notes, language, whisperEndpoint, onProgress }: UploadJobInput) =>
+      uploadTranscriptionJob(file, { notes, language, whisperEndpoint, onProgress }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["transcription-records"] });
       queryClient.invalidateQueries({ queryKey: ["clip-requests"] });
@@ -93,6 +94,7 @@ export function useCancelTranscriptionJobMutation() {
 function uploadTranscriptionJob(
   file: File,
   options: {
+    notes?: string;
     language?: string | null;
     whisperEndpoint?: string | null;
     onProgress?: (progress: number) => void;
@@ -100,6 +102,9 @@ function uploadTranscriptionJob(
 ) {
   const form = new FormData();
   form.append("file", file, file.name);
+  if (options.notes) {
+    form.append("notes", options.notes);
+  }
   if (options.whisperEndpoint) {
     form.append("whisper_endpoint", options.whisperEndpoint);
   }

@@ -44,12 +44,12 @@ export function AppShell({ children }: PropsWithChildren) {
       >
         <Typography
           variant="overline"
-          sx={{ color: "text.secondary", fontSize: 11, fontWeight: 800, letterSpacing: 0.4, px: 1.5, mb: 1 }}
+          sx={{ color: "text.secondary", fontSize: 11, fontWeight: 700, letterSpacing: 0.4, px: 1.5, mb: 1 }}
         >
           Workspace
         </Typography>
         <NavigationList onNavigate={() => setMobileNavOpen(false)} />
-        <TaskQueue />
+        <TaskQueue onOpenRequest={() => setMobileNavOpen(false)} />
         <NavigationList items={[settingsNavItem]} onNavigate={() => setMobileNavOpen(false)} />
       </Drawer>
       <Box
@@ -59,6 +59,8 @@ export function AppShell({ children }: PropsWithChildren) {
           gridRow: 2,
           minWidth: 0,
           minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
           overflow: "auto",
           p: { xs: 1.5, md: 3 },
           pb: { xs: 2, md: 3 }

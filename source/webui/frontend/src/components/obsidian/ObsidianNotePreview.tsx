@@ -11,6 +11,7 @@ type ObsidianPreviewDraft = {
   datetime: string;
   guid?: string;
   shareUrl?: string;
+  notes?: string;
 };
 
 type ObsidianNotePreviewProps = {
@@ -23,7 +24,7 @@ type ObsidianNotePreviewProps = {
 const previewSectionHeadingSx = {
   color: "#C8D2FF",
   fontSize: 24,
-  fontWeight: 850,
+  fontWeight: 700,
   lineHeight: 1.25,
   mb: 1.25
 };
@@ -39,7 +40,7 @@ const propertyCellSx = {
 export function ObsidianNotePreview({ draft, emptyMessage, polishedFallback, originalTitle }: ObsidianNotePreviewProps) {
   if (!draft) {
     return (
-      <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 520, color: "text.secondary" }}>
+      <Stack alignItems="center" justifyContent="center" sx={{ flex: 1, minHeight: 240, height: "100%", color: "text.secondary" }}>
         <Typography>{emptyMessage}</Typography>
       </Stack>
     );
@@ -52,8 +53,9 @@ export function ObsidianNotePreview({ draft, emptyMessage, polishedFallback, ori
         bgcolor: "#1F2330",
         color: "#F1F4FA",
         borderColor: "#343A4A",
-        minHeight: 520,
-        maxHeight: 720,
+        flex: 1,
+        minHeight: 0,
+        height: "100%",
         overflow: "auto"
       }}
     >
@@ -63,7 +65,7 @@ export function ObsidianNotePreview({ draft, emptyMessage, polishedFallback, ori
           <PropertiesTable draft={draft} />
         </PreviewSection>
         <PreviewSection title="Notes">
-          <Box sx={{ height: 48 }} />
+          {draft.notes?.trim() ? <MarkdownPreviewText text={draft.notes} /> : <Box sx={{ height: 48 }} />}
         </PreviewSection>
         <PreviewSection title="AI Tags">
           <MarkdownPreviewText text={draft.aiTags || "AI tags are not available yet."} />
@@ -97,7 +99,8 @@ function PropertiesTable({ draft }: { draft: ObsidianPreviewDraft }) {
     ["sources", draft.sources.length ? draft.sources.join("\n") : "--"],
     ...(draft.shareUrl ? [["immich_share", draft.shareUrl]] : []),
     ["datetime", draft.datetime],
-    ["tags", draft.tags.length ? draft.tags.join(", ") : "--"]
+    ["tags", draft.tags.length ? draft.tags.join(", ") : "--"],
+    ["notes", draft.notes?.trim() ? draft.notes : ""]
   ];
 
   return (
@@ -112,7 +115,7 @@ function PropertiesTable({ draft }: { draft: ObsidianPreviewDraft }) {
                 ...propertyCellSx,
                 width: 112,
                 color: "#C8D2FF",
-                fontWeight: 850,
+                fontWeight: 700,
                 bgcolor: "rgba(200, 210, 255, 0.06)"
               }}
             >
@@ -168,7 +171,7 @@ function headingSx(level: number) {
   return {
     color: level === 1 ? "#C8D2FF" : "#E2E7FF",
     fontSize: sizes[level] || 14,
-    fontWeight: level <= 3 ? 850 : 780,
+    fontWeight: level <= 3 ? 700 : 600,
     lineHeight: 1.25,
     m: 0,
     mt: level === 1 ? 0.5 : 0.25

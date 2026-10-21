@@ -63,6 +63,41 @@ class ClipRequestStoreTests(unittest.TestCase):
         self.assertIsNone(clip_requests.get(created["id"]))
         self.assertNotIn(created["id"], {item["id"] for item in clip_requests.list_pending()})
 
+    def test_notes_are_stored_and_land_in_the_obsidian_draft(self) -> None:
+        from app.clip_pipeline import build_draft
+
+        created = clip_requests.create(
+            kind="article",
+            source="https://example.com/page",
+            notes="  why I clipped this\n",
+        )
+        self.assertEqual(created["notes"], "  why I clipped this")
+        clip_requests.update(created["id"], status="running", message="AI polish")
+        stored = clip_requests.get(created["id"])
+        assert stored is not None
+        self.assertEqual(stored["notes"], "  why I clipped this")
+        draft = build_draft(
+            kind="article",
+            title="Hello",
+            content="body",
+            polished="polished",
+            ai_tags="",
+            sources=["https://example.com/page"],
+            guid="guid",
+            share_url="",
+            notes=stored["notes"],
+        )
+        self.assertIn('notes: "  why I clipped this"\n', draft["note"])
+        self.assertIn("# Notes\n\n  why I clipped this\n", draft["note"])
+        self.assertEqual(draft["notes"], "  why I clipped this")
+
+    def test_notes_are_capped_and_empty_by_default(self) -> None:
+        empty = clip_requests.create(kind="post", source="https://example.com/post")
+        self.assertEqual(empty["notes"], "")
+        long_note = "x" * 2500
+        created = clip_requests.create(kind="voice", source="clip.m4a", notes=long_note)
+        self.assertEqual(len(created["notes"]), 2000)
+
 
 if __name__ == "__main__":
     unittest.main()

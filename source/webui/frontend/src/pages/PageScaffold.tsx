@@ -5,18 +5,31 @@ type PageScaffoldProps = PropsWithChildren<{
   title?: string;
   eyebrow?: string;
   actions?: ReactNode;
+  fill?: boolean;
 }>;
 
-export function PageScaffold({ title, eyebrow, actions, children }: PageScaffoldProps) {
+export function PageScaffold({ title, eyebrow, actions, children, fill }: PageScaffoldProps) {
   return (
-    <Stack spacing={2.5} sx={{ minHeight: "100%" }}>
+    <Stack
+      spacing={2.5}
+      sx={{
+        minHeight: "100%",
+        ...(fill
+          ? {
+              flex: 1,
+              height: "100%",
+              minHeight: 0
+            }
+          : {})
+      }}
+    >
       {title || eyebrow || actions ? (
         <Stack direction="row" alignItems="flex-end" justifyContent="space-between" spacing={2}>
           <Box>
             {eyebrow ? (
               <Typography
                 variant="overline"
-                sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: 0.4 }}
+                sx={{ color: "text.secondary", fontWeight: 700, letterSpacing: 0.4 }}
               >
                 {eyebrow}
               </Typography>
@@ -31,13 +44,21 @@ export function PageScaffold({ title, eyebrow, actions, children }: PageScaffold
   );
 }
 
-export function WorkspacePanel({ children }: PropsWithChildren) {
+export function WorkspacePanel({ children, fill }: PropsWithChildren<{ fill?: boolean }>) {
   return (
     <Paper
       sx={{
         p: 2,
         minWidth: 0,
-        minHeight: 0
+        minHeight: 0,
+        ...(fill
+          ? {
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden"
+            }
+          : {})
       }}
     >
       {children}

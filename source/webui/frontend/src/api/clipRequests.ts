@@ -7,6 +7,7 @@ export type ClipRequest = {
   id: string;
   kind: "voice" | "article" | "post" | string;
   source: string;
+  notes?: string;
   status: ClipRequestStatus | string;
   step?: number;
   progress: number;
@@ -46,10 +47,10 @@ export function useClipRequestsQuery() {
 export function useCreateClipRequestMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (url: string) =>
+    mutationFn: (input: { url: string; notes?: string }) =>
       apiRequest<ClipRequest>("/api/clip-requests", {
         method: "POST",
-        body: JSON.stringify({ url })
+        body: JSON.stringify({ url: input.url, notes: input.notes || "" })
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["clip-requests"] });

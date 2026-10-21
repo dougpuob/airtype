@@ -79,7 +79,12 @@ export function TopAppBar({ sidebarWidth, onMenuClick }: TopAppBarProps) {
           </Typography>
         </Stack>
         <Box sx={{ flex: 1 }} />
-        <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0, overflow: "hidden" }}>
+        <Stack
+          direction="row"
+          spacing={0.75}
+          alignItems="center"
+          sx={{ display: { xs: "none", sm: "flex" }, minWidth: 0, overflow: "hidden" }}
+        >
           <ServiceChip label={compact ? "ASR" : "ASR Server"} state={asr} />
           <ServiceChip label={compact ? "LLM" : "LLM Server"} state={llm} />
         </Stack>

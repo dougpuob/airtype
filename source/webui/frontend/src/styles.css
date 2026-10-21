@@ -7,10 +7,53 @@ body,
   height: 100%;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  font-synthesis: none;
+}
+
 body {
   overflow: hidden;
 }
 
 * {
   box-sizing: border-box;
+}
+
+.clipper-actions {
+  container-type: inline-size;
+  container-name: clipper-actions;
+}
+
+.clipper-action-row,
+.clipper-action-buttons {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+}
+
+.clipper-progress {
+  width: 100%;
+  min-width: 0;
+}
+
+@container clipper-actions (min-width: 640px) {
+  .clipper-action-row {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .clipper-progress {
+    flex: 1;
+    width: auto;
+  }
+
+  .clipper-action-buttons {
+    flex-direction: row;
+    width: auto;
+    flex-shrink: 0;
+  }
 }

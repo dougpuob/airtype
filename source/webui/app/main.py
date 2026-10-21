@@ -323,8 +323,17 @@ async def require_webui_auth(request: Request, call_next: Callable):
     return _unauthorized_response(request)
 
 
+class _AppStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope: Any):
+        response = await super().get_response(path, scope)
+        if path in ("", ".", "index.html") or str(path).endswith(".html"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+        return response
+
+
 # Mount static files at /app route (must be before @app.get routes)
-app.mount("/app", StaticFiles(directory=STATIC_DIR, html=True), name="app_static")
+app.mount("/app", _AppStaticFiles(directory=STATIC_DIR, html=True), name="app_static")
 
 # In-memory storage for configuration
 configurations = []
@@ -483,6 +492,7 @@ class WebArticleJobRequest(BaseModel):
 
 class ClipCreateRequest(BaseModel):
     url: str
+    notes: str = ""
 
 
 class WatchCreateRequest(BaseModel):
@@ -1070,7 +1080,8 @@ async def create_transcription_job(
     whisper_endpoint: Optional[str] = Form(None),
     language: Optional[str] = Form(None),
     temperature: Optional[float] = Form(None),
-    beam_size: Optional[int] = Form(None)
+    beam_size: Optional[int] = Form(None),
+    notes: str = Form(""),
 ):
     if not file:
         raise HTTPException(status_code=400, detail="No audio or video file provided")
@@ -1100,7 +1111,7 @@ async def create_transcription_job(
             "content_type": file.content_type or "unknown",
         }, options),
     )
-    clip_request_id = _attach_clip_request(job_id, "voice", file.filename or "uploaded media")
+    clip_request_id = _attach_clip_request(job_id, "voice", file.filename or "uploaded media", notes=notes)
     temp_path = os.path.join(_job_dir(job_id), f"source{os.path.splitext(file.filename or '')[1] or '.media'}")
     with open(temp_path, "wb") as temp_file:
         temp_file.write(content)
@@ -1739,12 +1750,12 @@ async def get_clip_request(request_id: str):
 @app.post("/api/clip-requests")
 async def create_clip_request(request: ClipCreateRequest):
     try:
-        return _submit_clip_url(request.url)
+        return _submit_clip_url(request.url, notes=request.notes)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-def _submit_clip_url(url: str) -> Dict[str, Any]:
+def _submit_clip_url(url: str, notes: str = "") -> Dict[str, Any]:
     """Queue one URL in the Obsidian Clipper (shared by the API and Watch)."""
     url = str(url or "").strip()
     parsed = urllib.parse.urlparse(url)
@@ -1761,15 +1772,15 @@ def _submit_clip_url(url: str) -> Dict[str, Any]:
         )
         temp_path = os.path.join(_job_dir(job_id), f"source{os.path.splitext(parsed.path)[1] or '.media'}")
         _update_job_source(job_id, temp_path)
-        clip_request_id = _attach_clip_request(job_id, "voice", url)
+        clip_request_id = _attach_clip_request(job_id, "voice", url, notes=notes)
         executor.submit(_run_url_transcription_job, job_id, url, temp_path, options)
         record = clip_requests.get(clip_request_id)
         return record
     if pipeline == "capture-post":
-        record = clip_requests.create(kind="post", source=url)
+        record = clip_requests.create(kind="post", source=url, notes=notes)
         clip_executor.submit(_run_post_clip, record["id"], url)
         return record
-    record = clip_requests.create(kind="article", source=url)
+    record = clip_requests.create(kind="article", source=url, notes=notes)
     clip_executor.submit(_run_article_clip, record["id"], url)
     return record
 
@@ -3670,8 +3681,8 @@ def _public_job(job: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _attach_clip_request(job_id: str, kind: str, source: str) -> str:
-    clip = clip_requests.create(kind=kind, source=source)
+def _attach_clip_request(job_id: str, kind: str, source: str, notes: str = "") -> str:
+    clip = clip_requests.create(kind=kind, source=source, notes=notes)
     transcription_jobs[job_id]["clip_request_id"] = clip["id"]
     clip_requests.update(clip["id"], job_id=job_id)
     return str(clip["id"])

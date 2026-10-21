@@ -25,30 +25,44 @@ export const theme = createTheme({
     borderRadius: 8
   },
   typography: {
-    fontFamily:
-      'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+    fontWeightRegular: 400,
+    fontWeightMedium: 600,
+    fontWeightBold: 700,
     h1: {
       fontSize: 28,
-      fontWeight: 760,
+      fontWeight: 700,
       letterSpacing: 0
     },
     h2: {
       fontSize: 20,
-      fontWeight: 760,
+      fontWeight: 700,
       letterSpacing: 0
     },
     h3: {
       fontSize: 16,
-      fontWeight: 760,
+      fontWeight: 700,
       letterSpacing: 0
     },
     button: {
-      fontWeight: 700,
+      fontWeight: 600,
       textTransform: "none",
       letterSpacing: 0
     }
   },
   components: {
+    MuiCssBaseline: {
+      styleOverrides: {
+        html: {
+          WebkitFontSmoothing: "antialiased",
+          MozOsxFontSmoothing: "grayscale",
+          fontSynthesis: "none"
+        },
+        body: {
+          fontSynthesis: "none"
+        }
+      }
+    },
     MuiPaper: {
       styleOverrides: {
         root: {
@@ -98,7 +112,7 @@ export const theme = createTheme({
       styleOverrides: {
         root: {
           borderRadius: 7,
-          fontWeight: 700
+          fontWeight: 600
         }
       }
     }

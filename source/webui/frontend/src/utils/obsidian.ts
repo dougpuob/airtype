@@ -25,6 +25,7 @@ immich_share: {{IMMICH_SHARE}}
 datetime: {{DATETIME}}
 tags:
 {{tags}}
+notes: {{NOTES}}
 ---
 
 ---
@@ -36,6 +37,8 @@ tags:
 ---
 
 # Notes
+
+{{NOTES}}
 
 
 
@@ -76,6 +79,7 @@ export type ClipObsidianDraft = {
   datetime: string;
   guid: string;
   shareUrl: string;
+  notes: string;
   originalHeading: string;
 };
 
@@ -86,7 +90,8 @@ export function buildTranscriptObsidianDraft(
   record?: TranscriptionRecord | null,
   aiTags = "",
   titleOverride = "",
-  guid = ""
+  guid = "",
+  notes = ""
 ): ClipObsidianDraft | null {
   if (!record?.transcript?.segments?.length && !record?.transcript?.text) return null;
 
@@ -100,7 +105,8 @@ export function buildTranscriptObsidianDraft(
     polishedContent: record.article?.text?.trim() || "",
     aiTags,
     guid,
-    sources: transcriptSources(record)
+    sources: transcriptSources(record),
+    notes
   });
 }
 
@@ -203,6 +209,7 @@ export function buildPostObsidianDraft(input: {
   extraTags?: string[];
   kind?: ClipKind;
   markdown?: string;
+  notes?: string;
 }): ClipObsidianDraft | null {
   const markdown = String(input.markdown || "").trim() || postsToMarkdown(input.posts, input.mediaMap);
   return buildClipObsidianDraft({
@@ -214,7 +221,8 @@ export function buildPostObsidianDraft(input: {
     guid: input.guid,
     shareUrl: input.shareUrl,
     sources: postSources(input.posts, input.capturedUrl),
-    extraTags: input.extraTags
+    extraTags: input.extraTags,
+    notes: input.notes
   });
 }
 
@@ -228,6 +236,7 @@ function buildClipObsidianDraft(input: {
   shareUrl?: string;
   sources?: string[];
   extraTags?: string[];
+  notes?: string;
 }): ClipObsidianDraft | null {
   const content = input.kind === "media" ? String(input.markdown || "").trim() : uniquePostBlocks(input.markdown);
   if (!content) return null;
@@ -254,12 +263,13 @@ function buildClipObsidianDraft(input: {
     GUID: input.guid || "",
     IMMICH_SHARE: input.shareUrl || "",
     ORIGINAL_HEADING: originalHeading,
+    NOTES: yamlTextValue(input.notes || ""),
     ai_tags: input.aiTags || "",
     polished_content: input.polishedContent,
     content
   };
   const note = OBSIDIAN_CLIP_TEMPLATE.replace(
-    /{{(sources|DATETIME|DATE|TITLE|tags|GUID|IMMICH_SHARE|ORIGINAL_HEADING|ai_tags|polished_content|content)}}/g,
+    /{{(sources|DATETIME|DATE|TITLE|tags|GUID|IMMICH_SHARE|ORIGINAL_HEADING|NOTES|ai_tags|polished_content|content)}}/g,
     (_, key: string) => values[key] ?? ""
   ).replace(/^immich_share:\s*\n/m, "");
 
@@ -277,6 +287,7 @@ function buildClipObsidianDraft(input: {
     datetime: dateParts.datetime,
     guid: input.guid || "",
     shareUrl: input.shareUrl || "",
+    notes: input.notes || "",
     originalHeading
   };
 }
@@ -407,6 +418,14 @@ function yamlSourceList(urls: string[]) {
 
 function yamlTagList(tags: string[]) {
   return tags.map((tag) => `  - ${tag}`).join("\n");
+}
+
+function yamlTextValue(value: string) {
+  const text = String(value || "");
+  if (text.includes("\n")) {
+    return `|\n${text.split("\n").map((line) => `  ${line}`).join("\n")}`;
+  }
+  return `"${text.split("\\").join("\\\\").split('"').join('\\"')}"`;
 }
 
 function sourceDomainTags(urls: string[]) {

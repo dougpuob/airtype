@@ -36,7 +36,7 @@ def configure(data_dir: str) -> None:
                 _write(record)
 
 
-def create(*, kind: str, source: str, now: Optional[datetime] = None) -> dict[str, Any]:
+def create(*, kind: str, source: str, notes: str = "", now: Optional[datetime] = None) -> dict[str, Any]:
     """Create a queued request file and return its public record."""
     current = now or datetime.now().astimezone()
     stamp = current.strftime("%Y%m%d-%H%M%S")
@@ -50,6 +50,7 @@ def create(*, kind: str, source: str, now: Optional[datetime] = None) -> dict[st
             "id": request_id,
             "kind": kind,
             "source": source,
+            "notes": _clean_notes(notes),
             "status": "queued",
             "step": 0,
             "progress": 0,
@@ -212,6 +213,12 @@ def _path(request_id: str) -> Path:
 
 def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _clean_notes(value: str) -> str:
+    """Keep a short personal memo. It is not sent to the polish / title / tag models."""
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    return text[:2000].rstrip()
 
 
 def _write(record: dict[str, Any]) -> None:

@@ -2,7 +2,7 @@ export const compactStepperSx = {
   width: "100%",
   maxWidth: 560,
   mx: "auto",
-  minWidth: { xs: 540, md: 0 },
+  minWidth: { xs: 0, md: 0 },
   px: { xs: 0, md: 1.5 },
   py: 0.5,
   "& .MuiStepConnector-root.MuiStepConnector-alternativeLabel": {
@@ -10,17 +10,24 @@ export const compactStepperSx = {
     left: "calc(-50% + 22px)",
     right: "calc(50% + 22px)"
   },
+  "& .MuiStepConnector-root.MuiStepConnector-vertical": {
+    ml: "13px"
+  },
   "& .MuiStepConnector-line": {
     borderColor: "divider",
     borderTopWidth: 2
   },
+  "& .MuiStepConnector-vertical .MuiStepConnector-line": {
+    borderLeftWidth: 2,
+    minHeight: 16
+  },
   "& .MuiStepLabel-label": {
-    mt: 0.85,
+    mt: { xs: 0, md: 0.85 },
     color: "text.secondary",
-    fontSize: 13,
-    fontWeight: 780,
+    fontSize: { xs: 13, md: 13 },
+    fontWeight: 600,
     lineHeight: 1.25,
-    whiteSpace: "nowrap"
+    whiteSpace: { xs: "normal", md: "nowrap" }
   },
   "& .MuiStepLabel-label.Mui-active, & .MuiStepLabel-label.Mui-completed": {
     color: "text.primary"
@@ -35,6 +42,6 @@ export const compactStepperSx = {
   },
   "& .MuiStepIcon-text": {
     fontSize: 10,
-    fontWeight: 850
+    fontWeight: 700
   }
 };

@@ -548,7 +548,7 @@ function Subsection({ title, children }: { title: string; children: ReactNode })
     <Stack spacing={1.25}>
       <Typography
         variant="overline"
-        sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: 0.4, lineHeight: 1.2 }}
+        sx={{ color: "text.secondary", fontWeight: 700, letterSpacing: 0.4, lineHeight: 1.2 }}
       >
         {title}
       </Typography>
