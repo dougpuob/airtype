@@ -1,10 +1,11 @@
 import CircleIcon from "@mui/icons-material/Circle";
 import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
 import MenuIcon from "@mui/icons-material/Menu";
-import { AppBar, Box, Button, Chip, IconButton, Stack, Toolbar, Tooltip, Typography, useMediaQuery, useTheme } from "@mui/material";
+import { AppBar, Box, Button, ButtonBase, Chip, IconButton, Stack, Toolbar, Tooltip, Typography, useMediaQuery, useTheme } from "@mui/material";
 import { useAuthStatusQuery, useLogoutMutation } from "../../api/auth";
 import { useSettingsQuery } from "../../api/settings";
 import { useLocalLlmHealthQuery, useWhisperServerStatusQuery } from "../../api/serviceStatus";
+import { useWorkGuard } from "../../hooks/useWorkGuard";
 
 type TopAppBarProps = {
   sidebarWidth: number;
@@ -14,6 +15,7 @@ type TopAppBarProps = {
 export function TopAppBar({ sidebarWidth, onMenuClick }: TopAppBarProps) {
   const theme = useTheme();
   const compact = useMediaQuery(theme.breakpoints.down("sm"));
+  const { requestLeave } = useWorkGuard();
   const authQuery = useAuthStatusQuery();
   const logout = useLogoutMutation();
   const settingsQuery = useSettingsQuery();
@@ -54,11 +56,19 @@ export function TopAppBar({ sidebarWidth, onMenuClick }: TopAppBarProps) {
         >
           <MenuIcon />
         </IconButton>
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1.25}
-          sx={{ width: { xs: "auto", md: sidebarWidth - 20 }, flexShrink: 0, minWidth: 0 }}
+        <ButtonBase
+          aria-label="Reload AirType"
+          onClick={() => requestLeave(() => window.location.reload())}
+          sx={{
+            width: { xs: "auto", md: sidebarWidth - 20 },
+            flexShrink: 0,
+            minWidth: 0,
+            justifyContent: "flex-start",
+            gap: 1.25,
+            borderRadius: 1.5,
+            px: 0.5,
+            py: 0.25
+          }}
         >
           <Box
             component="img"
@@ -77,7 +87,7 @@ export function TopAppBar({ sidebarWidth, onMenuClick }: TopAppBarProps) {
           <Typography variant="h3" component="div">
             AirType
           </Typography>
-        </Stack>
+        </ButtonBase>
         <Box sx={{ flex: 1 }} />
         <Stack
           direction="row"
