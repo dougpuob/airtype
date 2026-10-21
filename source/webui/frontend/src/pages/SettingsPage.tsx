@@ -1,7 +1,7 @@
 import {
   Alert,
+  Box,
   Button,
-  Divider,
   FormControlLabel,
   Grid,
   LinearProgress,
@@ -12,6 +12,7 @@ import {
   TextField,
   Typography
 } from "@mui/material";
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useSettingsQuery, useUpdateSettingsMutation } from "../api/settings";
 import type { AppSettings } from "../types/settings";
@@ -57,6 +58,9 @@ export function SettingsPage() {
 
   const selectedModels = useMemo(() => draft?.llm?.models || [], [draft?.llm?.models]);
   const canSave = Boolean(draft) && !settingsQuery.isLoading && !updateSettings.isPending;
+  const authEnabled = Boolean(draft?.auth?.enabled);
+  const thinkingSteps = draft?.capture_post?.thinking_steps ?? ["title"];
+  const aiTitleEnabled = draft?.capture_post?.ai_title_enabled ?? true;
 
   function updateSection<K extends keyof AppSettings>(section: K, values: NonNullable<AppSettings[K]>) {
     setDraft((current) => ({
@@ -99,180 +103,320 @@ export function SettingsPage() {
 
         <Grid container spacing={2}>
           <Grid size={{ xs: 12, lg: 6 }}>
-            <WorkspacePanel>
-              <Stack spacing={1.5} sx={settingsPanelSx}>
-                <Typography variant="h3">Web UI Access</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Cookie-based login for the browser UI and API.
-                </Typography>
-                <Divider />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={Boolean(draft?.auth?.enabled)}
-                      onChange={(event) => updateSection("auth", { enabled: event.target.checked })}
+            <SettingsSection title="Access" description="Cookie login for the browser UI and API.">
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={authEnabled}
+                    onChange={(event) => updateSection("auth", { enabled: event.target.checked })}
+                  />
+                }
+                label="Require username and password"
+              />
+              <FieldGrid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Username"
+                    disabled={!authEnabled}
+                    value={draft?.auth?.username || ""}
+                    onChange={(event) => updateSection("auth", { username: event.target.value })}
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Password"
+                    type="password"
+                    disabled={!authEnabled}
+                    value={draft?.auth?.password || ""}
+                    onChange={(event) => updateSection("auth", { password: event.target.value })}
+                    helperText={
+                      draft?.auth?.password_configured
+                        ? "A password is already set. Leave blank to keep it."
+                        : "Password used on the AirType login page."
+                    }
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Stay signed in (days)"
+                    type="number"
+                    disabled={!authEnabled}
+                    value={draft?.auth?.session_days ?? 14}
+                    onChange={(event) =>
+                      updateSection("auth", {
+                        session_days: Math.min(90, Math.max(1, Number(event.target.value) || 14))
+                      })
+                    }
+                    inputProps={{ min: 1, max: 90, step: 1 }}
+                    helperText="New sessions last 1–90 days."
+                  />
+                </Grid>
+              </FieldGrid>
+            </SettingsSection>
+          </Grid>
+
+          <Grid size={{ xs: 12, lg: 6 }}>
+            <SettingsSection title="Notes" description="Where Save to Obsidian puts the draft.">
+              <FieldGrid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Vault name"
+                    placeholder="Leave blank for the open vault"
+                    value={draft?.obsidian?.vault_name || ""}
+                    onChange={(event) => updateSection("obsidian", { vault_name: event.target.value })}
+                    helperText="Must match Obsidian’s vault switcher. Leave blank unless you need to switch vaults."
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Default folder"
+                    placeholder="Inbox/AirType"
+                    value={draft?.obsidian?.default_folder || ""}
+                    onChange={(event) => updateSection("obsidian", { default_folder: event.target.value })}
+                    helperText="Folder inside the vault, for example airtype. Do not put the vault name here."
+                  />
+                </Grid>
+              </FieldGrid>
+            </SettingsSection>
+          </Grid>
+
+          <Grid size={{ xs: 12 }}>
+            <SettingsSection title="Capture" description="Cookies for logged-in media, and Immich for note photos.">
+              <Grid container spacing={2.5}>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <Subsection title="yt-dlp">
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Cookies file"
+                      value={draft?.ytdlp?.cookies || ""}
+                      onChange={(event) => updateSection("ytdlp", { cookies: event.target.value })}
+                      helperText="Netscape cookies file. Also used as Threads login cookies when present."
                     />
-                  }
-                  label="Require username and password"
-                />
-                <TextField
-                  size="small"
-                  label="Username"
-                  value={draft?.auth?.username || ""}
-                  onChange={(event) => updateSection("auth", { username: event.target.value })}
-                />
-                <TextField
-                  size="small"
-                  label="Password"
-                  type="password"
-                  value={draft?.auth?.password || ""}
-                  onChange={(event) => updateSection("auth", { password: event.target.value })}
-                  helperText={
-                    draft?.auth?.password_configured
-                      ? "A password is configured. Leave this blank to keep it unchanged."
-                      : "Set the password required by the AirType login page."
-                  }
-                />
-                <TextField
-                  size="small"
-                  label="Stay signed in (days)"
-                  type="number"
-                  value={draft?.auth?.session_days ?? 14}
-                  onChange={(event) =>
-                    updateSection("auth", {
-                      session_days: Math.min(90, Math.max(1, Number(event.target.value) || 14))
-                    })
-                  }
-                  inputProps={{ min: 1, max: 90, step: 1 }}
-                  helperText="New login sessions expire after this many days (1–90)."
-                />
-              </Stack>
-            </WorkspacePanel>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Cookies from browser"
+                      value={draft?.ytdlp?.cookies_from_browser || ""}
+                      onChange={(event) => updateSection("ytdlp", { cookies_from_browser: event.target.value })}
+                      helperText="For age-restricted or logged-in videos. YouTube also needs Deno 2.3+."
+                    />
+                  </Subsection>
+                </Grid>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <Subsection title="Immich">
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Server URL"
+                      placeholder="https://immich.example.com"
+                      value={draft?.immich?.server_url || ""}
+                      onChange={(event) => updateSection("immich", { server_url: event.target.value })}
+                      helperText="Tailscale MagicDNS names (*.ts.net) work even if Use Tailscale DNS is off."
+                    />
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="API key"
+                      value={draft?.immich?.api_key || ""}
+                      onChange={(event) => updateSection("immich", { api_key: event.target.value })}
+                      helperText="API key for the Immich account that stores note photos."
+                    />
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={draft?.immich?.create_album ?? false}
+                          onChange={(event) => updateSection("immich", { create_album: event.target.checked })}
+                        />
+                      }
+                      label="Create one Immich album per article"
+                    />
+                    <Typography variant="caption" color="text.secondary">
+                      Each note gets a GUID tag on its Immich images. Without Immich, original image URLs are kept.
+                    </Typography>
+                  </Subsection>
+                </Grid>
+              </Grid>
+            </SettingsSection>
           </Grid>
 
-          <Grid size={{ xs: 12, lg: 6 }}>
-            <WorkspacePanel>
-              <Stack spacing={1.5} sx={settingsPanelSx}>
-                <Typography variant="h3">Whisper Server</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Speech recognition model, server, and language defaults.
-                </Typography>
-                <Divider />
-                <TextField
-                  select
-                  size="small"
-                  label="Language"
-                  value={draft?.whisper?.language || "zh-tw"}
-                  onChange={(event) => updateSection("whisper", { language: event.target.value })}
-                >
-                  {languageOptions.map((option) => (
-                    <MenuItem key={option.value} value={option.value}>
-                      {option.label}
-                    </MenuItem>
-                  ))}
-                </TextField>
-                <TextField
-                  size="small"
-                  label="Remote endpoint"
-                  value={draft?.whisper?.remote_endpoint || ""}
-                  onChange={(event) => updateSection("whisper", { remote_endpoint: event.target.value })}
-                />
-                <TextField
-                  size="small"
-                  label="Model directory"
-                  value={draft?.whisper?.model_dir || ""}
-                  onChange={(event) => updateSection("whisper", { model_dir: event.target.value })}
-                />
-                <TextField
-                  size="small"
-                  label="Model filename"
-                  value={draft?.whisper?.model_filename || ""}
-                  onChange={(event) => updateSection("whisper", { model_filename: event.target.value })}
-                />
-                <TextField
-                  size="small"
-                  label="Server binary"
-                  value={draft?.whisper?.server_bin || ""}
-                  onChange={(event) => updateSection("whisper", { server_bin: event.target.value })}
-                />
-                <TextField
-                  size="small"
-                  label="Server args"
-                  value={draft?.whisper?.server_args || ""}
-                  onChange={(event) => updateSection("whisper", { server_args: event.target.value })}
-                />
-              </Stack>
-            </WorkspacePanel>
+          <Grid size={{ xs: 12 }}>
+            <SettingsSection title="Speech" description="Whisper language and server used for voice clips.">
+              <Grid container spacing={2.5}>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <Subsection title="Recognition">
+                    <TextField
+                      select
+                      fullWidth
+                      size="small"
+                      label="Language"
+                      value={draft?.whisper?.language || "zh-tw"}
+                      onChange={(event) => updateSection("whisper", { language: event.target.value })}
+                    >
+                      {languageOptions.map((option) => (
+                        <MenuItem key={option.value} value={option.value}>
+                          {option.label}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                    <Typography variant="caption" color="text.secondary">
+                      IME mode pastes raw speech-to-text and does not send it to the LLM.
+                    </Typography>
+                  </Subsection>
+                </Grid>
+                <Grid size={{ xs: 12, md: 8 }}>
+                  <Subsection title="Server">
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Remote endpoint"
+                      value={draft?.whisper?.remote_endpoint || ""}
+                      onChange={(event) => updateSection("whisper", { remote_endpoint: event.target.value })}
+                    />
+                    <FieldGrid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Model directory"
+                          value={draft?.whisper?.model_dir || ""}
+                          onChange={(event) => updateSection("whisper", { model_dir: event.target.value })}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Model filename"
+                          value={draft?.whisper?.model_filename || ""}
+                          onChange={(event) => updateSection("whisper", { model_filename: event.target.value })}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Server binary"
+                          value={draft?.whisper?.server_bin || ""}
+                          onChange={(event) => updateSection("whisper", { server_bin: event.target.value })}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Server args"
+                          value={draft?.whisper?.server_args || ""}
+                          onChange={(event) => updateSection("whisper", { server_args: event.target.value })}
+                        />
+                      </Grid>
+                    </FieldGrid>
+                  </Subsection>
+                </Grid>
+              </Grid>
+            </SettingsSection>
           </Grid>
 
-          <Grid size={{ xs: 12, lg: 6 }}>
-            <WorkspacePanel>
-              <Stack spacing={1.5} sx={settingsPanelSx}>
-                <Typography variant="h3">Local LLM Model</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Default model used for transcript polishing, tags, and generated titles.
-                </Typography>
-                <Divider />
-                <TextField
-                  size="small"
-                  label="Server name"
-                  value={draft?.llm?.name || "default"}
-                  onChange={(event) => updateSection("llm", { name: event.target.value })}
-                />
-                <TextField
-                  select
-                  size="small"
-                  label="Provider"
-                  value={draft?.llm?.provider || "llama.cpp"}
-                  onChange={(event) => updateSection("llm", { provider: event.target.value })}
-                >
-                  {providerOptions.map((provider) => (
-                    <MenuItem key={provider} value={provider}>
-                      {provider}
-                    </MenuItem>
-                  ))}
-                </TextField>
-                <TextField
-                  size="small"
-                  label="Endpoint"
-                  value={draft?.llm?.endpoint || ""}
-                  onChange={(event) => updateSection("llm", { endpoint: event.target.value })}
-                />
-                <TextField
-                  size="small"
-                  label="API key"
-                  type="password"
-                  value={draft?.llm?.api_key || ""}
-                  onChange={(event) => updateSection("llm", { api_key: event.target.value })}
-                />
-                <TextField
-                  select={selectedModels.length > 0}
-                  size="small"
-                  label="Selected model"
-                  value={draft?.llm?.selected_model || draft?.llm?.model || ""}
-                  onChange={(event) => updateSection("llm", { selected_model: event.target.value, model: event.target.value })}
-                >
-                  {selectedModels.map((model) => (
-                    <MenuItem key={model} value={model}>
-                      {model}
-                    </MenuItem>
-                  ))}
-                </TextField>
-                <TextField
-                  size="small"
-                  label="Context length"
-                  type="number"
-                  value={draft?.llm?.contextLength ?? 8192}
-                  onChange={(event) => updateSection("llm", { contextLength: Number(event.target.value) || 8192 })}
-                />
-                <TextField
-                  size="small"
-                  label="Temperature"
-                  type="number"
-                  value={draft?.llm?.temperature ?? 0.4}
-                  onChange={(event) => updateSection("llm", { temperature: Number(event.target.value) })}
-                  inputProps={{ min: 0, max: 2, step: 0.1 }}
-                />
+          <Grid size={{ xs: 12 }}>
+            <SettingsSection title="AI" description="Local LLM used for polishing, titles, and tags.">
+              <Subsection title="Connection">
+                <FieldGrid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Server name"
+                      value={draft?.llm?.name || "default"}
+                      onChange={(event) => updateSection("llm", { name: event.target.value })}
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      select
+                      fullWidth
+                      size="small"
+                      label="Provider"
+                      value={draft?.llm?.provider || "llama.cpp"}
+                      onChange={(event) => updateSection("llm", { provider: event.target.value })}
+                    >
+                      {providerOptions.map((provider) => (
+                        <MenuItem key={provider} value={provider}>
+                          {provider}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Endpoint"
+                      value={draft?.llm?.endpoint || ""}
+                      onChange={(event) => updateSection("llm", { endpoint: event.target.value })}
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="API key"
+                      type="password"
+                      value={draft?.llm?.api_key || ""}
+                      onChange={(event) => updateSection("llm", { api_key: event.target.value })}
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      select={selectedModels.length > 0}
+                      fullWidth
+                      size="small"
+                      label="Selected model"
+                      value={draft?.llm?.selected_model || draft?.llm?.model || ""}
+                      onChange={(event) =>
+                        updateSection("llm", { selected_model: event.target.value, model: event.target.value })
+                      }
+                    >
+                      {selectedModels.map((model) => (
+                        <MenuItem key={model} value={model}>
+                          {model}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 3 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Context length"
+                      type="number"
+                      value={draft?.llm?.contextLength ?? 8192}
+                      onChange={(event) => updateSection("llm", { contextLength: Number(event.target.value) || 8192 })}
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 3 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Temperature"
+                      type="number"
+                      value={draft?.llm?.temperature ?? 0.4}
+                      onChange={(event) => updateSection("llm", { temperature: Number(event.target.value) })}
+                      inputProps={{ min: 0, max: 2, step: 0.1 }}
+                    />
+                  </Grid>
+                </FieldGrid>
+              </Subsection>
+              <Subsection title="Thinking">
                 <FormControlLabel
                   control={
                     <Switch
@@ -282,179 +426,82 @@ export function SettingsPage() {
                   }
                   label="Disable thinking for faster responses"
                 />
-                <TextField
-                  size="small"
-                  label="Default system prompt"
-                  multiline
-                  minRows={4}
-                  value={draft?.llm?.system || ""}
-                  onChange={(event) => updateSection("llm", { system: event.target.value })}
-                />
-              </Stack>
-            </WorkspacePanel>
-          </Grid>
-
-          <Grid size={{ xs: 12, lg: 6 }}>
-            <WorkspacePanel>
-              <Stack spacing={1.5} sx={settingsPanelSx}>
-                <Typography variant="h3">IME Transcription</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  IME mode pastes the raw speech-to-text result without sending it to the local LLM.
+                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        size="small"
+                        checked={thinkingSteps.includes("polish")}
+                        onChange={(event) => toggleThinkingStep("polish", event.target.checked)}
+                      />
+                    }
+                    label="Polish"
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        size="small"
+                        checked={thinkingSteps.includes("title")}
+                        onChange={(event) => toggleThinkingStep("title", event.target.checked)}
+                      />
+                    }
+                    label="Titles"
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        size="small"
+                        checked={thinkingSteps.includes("tags")}
+                        onChange={(event) => toggleThinkingStep("tags", event.target.checked)}
+                      />
+                    }
+                    label="Tags"
+                  />
+                </Stack>
+                <Typography variant="caption" color="text.secondary">
+                  Titles use thinking by default. Turn it on for polishing and tags if you want slower, more careful steps.
                 </Typography>
-                <Divider />
-                <Alert severity="info">
-                  LLM polishing is disabled for IME transcription. Capture Post and Voice to Text can still use the configured LLM.
-                </Alert>
-              </Stack>
-            </WorkspacePanel>
-          </Grid>
-
-          <Grid size={{ xs: 12, lg: 6 }}>
-            <WorkspacePanel>
-              <Stack spacing={1.5} sx={settingsPanelSx}>
-                <Typography variant="h3">AI Titles</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Configure AI-generated note titles for Obsidian Clipper.
-                </Typography>
-                <Divider />
+              </Subsection>
+              <Subsection title="Writing">
                 <FormControlLabel
                   control={
                     <Switch
-                      checked={draft?.capture_post?.ai_title_enabled ?? true}
+                      checked={aiTitleEnabled}
+                      onChange={(event) => updateSection("capture_post", { ai_title_enabled: event.target.checked })}
+                    />
+                  }
+                  label="Generate note titles with AI"
+                />
+                <FieldGrid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Default system prompt"
+                      multiline
+                      minRows={4}
+                      value={draft?.llm?.system || ""}
+                      onChange={(event) => updateSection("llm", { system: event.target.value })}
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Title system prompt"
+                      multiline
+                      minRows={4}
+                      disabled={!aiTitleEnabled}
+                      value={draft?.capture_post?.title_system_prompt || ""}
                       onChange={(event) =>
-                        updateSection("capture_post", { ai_title_enabled: event.target.checked })
+                        updateSection("capture_post", { title_system_prompt: event.target.value })
                       }
+                      helperText="Used when a workflow asks the LLM for a title."
                     />
-                  }
-                  label="Generate workflow titles with AI"
-                />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={(draft?.capture_post?.thinking_steps ?? ["title"]).includes("polish")}
-                      onChange={(event) => toggleThinkingStep("polish", event.target.checked)}
-                    />
-                  }
-                  label="Use thinking when polishing"
-                />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={(draft?.capture_post?.thinking_steps ?? ["title"]).includes("title")}
-                      onChange={(event) => toggleThinkingStep("title", event.target.checked)}
-                    />
-                  }
-                  label="Use thinking when writing titles"
-                />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={(draft?.capture_post?.thinking_steps ?? ["title"]).includes("tags")}
-                      onChange={(event) => toggleThinkingStep("tags", event.target.checked)}
-                    />
-                  }
-                  label="Use thinking when generating tags"
-                />
-                <Typography variant="body2" color="text.secondary">
-                  Titles use thinking by default. You can also turn it on for polishing and tags.
-                </Typography>
-                <TextField
-                  size="small"
-                  label="Title system prompt"
-                  multiline
-                  minRows={5}
-                  disabled={draft?.capture_post?.ai_title_enabled === false}
-                  value={draft?.capture_post?.title_system_prompt || ""}
-                  onChange={(event) =>
-                    updateSection("capture_post", { title_system_prompt: event.target.value })
-                  }
-                  helperText="Sent as the system prompt when either workflow asks the selected LLM to generate a title."
-                />
-              </Stack>
-            </WorkspacePanel>
-          </Grid>
-
-          <Grid size={{ xs: 12, lg: 6 }}>
-            <WorkspacePanel>
-              <Stack spacing={1.5} sx={settingsPanelSx}>
-                <Typography variant="h3">Obsidian and Downloads</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Save to Obsidian copies the note to the clipboard and opens a short Obsidian URI. Leave the vault name blank to use the vault that is currently open. Media URL imports use yt-dlp.
-                </Typography>
-                <Divider />
-                <TextField
-                  size="small"
-                  label="Obsidian vault name"
-                  placeholder="Leave blank for the open vault"
-                  value={draft?.obsidian?.vault_name || ""}
-                  onChange={(event) => updateSection("obsidian", { vault_name: event.target.value })}
-                  helperText="Must match the name in Obsidian’s vault switcher exactly. This is not a folder inside the vault. Leave blank unless you need to switch vaults."
-                />
-                <TextField
-                  size="small"
-                  label="Obsidian default folder"
-                  placeholder="Inbox/AirType"
-                  value={draft?.obsidian?.default_folder || ""}
-                  onChange={(event) => updateSection("obsidian", { default_folder: event.target.value })}
-                  helperText="Folder inside the vault, for example airtype. Do not put the vault name here."
-                />
-                <TextField
-                  size="small"
-                  label="yt-dlp cookies file"
-                  value={draft?.ytdlp?.cookies || ""}
-                  onChange={(event) => updateSection("ytdlp", { cookies: event.target.value })}
-                />
-                <TextField
-                  size="small"
-                  label="yt-dlp cookies from browser"
-                  value={draft?.ytdlp?.cookies_from_browser || ""}
-                  onChange={(event) => updateSection("ytdlp", { cookies_from_browser: event.target.value })}
-                  helperText="Cookies help age-restricted or logged-in videos. YouTube also needs Deno 2.3+ (brew install deno)."
-                />
-                <Alert severity="info">
-                  Obsidian notes are opened with the local Obsidian app using the generated note title and Markdown body.
-                </Alert>
-              </Stack>
-            </WorkspacePanel>
-          </Grid>
-
-          <Grid size={{ xs: 12, lg: 6 }}>
-            <WorkspacePanel>
-              <Stack spacing={1.5} sx={settingsPanelSx}>
-                <Typography variant="h3">Article Capture and Immich</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Obsidian Clipper captures web pages outside the known sources locally with Trafilatura; note photos from posts and articles are stored in Immich and rendered from key-gated share links.
-                </Typography>
-                <Divider />
-                <TextField
-                  size="small"
-                  label="Immich server URL"
-                  placeholder="https://immich.example.com"
-                  value={draft?.immich?.server_url || ""}
-                  onChange={(event) => updateSection("immich", { server_url: event.target.value })}
-                  helperText="Tailscale MagicDNS names (*.ts.net) work even if Use Tailscale DNS is off."
-                />
-                <TextField
-                  size="small"
-                  label="Immich API key"
-                  value={draft?.immich?.api_key || ""}
-                  onChange={(event) => updateSection("immich", { api_key: event.target.value })}
-                  helperText="API key of the dedicated Immich account that collects article images."
-                />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={draft?.immich?.create_album ?? false}
-                      onChange={(event) => updateSection("immich", { create_album: event.target.checked })}
-                    />
-                  }
-                  label="Also create one Immich album per article"
-                />
-                <Alert severity="info">
-                  Every note gets a GUID and all of its Immich images carry that GUID as a tag. Without Immich settings, images keep their original URLs.
-                </Alert>
-              </Stack>
-            </WorkspacePanel>
+                  </Grid>
+                </FieldGrid>
+              </Subsection>
+            </SettingsSection>
           </Grid>
         </Grid>
       </Stack>
@@ -467,6 +514,54 @@ export function SettingsPage() {
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       />
     </PageScaffold>
+  );
+}
+
+function SettingsSection({
+  title,
+  description,
+  children
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <WorkspacePanel>
+      <Stack spacing={1.75} sx={settingsPanelSx}>
+        <Box>
+          <Typography variant="h3">{title}</Typography>
+          {description ? (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              {description}
+            </Typography>
+          ) : null}
+        </Box>
+        {children}
+      </Stack>
+    </WorkspacePanel>
+  );
+}
+
+function Subsection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Stack spacing={1.25}>
+      <Typography
+        variant="overline"
+        sx={{ color: "text.secondary", fontWeight: 800, letterSpacing: 0.4, lineHeight: 1.2 }}
+      >
+        {title}
+      </Typography>
+      {children}
+    </Stack>
+  );
+}
+
+function FieldGrid({ children }: { children: ReactNode }) {
+  return (
+    <Grid container spacing={1.5}>
+      {children}
+    </Grid>
   );
 }
 
