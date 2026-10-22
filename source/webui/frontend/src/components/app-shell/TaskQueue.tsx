@@ -39,6 +39,34 @@ export function clipKindLabel(kind: string) {
   return kindLabel[kind] || kind;
 }
 
+const platformNames: Array<[RegExp, string]> = [
+  [/(^|\.)threads\.(net|com)$/, "Threads"],
+  [/(^|\.)instagram\.com$/, "Instagram"],
+  [/(^|\.)(x|twitter)\.com$/, "X"],
+  [/(^|\.)(youtube\.com|youtu\.be)$/, "YouTube"],
+  [/(^|\.)(bilibili\.com|b23\.tv)$/, "Bilibili"],
+  [/(^|\.)facebook\.com$/, "Facebook"]
+];
+
+const reservedPaths = new Set(["p", "reel", "reels", "post", "watch", "shorts", "video", "status", "i", "home", "explore"]);
+
+/** Platform and account parsed from a clip URL, e.g. "Threads @n.ina3373". */
+export function clipAccount(source: string) {
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    return "";
+  }
+  const host = url.hostname.replace(/^www\./, "").replace(/^m\./, "");
+  const platform = platformNames.find(([pattern]) => pattern.test(host))?.[1] || host;
+  const first = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] || "");
+  let user = "";
+  if (first.startsWith("@")) user = first;
+  else if (["Threads", "Instagram", "X"].includes(platform) && first && !reservedPaths.has(first.toLowerCase())) user = `@${first}`;
+  return user ? `${platform} ${user}` : platform;
+}
+
 export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}) {
   const { requests, selectedId, select } = useClipRequestSelection();
   const cancelClip = useCancelClipRequestMutation();
@@ -126,24 +154,29 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
                 </IconButton>
                 <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, mb: 0.25, alignItems: "center" }}>
                   <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0, flex: 1 }}>
-                    <Chip
-                      size="small"
-                      color={clipOrigin(task) === "watching" ? "secondary" : "primary"}
-                      label={clipOriginLabel(clipOrigin(task))}
-                      sx={{ height: 18, "& .MuiChip-label": { px: 0.75, fontSize: 10 } }}
-                    />
+                    <Typography variant="caption" fontWeight={600} noWrap>
+                      {formatClipTime(task.id)}
+                    </Typography>
                     <Chip
                       size="small"
                       variant="outlined"
                       label={clipKindLabel(task.kind)}
                       sx={{ height: 18, "& .MuiChip-label": { px: 0.75, fontSize: 10 } }}
                     />
-                    <Typography variant="caption" fontWeight={600} noWrap>
-                      {formatClipTime(task.id)}
-                    </Typography>
                   </Box>
                   <Typography variant="caption" fontWeight={600} noWrap sx={{ color: statusColor[task.status] || "#647084" }}>
                     {statusLabel[task.status] || task.status}
+                  </Typography>
+                </Box>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0, mb: 0.25 }}>
+                  <Chip
+                    size="small"
+                    color={clipOrigin(task) === "watching" ? "secondary" : "primary"}
+                    label={clipOriginLabel(clipOrigin(task))}
+                    sx={{ height: 18, flexShrink: 0, "& .MuiChip-label": { px: 0.75, fontSize: 10 } }}
+                  />
+                  <Typography variant="caption" fontWeight={600} noWrap sx={{ minWidth: 0 }}>
+                    {clipAccount(task.source)}
                   </Typography>
                 </Box>
                 <Typography
