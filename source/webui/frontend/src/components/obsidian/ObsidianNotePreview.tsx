@@ -53,10 +53,7 @@ export function ObsidianNotePreview({ draft, emptyMessage, polishedFallback, ori
         bgcolor: "#1F2330",
         color: "#F1F4FA",
         borderColor: "#343A4A",
-        flex: 1,
-        minHeight: 0,
-        height: "100%",
-        overflow: "auto"
+        flex: 1
       }}
     >
       <Stack spacing={2.25}>

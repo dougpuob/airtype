@@ -14,6 +14,7 @@ export function PageScaffold({ title, eyebrow, actions, children, fill }: PageSc
       spacing={2.5}
       sx={{
         minHeight: "100%",
+        flexShrink: fill ? 1 : 0,
         ...(fill
           ? {
               flex: 1,

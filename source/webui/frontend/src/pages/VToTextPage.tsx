@@ -932,7 +932,7 @@ export function VToTextPage() {
     : emptyMessage;
 
   return (
-    <PageScaffold fill>
+    <PageScaffold>
       <WorkspacePanel>
         <Stack spacing={2.25} sx={{ minWidth: 0 }}>
           <Box
@@ -1063,7 +1063,7 @@ export function VToTextPage() {
         </Stack>
       </WorkspacePanel>
 
-      <WorkspacePanel fill>
+      <WorkspacePanel>
         <Stack spacing={1.5} sx={{ flex: 1, minHeight: 0 }}>
           <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1} sx={{ flexShrink: 0 }}>
             <Stack spacing={0.25} sx={{ minWidth: 0 }}>
