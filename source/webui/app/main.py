@@ -1755,8 +1755,8 @@ async def create_clip_request(request: ClipCreateRequest):
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-def _submit_clip_url(url: str, notes: str = "") -> Dict[str, Any]:
-    """Queue one URL in the Obsidian Clipper (shared by the API and Watch)."""
+def _submit_clip_url(url: str, notes: str = "", origin: str = "manual") -> Dict[str, Any]:
+    """Queue one URL in the Obsidian Clipper (shared by the API and Watching)."""
     url = str(url or "").strip()
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -1772,21 +1772,26 @@ def _submit_clip_url(url: str, notes: str = "") -> Dict[str, Any]:
         )
         temp_path = os.path.join(_job_dir(job_id), f"source{os.path.splitext(parsed.path)[1] or '.media'}")
         _update_job_source(job_id, temp_path)
-        clip_request_id = _attach_clip_request(job_id, "voice", url, notes=notes)
+        clip_request_id = _attach_clip_request(job_id, "voice", url, notes=notes, origin=origin)
         executor.submit(_run_url_transcription_job, job_id, url, temp_path, options)
         record = clip_requests.get(clip_request_id)
         return record
     if pipeline == "capture-post":
-        record = clip_requests.create(kind="post", source=url, notes=notes)
+        record = clip_requests.create(kind="post", source=url, notes=notes, origin=origin)
         clip_executor.submit(_run_post_clip, record["id"], url)
         return record
-    record = clip_requests.create(kind="article", source=url, notes=notes)
+    record = clip_requests.create(kind="article", source=url, notes=notes, origin=origin)
     clip_executor.submit(_run_article_clip, record["id"], url)
     return record
 
 
+def _submit_watch_clip_url(url: str) -> Dict[str, Any]:
+    """Queue a URL discovered by Watching."""
+    return _submit_clip_url(url, origin="watching")
+
+
 # --------------------------------------------------------------------------- #
-# Watch: scheduled checks of Threads profiles
+# Watching: scheduled checks of Threads profiles
 # --------------------------------------------------------------------------- #
 
 _watch_store = threads_watch.WatchStore(WEBUI_DATA_DIR)
@@ -1828,7 +1833,7 @@ def _watch_run_check(target_id: str, *, queue: bool) -> Dict[str, Any]:
         target = _watch_store.get(target_id)
         if not target:
             raise KeyError(target_id)
-        checked = threads_watch.run_check(target, fetch_fn=_watch_fetch, queue_fn=_submit_clip_url, queue=queue)
+        checked = threads_watch.run_check(target, fetch_fn=_watch_fetch, queue_fn=_submit_watch_clip_url, queue=queue)
         result = checked.pop("_check", {})
         if queue:
             current = _watch_store.get(target_id)
@@ -1926,7 +1931,7 @@ async def probe_watch(request: WatchProbeRequest):
         raise HTTPException(status_code=400, detail=str(error)) from error
     target = threads_watch.new_target(username)
     checked = await asyncio.to_thread(
-        threads_watch.run_check, target, fetch_fn=_watch_fetch, queue_fn=_submit_clip_url, queue=False
+        threads_watch.run_check, target, fetch_fn=_watch_fetch, queue_fn=_submit_watch_clip_url, queue=False
     )
     return {"username": username, "profile_url": threads_watch.profile_url(username), "result": checked.get("_check")}
 
@@ -3681,8 +3686,8 @@ def _public_job(job: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _attach_clip_request(job_id: str, kind: str, source: str, notes: str = "") -> str:
-    clip = clip_requests.create(kind=kind, source=source, notes=notes)
+def _attach_clip_request(job_id: str, kind: str, source: str, notes: str = "", origin: str = "manual") -> str:
+    clip = clip_requests.create(kind=kind, source=source, notes=notes, origin=origin)
     transcription_jobs[job_id]["clip_request_id"] = clip["id"]
     clip_requests.update(clip["id"], job_id=job_id)
     return str(clip["id"])

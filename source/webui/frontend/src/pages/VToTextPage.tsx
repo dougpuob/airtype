@@ -28,7 +28,7 @@ import {
   useTranscriptionRecordQuery,
   useUploadTranscriptionJobMutation
 } from "../api/transcription";
-import { clipStatusLabel, formatClipTime } from "../components/app-shell/TaskQueue";
+import { clipKindLabel, clipOrigin, clipOriginLabel, clipStatusLabel, formatClipTime } from "../components/app-shell/TaskQueue";
 import { useClipRequestSelection } from "../components/app-shell/ClipRequestContext";
 import { LlmApiKeyDialog } from "../components/llm/LlmApiKeyDialog";
 import { ObsidianNotePreview } from "../components/obsidian/ObsidianNotePreview";
@@ -1070,7 +1070,7 @@ export function VToTextPage() {
               <Typography variant="h3">Obsidian Preview</Typography>
               {selectedClip ? (
                 <Typography variant="body2" color="text.secondary" noWrap>
-                  {formatClipTime(selectedClip.id)} · {clipStatusLabel(selectedClip.status)} · {selectedClip.source}
+                  {clipOriginLabel(clipOrigin(selectedClip))} · {clipKindLabel(selectedClip.kind)} · {formatClipTime(selectedClip.id)} · {clipStatusLabel(selectedClip.status)} · {selectedClip.source}
                 </Typography>
               ) : null}
             </Stack>

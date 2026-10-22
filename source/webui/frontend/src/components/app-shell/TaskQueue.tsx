@@ -1,5 +1,5 @@
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
-import { Box, Button, IconButton, LinearProgress, Typography } from "@mui/material";
+import { Box, Button, Chip, IconButton, LinearProgress, Typography } from "@mui/material";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useCancelClipRequestMutation, useDeleteClipRequestMutation, type ClipRequest } from "../../api/clipRequests";
 import { useSettingsQuery } from "../../api/settings";
@@ -20,6 +20,24 @@ const statusColor: Record<string, string> = {
   completed: "#1F7A4D",
   failed: "#B42318"
 };
+
+const kindLabel: Record<string, string> = {
+  voice: "Voice",
+  article: "Article",
+  post: "Post"
+};
+
+export function clipOrigin(request: Pick<ClipRequest, "origin">) {
+  return request.origin === "watching" ? "watching" : "manual";
+}
+
+export function clipOriginLabel(origin: string) {
+  return origin === "watching" ? "Watching" : "Manual";
+}
+
+export function clipKindLabel(kind: string) {
+  return kindLabel[kind] || kind;
+}
 
 export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}) {
   const { requests, selectedId, select } = useClipRequestSelection();
@@ -106,10 +124,24 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
                 >
                   <CloseRoundedIcon sx={{ fontSize: 16 }} />
                 </IconButton>
-                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, mb: 0.25 }}>
-                  <Typography variant="caption" fontWeight={600} noWrap>
-                    {formatClipTime(task.id)}
-                  </Typography>
+                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, mb: 0.25, alignItems: "center" }}>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0, flex: 1 }}>
+                    <Chip
+                      size="small"
+                      color={clipOrigin(task) === "watching" ? "secondary" : "primary"}
+                      label={clipOriginLabel(clipOrigin(task))}
+                      sx={{ height: 18, "& .MuiChip-label": { px: 0.75, fontSize: 10 } }}
+                    />
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      label={clipKindLabel(task.kind)}
+                      sx={{ height: 18, "& .MuiChip-label": { px: 0.75, fontSize: 10 } }}
+                    />
+                    <Typography variant="caption" fontWeight={600} noWrap>
+                      {formatClipTime(task.id)}
+                    </Typography>
+                  </Box>
                   <Typography variant="caption" fontWeight={600} noWrap sx={{ color: statusColor[task.status] || "#647084" }}>
                     {statusLabel[task.status] || task.status}
                   </Typography>

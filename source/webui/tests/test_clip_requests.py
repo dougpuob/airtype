@@ -91,6 +91,15 @@ class ClipRequestStoreTests(unittest.TestCase):
         self.assertIn("# Notes\n\n  why I clipped this\n", draft["note"])
         self.assertEqual(draft["notes"], "  why I clipped this")
 
+    def test_origin_defaults_to_manual_and_can_be_watching(self) -> None:
+        manual = clip_requests.create(kind="article", source="https://example.com/page")
+        watching = clip_requests.create(kind="post", source="https://example.com/post", origin="watching")
+        unknown = clip_requests.create(kind="voice", source="clip.m4a", origin="elsewhere")
+        self.assertEqual(manual["origin"], "manual")
+        self.assertEqual(watching["origin"], "watching")
+        self.assertEqual(unknown["origin"], "manual")
+        self.assertEqual(clip_requests.get(watching["id"])["origin"], "watching")
+
     def test_notes_are_capped_and_empty_by_default(self) -> None:
         empty = clip_requests.create(kind="post", source="https://example.com/post")
         self.assertEqual(empty["notes"], "")

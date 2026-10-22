@@ -7,6 +7,7 @@ export type ClipRequest = {
   id: string;
   kind: "voice" | "article" | "post" | string;
   source: string;
+  origin?: "manual" | "watching" | string;
   notes?: string;
   status: ClipRequestStatus | string;
   step?: number;

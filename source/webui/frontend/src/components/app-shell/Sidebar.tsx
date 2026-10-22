@@ -17,7 +17,7 @@ type NavItem = {
 export const navItems: NavItem[] = [
   { label: "Dashboard", path: "/", icon: <DashboardOutlinedIcon /> },
   { label: "Obsidian Clipper", path: "/v-to-text", icon: <GraphicEqOutlinedIcon /> },
-  { label: "Watch", path: "/watch", icon: <NotificationsActiveOutlinedIcon /> }
+  { label: "Watching", path: "/watch", icon: <NotificationsActiveOutlinedIcon /> }
 ];
 
 export const settingsNavItem: NavItem = { label: "Settings", path: "/settings", icon: <SettingsOutlinedIcon /> };

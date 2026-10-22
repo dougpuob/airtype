@@ -1,4 +1,4 @@
-"""Scheduled checks of Threads profiles ("Watch" tab).
+"""Scheduled checks of Threads profiles ("Watching" tab).
 
 Each watch target lives in ``<data_dir>/watches/<target-id>.json`` with its
 config, last check result and a log of every post it has seen (no post body,

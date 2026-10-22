@@ -429,7 +429,7 @@ export function WatchPage() {
   const watches = useWatchesQuery();
   const minInterval = watches.data?.min_interval_minutes ?? 15;
   return (
-    <PageScaffold title="Watch" eyebrow="Scheduled checks">
+    <PageScaffold title="Watching" eyebrow="Scheduled checks">
       <AddWatchPanel minInterval={minInterval} />
       {watches.isError ? <Alert severity="error">Could not load watches: {errorText(watches.error)}</Alert> : null}
       {watches.data && !watches.data.scheduler_running ? (
