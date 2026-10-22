@@ -26,13 +26,35 @@ body {
   container-name: clipper-actions;
 }
 
-.clipper-action-row,
-.clipper-action-buttons {
+.clipper-action-row {
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
   width: 100%;
+}
+
+/* Phone: one row of rectangular buttons, left to right:
+   Choose File (paperclip, narrow) | Paste | Capture (equal width). */
+.clipper-action-buttons {
+  display: grid;
+  grid-template-columns: 64px 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+}
+
+.clipper-action-buttons > .MuiButton-root {
+  height: 56px;
+  min-width: 0;
+}
+
+.clipper-action-buttons > .clipper-btn-file {
+  order: -1;
+  padding: 0;
+}
+
+.clipper-btn-file .clipper-btn-file-text {
+  display: none;
 }
 
 .clipper-progress {
@@ -52,8 +74,26 @@ body {
   }
 
   .clipper-action-buttons {
+    display: flex;
     flex-direction: row;
     width: auto;
     flex-shrink: 0;
+  }
+
+  .clipper-action-buttons > .MuiButton-root {
+    height: 40px;
+  }
+
+  .clipper-action-buttons > .clipper-btn-file {
+    order: 0;
+    padding: 5px 15px;
+  }
+
+  .clipper-btn-file .clipper-btn-file-text {
+    display: inline;
+  }
+
+  .clipper-btn-file .clipper-btn-file-icon {
+    display: none;
   }
 }

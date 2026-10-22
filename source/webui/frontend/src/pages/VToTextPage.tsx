@@ -1,3 +1,4 @@
+import AttachFileRoundedIcon from "@mui/icons-material/AttachFileRounded";
 import LinkOutlinedIcon from "@mui/icons-material/LinkOutlined";
 import {
   Alert,
@@ -988,7 +989,7 @@ export function VToTextPage() {
                     variant="outlined"
                     disabled={submitLocked}
                     onClick={pasteClipboardUrl}
-                    sx={{ height: 40, whiteSpace: "nowrap" }}
+                    sx={{ whiteSpace: "nowrap" }}
                   >
                     Paste
                   </Button>
@@ -997,7 +998,7 @@ export function VToTextPage() {
                     color="primary"
                     disabled={mainActionDisabled}
                     onClick={() => void runClipperUrl()}
-                    sx={{ height: 40, whiteSpace: "nowrap" }}
+                    sx={{ whiteSpace: "nowrap" }}
                   >
                     {mainActionText}
                   </Button>
@@ -1005,9 +1006,13 @@ export function VToTextPage() {
                     variant="outlined"
                     component="label"
                     disabled={submitLocked}
+                    className="clipper-btn-file"
+                    aria-label="Choose File"
+                    title="Choose File"
                     sx={{ height: 40, whiteSpace: "nowrap", minWidth: { md: 112 } }}
                   >
-                    Choose File
+                    <AttachFileRoundedIcon className="clipper-btn-file-icon" />
+                    <span className="clipper-btn-file-text">Choose File</span>
                     <input
                       ref={fileInputRef}
                       hidden
