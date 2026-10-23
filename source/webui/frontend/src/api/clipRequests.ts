@@ -9,6 +9,7 @@ export type ClipRequest = {
   source: string;
   origin?: "manual" | "watching" | string;
   notes?: string;
+  external_content?: string;
   status: ClipRequestStatus | string;
   step?: number;
   progress: number;

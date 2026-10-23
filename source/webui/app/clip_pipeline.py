@@ -7,10 +7,12 @@ two kinds and writes the Obsidian draft back into the request JSON.
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Any, Callable
 from urllib.parse import urlparse
 
 from . import clip_requests
+from . import known_sources
 from . import web_article
 from .note_id import note_guid_for_source
 
@@ -36,6 +38,9 @@ POLISH_USER = """請將以下內容整理成一篇通順、簡潔、語氣中性
 
 KIND_TAGS = {"article": "web-article", "post": "capture-post", "voice": "speech-to-text"}
 ORIGINAL_HEADING = {"article": "Original Content", "post": "Original Content", "voice": "Original Transcript"}
+TRAILING_URL_PUNCTUATION = ".,;:!?。，、；：）)」』\"'"
+RAW_URL_PATTERN = re.compile(r"https?://[^\s<>\"'`]+")
+MARKDOWN_LINK_PATTERN = re.compile(r"(?<!!)\[[^\]]*\]\(\s*<?(https?://[^)\s>]+)>?")
 
 
 def run_article(request_id: str, url: str, *, settings: SettingsFn, chat: Chat) -> None:
@@ -146,16 +151,29 @@ def run_post(
             if record.get("embedded_url")
         }
         content = web_article.rewrite_image_links(content, mapping)
+    source_list = _unique(sources)
+    skip_urls = [*source_list, *[item for item in media_urls if isinstance(item, str)]]
+    linked_urls = extract_post_external_urls(content, skip=skip_urls)
+    external_pages: list[dict[str, str]] = []
+    if linked_urls:
+        if _stopped(request_id):
+            return
+        clip_requests.update(request_id, progress=40, message="Capturing linked pages")
+        external_pages = fetch_post_external_pages(
+            linked_urls,
+            timeout_seconds=int(web_to_markdown.get("timeout_seconds") or 60),
+        )
     _finish_text(
         request_id,
         kind="post",
         content=content,
         fallback_title=fallback_title,
-        sources=_unique(sources),
+        sources=source_list,
         guid=guid,
         share_url=share_url,
         settings=settings,
         chat=chat,
+        external_pages=external_pages,
     )
 
 
@@ -206,6 +224,7 @@ def build_draft(
     guid: str,
     share_url: str,
     notes: str = "",
+    external_content: str = "",
 ) -> dict[str, Any]:
     date_parts = _date_parts()
     clean_title = _sanitize_title(title) or "Untitled"
@@ -219,6 +238,7 @@ def build_draft(
         *[part.strip() for part in ai_tags.replace("，", ",").split(",") if part.strip()],
     ])
     user_notes = str(notes or "")
+    external_block = str(external_content or "") if kind == "post" else ""
     note = _note(
         kind=kind,
         title=clean_title,
@@ -231,6 +251,7 @@ def build_draft(
         share_url=share_url,
         date_parts=date_parts,
         notes=user_notes,
+        external_content=external_block,
     )
     return {
         "title": clean_title,
@@ -243,6 +264,7 @@ def build_draft(
         "guid": guid,
         "share_url": share_url,
         "notes": user_notes,
+        "external_content": external_block,
         "note_title": note_title,
         "note": note,
     }
@@ -259,13 +281,16 @@ def _finish_text(
     share_url: str,
     settings: SettingsFn,
     chat: Chat,
+    external_pages: list[dict[str, str]] | None = None,
 ) -> None:
     if _stopped(request_id):
         return
+    pages = [page for page in (external_pages or []) if isinstance(page, dict)]
+    polish_source = polish_source_text(content, pages)
     clip_requests.update(request_id, status="running", progress=80, message="AI polish")
     polished = ""
     try:
-        polished = chat(POLISH_SYSTEM, POLISH_USER.format(source=content), "polish").strip()
+        polished = chat(POLISH_SYSTEM, POLISH_USER.format(source=polish_source), "polish").strip()
     except Exception:
         polished = ""
     if _stopped(request_id):
@@ -305,6 +330,7 @@ def _finish_text(
         guid=guid,
         share_url=share_url,
         notes=_request_notes(request_id),
+        external_content=format_external_content(pages) if kind == "post" else "",
     )
     clip_requests.update(
         request_id,
@@ -346,13 +372,14 @@ def _note(
     share_url: str,
     date_parts: dict[str, str],
     notes: str = "",
+    external_content: str = "",
 ) -> str:
     source_yaml = "\n".join(f'  - "{_yaml_quote(item)}"' for item in sources)
     tag_yaml = "\n".join(f"  - {item}" for item in tags)
     share_line = f"immich_share: {share_url}\n" if share_url else ""
     heading = ORIGINAL_HEADING.get(kind, "Original Content")
     notes_block = f"{notes}\n\n" if notes.strip() else "\n\n"
-    return (
+    body = (
         f"---\n"
         f"title: {date_parts['date']} {title}\n"
         f"guid: {guid}\n"
@@ -362,9 +389,16 @@ def _note(
         f"tags:\n{tag_yaml}\n"
         f"notes: {_yaml_text(notes)}\n"
         f"---\n\n---\n\n# Title\n\n{title}\n\n---\n\n# Notes\n\n{notes_block}---\n\n"
+        f"# SQNA\n\n- **🙋🏻‍♂️  ?**\n\t-  ↪ \n\t-  ↪ \n\t-  ↪ \n\n---\n\n"
         f"# AI Tags\n\n{ai_tags}\n\n---\n\n# AI Polished Article\n\n{polished}\n\n---\n\n"
-        f"# {heading}\n\n{content}\n\n---\n\nEND"
+        f"# {heading}\n\n{content}\n\n---\n\n"
     )
+    if kind == "post":
+        if external_content.strip():
+            body += f"# Original External Content\n\n{external_content}\n\n---\n\n"
+        else:
+            body += "# Original External Content\n\n---\n\n"
+    return body + "END"
 
 
 def _request_notes(request_id: str) -> str:
@@ -427,3 +461,126 @@ def _first_line(text: str) -> str:
 def _looks_like_video(url: str) -> bool:
     path = urlparse(url).path.lower()
     return path.endswith((".mp4", ".mov", ".webm", ".m4v", ".mkv"))
+
+
+def extract_post_external_urls(content: str, *, skip: list[str] | None = None) -> list[str]:
+    """http(s) links in post text that can be fetched as web articles."""
+    skip_keys = {_url_key(item) for item in (skip or []) if item}
+    skip_keys.update(_url_key(item) for item in web_article.extract_image_urls(content))
+    found: list[str] = []
+    seen: set[str] = set()
+    candidates: list[tuple[int, str]] = []
+    for match in MARKDOWN_LINK_PATTERN.finditer(content or ""):
+        candidates.append((match.start(), match.group(1)))
+    for match in RAW_URL_PATTERN.finditer(content or ""):
+        candidates.append((match.start(), match.group(0)))
+    for _, raw in sorted(candidates, key=lambda item: item[0]):
+        _remember_external_url(raw, found, seen, skip_keys)
+    return found
+
+
+def fetch_post_external_pages(urls: list[str], *, timeout_seconds: int = 60) -> list[dict[str, str]]:
+    """Fetch each URL as a web article. Failed pages are skipped."""
+    pages: list[dict[str, str]] = []
+    for url in urls:
+        try:
+            markdown = web_article.fetch_markdown(url, timeout_seconds=timeout_seconds)
+        except Exception:
+            continue
+        title = _external_page_title(markdown, url)
+        pages.append({
+            "url": url,
+            "title": title,
+            "body": _strip_leading_title(markdown, title),
+        })
+    return pages
+
+
+def format_external_content(pages: list[dict[str, str]]) -> str:
+    """Nested Original External Content body: title, then URL, then article."""
+    blocks: list[str] = []
+    for page in pages:
+        title = str(page.get("title") or "").strip() or "Untitled"
+        url = str(page.get("url") or "").strip()
+        body = str(page.get("body") or "").strip()
+        block = f"## {title}\n\n{url}"
+        if body:
+            block += f"\n\n{body}"
+        blocks.append(block)
+    return "\n\n".join(blocks)
+
+
+def polish_source_text(content: str, pages: list[dict[str, str]]) -> str:
+    """Post markdown plus labeled external articles for the polish model."""
+    if not pages:
+        return content
+    parts = [f"原始貼文：\n{content}", "外部網頁："]
+    for page in pages:
+        title = str(page.get("title") or "").strip() or "Untitled"
+        url = str(page.get("url") or "").strip()
+        body = str(page.get("body") or "").strip()
+        block = f"標題：{title}\n位置：{url}"
+        if body:
+            block += f"\n{body}"
+        parts.append(block)
+    return "\n\n".join(parts)
+
+
+def _remember_external_url(raw: str, found: list[str], seen: set[str], skip_keys: set[str]) -> None:
+    url = _clean_extracted_url(raw)
+    key = _url_key(url)
+    if not url or not key or key in seen or key in skip_keys:
+        return
+    if not _is_fetchable_external_url(url):
+        return
+    seen.add(key)
+    found.append(url)
+
+
+def _is_fetchable_external_url(url: str) -> bool:
+    if web_article.blocked_host_reason(url):
+        return False
+    return known_sources.route_for_url(url) == known_sources.WEB_ARTICLE_PIPELINE
+
+
+def _clean_extracted_url(url: str) -> str:
+    value = str(url or "").strip()
+    while value and value[-1] in TRAILING_URL_PUNCTUATION:
+        value = value[:-1]
+    if value.endswith(")") and value.count("(") < value.count(")"):
+        value = value[:-1]
+    return value
+
+
+def _url_key(url: str) -> str:
+    cleaned = _clean_extracted_url(url)
+    if not cleaned:
+        return ""
+    try:
+        parsed = urlparse(cleaned)
+    except ValueError:
+        return cleaned.rstrip("/").lower()
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return ""
+    path = (parsed.path or "").rstrip("/")
+    return f"{(parsed.scheme or 'https').lower()}://{host}{path}"
+
+
+def _external_page_title(markdown: str, url: str) -> str:
+    title = " ".join(str(web_article.extract_title(markdown) or "").split())
+    if title:
+        return title
+    host = (urlparse(url).hostname or "").lower().removeprefix("www.")
+    return host or "Untitled"
+
+
+def _strip_leading_title(markdown: str, title: str) -> str:
+    text = str(markdown or "").strip()
+    if not text or not title:
+        return text
+    first, _, rest = text.partition("\n")
+    match = web_article.HEADING_PATTERN.match(first.strip())
+    if match and match.group(1).strip() == title:
+        return rest.strip()
+    return text

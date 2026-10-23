@@ -89,6 +89,10 @@ class ClipRequestStoreTests(unittest.TestCase):
         )
         self.assertIn('notes: "  why I clipped this"\n', draft["note"])
         self.assertIn("# Notes\n\n  why I clipped this\n", draft["note"])
+        self.assertIn("# SQNA\n\n- **🙋🏻‍♂️  ?**\n\t-  ↪ \n\t-  ↪ \n\t-  ↪ \n", draft["note"])
+        self.assertLess(draft["note"].index("# Notes"), draft["note"].index("# SQNA"))
+        self.assertLess(draft["note"].index("# SQNA"), draft["note"].index("# AI Tags"))
+        self.assertNotIn("# Original External Content", draft["note"])
         self.assertEqual(draft["notes"], "  why I clipped this")
 
     def test_origin_defaults_to_manual_and_can_be_watching(self) -> None:

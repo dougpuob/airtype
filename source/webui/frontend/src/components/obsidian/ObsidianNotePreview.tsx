@@ -1,5 +1,6 @@
 import { Box, Paper, Stack, Table, TableBody, TableCell, TableRow, Typography } from "@mui/material";
 import type { ReactNode } from "react";
+import { OBSIDIAN_SQNA_SCAFFOLD } from "../../utils/obsidian";
 
 type ObsidianPreviewDraft = {
   noteTitle: string;
@@ -12,6 +13,8 @@ type ObsidianPreviewDraft = {
   guid?: string;
   shareUrl?: string;
   notes?: string;
+  kind?: string;
+  externalContent?: string;
 };
 
 type ObsidianNotePreviewProps = {
@@ -53,7 +56,9 @@ export function ObsidianNotePreview({ draft, emptyMessage, polishedFallback, ori
         bgcolor: "#1F2330",
         color: "#F1F4FA",
         borderColor: "#343A4A",
-        flex: 1
+        flex: 1,
+        minHeight: 0,
+        overflowY: "auto"
       }}
     >
       <Stack spacing={2.25}>
@@ -64,6 +69,9 @@ export function ObsidianNotePreview({ draft, emptyMessage, polishedFallback, ori
         <PreviewSection title="Notes">
           {draft.notes?.trim() ? <MarkdownPreviewText text={draft.notes} /> : <Box sx={{ height: 48 }} />}
         </PreviewSection>
+        <PreviewSection title="SQNA">
+          <MarkdownPreviewText text={OBSIDIAN_SQNA_SCAFFOLD} />
+        </PreviewSection>
         <PreviewSection title="AI Tags">
           <MarkdownPreviewText text={draft.aiTags || "AI tags are not available yet."} />
         </PreviewSection>
@@ -73,6 +81,15 @@ export function ObsidianNotePreview({ draft, emptyMessage, polishedFallback, ori
         <PreviewSection title={originalTitle}>
           <MarkdownPreviewText text={draft.content} />
         </PreviewSection>
+        {draft.kind === "post" || Boolean(draft.externalContent?.trim()) ? (
+          <PreviewSection title="Original External Content">
+            {draft.externalContent?.trim() ? (
+              <MarkdownPreviewText text={draft.externalContent} />
+            ) : (
+              <Box sx={{ height: 48 }} />
+            )}
+          </PreviewSection>
+        ) : null}
       </Stack>
     </Paper>
   );

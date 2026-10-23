@@ -52,6 +52,7 @@ def create(*, kind: str, source: str, notes: str = "", origin: str = "manual", n
             "source": source,
             "origin": _clean_origin(origin),
             "notes": _clean_notes(notes),
+            "external_content": "",
             "status": "queued",
             "step": 0,
             "progress": 0,

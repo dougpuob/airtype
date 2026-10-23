@@ -42,6 +42,7 @@ import { DEFAULT_AI_TITLE_SYSTEM_PROMPT, fallbackAiTitle, normalizeAiTitle } fro
 import {
   buildPostObsidianDraft,
   buildTranscriptObsidianDraft,
+  noteSection,
   openObsidianDraft,
   postsToMarkdown
 } from "../utils/obsidian";
@@ -923,7 +924,9 @@ export function VToTextPage() {
         datetime: selectedClip.datetime,
         guid: selectedClip.guid,
         shareUrl: selectedClip.share_url,
-        notes: selectedClip.notes || ""
+        notes: selectedClip.notes || "",
+        kind: selectedClip.kind,
+        externalContent: selectedClip.external_content || noteSection(selectedClip.note, "Original External Content")
       }
     : null;
   const previewEmptyMessage = selectedClip

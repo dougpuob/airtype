@@ -16,6 +16,11 @@ const ORIGINAL_HEADING: Record<ClipKind, string> = {
   media: "Original Transcript"
 };
 
+export const OBSIDIAN_SQNA_SCAFFOLD = `- **🙋🏻‍♂️  ?**
+	-  ↪ 
+	-  ↪ 
+	-  ↪ `;
+
 const OBSIDIAN_CLIP_TEMPLATE = `---
 title: {{DATE}} {{TITLE}}
 guid: {{GUID}}
@@ -45,6 +50,12 @@ notes: {{NOTES}}
 
 ---
 
+# SQNA
+
+${OBSIDIAN_SQNA_SCAFFOLD}
+
+---
+
 # AI Tags
 
 {{ai_tags}}
@@ -62,8 +73,7 @@ notes: {{NOTES}}
 {{content}}
 
 ---
-
-END`;
+{{EXTERNAL_SECTION}}END`;
 
 export type ClipObsidianDraft = {
   kind: ClipKind;
@@ -81,6 +91,7 @@ export type ClipObsidianDraft = {
   shareUrl: string;
   notes: string;
   originalHeading: string;
+  externalContent: string;
 };
 
 export type TranscriptObsidianDraft = ClipObsidianDraft;
@@ -130,6 +141,17 @@ export async function openObsidianDraft(
     file: notePath,
     clipboard: true
   });
+}
+
+export function noteSection(note: string | undefined, heading: string) {
+  const text = String(note || "");
+  const marker = `# ${heading}`;
+  const padded = `\n${text}\n`;
+  const start = padded.indexOf(`\n${marker}\n`);
+  if (start < 0) return "";
+  const after = padded.slice(start + marker.length + 2);
+  const end = after.search(/\n---\s*\n/);
+  return (end >= 0 ? after.slice(0, end) : after).trim();
 }
 
 export function obsidianNewUri(options: { vaultName?: string; file: string; content?: string; clipboard?: boolean }) {
@@ -210,6 +232,7 @@ export function buildPostObsidianDraft(input: {
   kind?: ClipKind;
   markdown?: string;
   notes?: string;
+  externalContent?: string;
 }): ClipObsidianDraft | null {
   const markdown = String(input.markdown || "").trim() || postsToMarkdown(input.posts, input.mediaMap);
   return buildClipObsidianDraft({
@@ -222,7 +245,8 @@ export function buildPostObsidianDraft(input: {
     shareUrl: input.shareUrl,
     sources: postSources(input.posts, input.capturedUrl),
     extraTags: input.extraTags,
-    notes: input.notes
+    notes: input.notes,
+    externalContent: input.externalContent
   });
 }
 
@@ -237,6 +261,7 @@ function buildClipObsidianDraft(input: {
   sources?: string[];
   extraTags?: string[];
   notes?: string;
+  externalContent?: string;
 }): ClipObsidianDraft | null {
   const content = input.kind === "media" ? String(input.markdown || "").trim() : uniquePostBlocks(input.markdown);
   if (!content) return null;
@@ -266,10 +291,11 @@ function buildClipObsidianDraft(input: {
     NOTES: yamlTextValue(input.notes || ""),
     ai_tags: input.aiTags || "",
     polished_content: input.polishedContent,
-    content
+    content,
+    EXTERNAL_SECTION: formatExternalSection(input.kind, input.externalContent || "")
   };
   const note = OBSIDIAN_CLIP_TEMPLATE.replace(
-    /{{(sources|DATETIME|DATE|TITLE|tags|GUID|IMMICH_SHARE|ORIGINAL_HEADING|NOTES|ai_tags|polished_content|content)}}/g,
+    /{{(sources|DATETIME|DATE|TITLE|tags|GUID|IMMICH_SHARE|ORIGINAL_HEADING|NOTES|ai_tags|polished_content|content|EXTERNAL_SECTION)}}/g,
     (_, key: string) => values[key] ?? ""
   ).replace(/^immich_share:\s*\n/m, "");
 
@@ -288,8 +314,15 @@ function buildClipObsidianDraft(input: {
     guid: input.guid || "",
     shareUrl: input.shareUrl || "",
     notes: input.notes || "",
-    originalHeading
+    originalHeading,
+    externalContent: input.kind === "post" ? input.externalContent || "" : ""
   };
+}
+
+function formatExternalSection(kind: ClipKind, externalContent: string) {
+  if (kind !== "post") return "\n";
+  if (!externalContent.trim()) return "\n# Original External Content\n\n---\n\n";
+  return `\n# Original External Content\n\n${externalContent}\n\n---\n\n`;
 }
 
 function transcriptOriginalText(segments?: TranscriptSegment[], fallbackText?: string) {
