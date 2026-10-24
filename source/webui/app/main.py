@@ -4,7 +4,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Any, Callable, Dict, Optional
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 import functools
@@ -54,6 +54,7 @@ from .whisper import WhisperCppNotConfigured, transcriber
 from . import apple_podcast
 from . import clip_pipeline
 from . import clip_requests
+from . import grok_cli
 from . import known_sources
 from . import web_article
 from . import usage_stats
@@ -3367,6 +3368,9 @@ def _apply_thinking_payload(payload_body: Dict[str, Any], request: LocalChatRequ
 
 
 def _local_chat_response(request: LocalChatRequest) -> str:
+    grok_text = _grok_cli_response(request)
+    if grok_text is not None:
+        return grok_text
     with _llm_lock:
         request = _request_with_thinking_step(request)
         started = time.monotonic()
@@ -3378,6 +3382,48 @@ def _local_chat_response(request: LocalChatRequest) -> str:
             return result[0]
         finally:
             _record_llm_usage(request, result[1], result[0], started, success)
+
+
+class GrokCorrectFailed(RuntimeError):
+    """Grok could not correct a typo chunk; the caller keeps the original text."""
+
+
+def _grok_cli_response(request: LocalChatRequest) -> Optional[str]:
+    """Text-only steps listed in [webui.grok-cli]; None means use the local LLM.
+
+    The ``correct`` step never falls back: the local model does not fix typos,
+    so a Grok failure raises GrokCorrectFailed and the chunk stays as-is.
+    """
+    settings = grok_cli.read_grok_cli_settings(CONFIG_PATH)
+    if not grok_cli.handles_step(settings, request.step):
+        return None
+    is_correct = str(request.step or "").strip() == "correct"
+    timeout = grok_cli.step_timeout(settings, request.step)
+    attempts = 2 if is_correct else 1
+    usage_request = request.model_copy(update={"provider": "grok-cli", "model": settings["model"] or "grok-cli"})
+    for attempt in range(1, attempts + 1):
+        started = time.monotonic()
+        try:
+            text, payload = grok_cli.run_grok_cli(request.system or "", request.prompt, settings, timeout=timeout)
+        except grok_cli.GrokTimeout as error:
+            _record_llm_usage(usage_request, None, "", started, False)
+            if attempt < attempts:
+                append_service_log("webui", f"grok-cli {request.step} timed out ({error}); retrying once")
+                continue
+            if is_correct:
+                raise GrokCorrectFailed(f"grok-cli correct failed after {attempts} attempts: {error}") from error
+            append_service_log("webui", f"grok-cli {request.step} failed, falling back to local LLM: {error}")
+            return None
+        except Exception as error:
+            _record_llm_usage(usage_request, None, "", started, False)
+            if is_correct:
+                raise GrokCorrectFailed(f"grok-cli correct failed: {error}") from error
+            append_service_log("webui", f"grok-cli {request.step} failed, falling back to local LLM: {error}")
+            return None
+        usage_request = usage_request.model_copy(update={"model": grok_cli.payload_model(payload, settings["model"])})
+        _record_llm_usage(usage_request, grok_cli.usage_payload(payload), text, started, True)
+        return _strip_thinking_blocks(text)
+    return None
 
 
 def _record_llm_usage(request: LocalChatRequest, payload: Any, text: str, started: float, success: bool) -> None:
@@ -4159,9 +4205,65 @@ TYPO_USER_PROMPT = """請修正以下逐字稿的錯字。
 1. 每一行各自保留，行數必須與原文相同。
 2. 只改錯字與同音誤識，不潤飾、不摘要、不增刪句子。
 3. 只輸出修正後的逐字稿，不要說明。
-
-逐字稿：
+{reference_rule}
+{reference}逐字稿：
 {source}"""
+TYPO_REFERENCE_RULE = (
+    "4. 下方「參考資料」是這集節目／影片的標題、頻道與說明，只用來核對被聽錯的人名、節目名、"
+    "品牌、網址與專有名詞，名稱以參考資料的寫法為準；參考資料不是逐字稿的一部分，"
+    "不得把其中的內容抄進逐字稿，也不得因此增加句子。\n"
+)
+TYPO_REFERENCE_DESCRIPTION_CHARS = 3000
+TYPO_REFERENCE_FIELDS = (
+    ("title", "標題"),
+    ("series", "節目"),
+    ("album", "節目"),
+    ("playlist_title", "播放清單"),
+    ("channel", "頻道"),
+    ("uploader", "上傳者"),
+    ("artist", "作者"),
+    ("creator", "作者"),
+)
+# Per-line sanity bounds when the line count matches: corrected length must stay
+# within [len*LOW - SLACK, len*HIGH + SLACK] or that single line keeps the original.
+TYPO_LINE_RATIO_LOW = 0.5
+TYPO_LINE_RATIO_HIGH = 2.0
+TYPO_LINE_SLACK_CHARS = 4
+
+
+def _typo_reference_context(metadata: Any) -> str:
+    """Title/channel/description/tags from the source, for proper-noun fixes only."""
+    if not isinstance(metadata, dict):
+        return ""
+    lines: list[str] = []
+    seen: set[str] = set()
+    for key, label in TYPO_REFERENCE_FIELDS:
+        value = str(metadata.get(key) or "").strip()
+        if value and value not in seen:
+            seen.add(value)
+            lines.append(f"{label}：{value}")
+    page_url = str(metadata.get("webpage_url") or metadata.get("url") or "").strip()
+    if page_url:
+        lines.append(f"網址：{urllib.parse.unquote(page_url)}")
+    tags = metadata.get("tags")
+    if isinstance(tags, list):
+        tag_text = "、".join(str(tag).strip() for tag in tags[:30] if str(tag).strip())
+        if tag_text:
+            lines.append(f"標籤：{tag_text}")
+    description = str(metadata.get("description") or "").strip()
+    if description:
+        if len(description) > TYPO_REFERENCE_DESCRIPTION_CHARS:
+            description = description[:TYPO_REFERENCE_DESCRIPTION_CHARS].rstrip() + "…"
+        lines.append(f"說明：\n{description}")
+    return "\n".join(lines).strip()
+
+
+def _typo_user_prompt(source: str, reference: str = "") -> str:
+    reference = (reference or "").strip()
+    if not reference:
+        return TYPO_USER_PROMPT.format(reference_rule="", reference="", source=source)
+    block = f"參考資料（僅供核對專有名詞，不是逐字稿）：\n<<<\n{reference}\n>>>\n\n"
+    return TYPO_USER_PROMPT.format(reference_rule=TYPO_REFERENCE_RULE, reference=block, source=source)
 
 
 def _chunk_transcript_lines(lines: list[str], limit: int = TYPO_CHUNK_CHARS) -> list[list[str]]:
@@ -4193,19 +4295,40 @@ def _strip_model_fence(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _accepted_typo_lines(source_lines: list[str], corrected_text: str) -> list[str]:
-    """Keep the original chunk when the model drops, merges, or rewrites it."""
+def _typo_line_ok(source: str, corrected: str) -> bool:
+    size = len(source)
+    low = size * TYPO_LINE_RATIO_LOW - TYPO_LINE_SLACK_CHARS
+    high = size * TYPO_LINE_RATIO_HIGH + TYPO_LINE_SLACK_CHARS
+    return bool(corrected) and low <= len(corrected) <= high
+
+
+def _review_typo_lines(source_lines: list[str], corrected_text: str) -> tuple[list[str], str, list[int]]:
+    """Return (lines, reason, rejected_line_indexes).
+
+    reason is "" when every line was accepted, "line-count" when alignment is
+    impossible (whole chunk keeps the original), or "line-length" when only the
+    listed lines kept their original text.
+    """
     corrected = [line.strip() for line in _strip_model_fence(corrected_text).splitlines() if line.strip()]
     if len(corrected) != len(source_lines):
-        return list(source_lines)
-    source_len = sum(len(line) for line in source_lines)
-    corrected_len = sum(len(line) for line in corrected)
-    if source_len and not (source_len * 0.7 <= corrected_len <= source_len * 1.6):
-        return list(source_lines)
-    return corrected
+        return list(source_lines), "line-count", list(range(len(source_lines)))
+    accepted: list[str] = []
+    rejected: list[int] = []
+    for index, (source, candidate) in enumerate(zip(source_lines, corrected)):
+        if _typo_line_ok(source, candidate):
+            accepted.append(candidate)
+        else:
+            accepted.append(source)
+            rejected.append(index)
+    return accepted, ("line-length" if rejected else ""), rejected
 
 
-def _llm_correct_transcript_chunk(job_id: str, lines: list[str]) -> str:
+def _accepted_typo_lines(source_lines: list[str], corrected_text: str) -> list[str]:
+    """Keep the original chunk when lines cannot be aligned, else keep only bad lines."""
+    return _review_typo_lines(source_lines, corrected_text)[0]
+
+
+def _llm_correct_transcript_chunk(job_id: str, lines: list[str], reference: str = "") -> str:
     settings = _read_app_settings()
     llm = settings.get("llm", {}) if isinstance(settings.get("llm"), dict) else {}
     model = str(llm.get("model") or llm.get("selected_model") or "").strip()
@@ -4220,11 +4343,21 @@ def _llm_correct_transcript_chunk(job_id: str, lines: list[str]) -> str:
     provider = str(llm.get("provider") or "llama.cpp")
     endpoint = str(llm.get("endpoint") or "http://127.0.0.1:8080")
     server_name = str(llm.get("name") or settings.get("default_llm_server_name") or "default")
-    append_service_log(
-        "webui",
-        "requesting Local LLM typo correction: "
-        f"server={server_name} provider={provider} model={model} chars={len(source)}",
-    )
+    grok_settings = grok_cli.read_grok_cli_settings(CONFIG_PATH)
+    if grok_cli.handles_step(grok_settings, "correct"):
+        append_service_log(
+            "webui",
+            "requesting grok-cli typo correction: "
+            f"model={grok_settings['model'] or 'default'} chars={len(source)} "
+            f"reference_chars={len(reference or '')} timeout={grok_settings['correct_timeout_seconds']}s",
+        )
+    else:
+        append_service_log(
+            "webui",
+            "requesting Local LLM typo correction: "
+            f"server={server_name} provider={provider} model={model} chars={len(source)} "
+            f"reference_chars={len(reference or '')}",
+        )
     with _llm_job(job_id or _llm_job_id.get()):
         return _local_chat_response(
             LocalChatRequest(
@@ -4233,7 +4366,7 @@ def _llm_correct_transcript_chunk(job_id: str, lines: list[str]) -> str:
                 api_key=str(llm.get("api_key") or "") or None,
                 model=model,
                 system=TYPO_SYSTEM_PROMPT,
-                prompt=TYPO_USER_PROMPT.format(source=source),
+                prompt=_typo_user_prompt(source, reference),
                 temperature=0.1,
                 context_length=int(llm.get("contextLength", 8192) or 8192),
                 disable_thinking=bool(llm.get("disable_thinking")),
@@ -4242,34 +4375,122 @@ def _llm_correct_transcript_chunk(job_id: str, lines: list[str]) -> str:
         )
 
 
+def _typo_line_count(raw: str) -> int:
+    return len([line for line in _strip_model_fence(raw).splitlines() if line.strip()])
+
+
+def _correct_one_typo_chunk(
+    job_id: str,
+    index: int,
+    total: int,
+    chunk: list[str],
+    run_chunk: Callable[..., str],
+    reference: str,
+) -> list[str]:
+    """Correct one chunk; any failure keeps the original lines and is logged."""
+    if _is_job_cancelled(job_id):
+        return list(chunk)
+    try:
+        raw = run_chunk(job_id, chunk, reference)
+        lines_out, reason, rejected = _review_typo_lines(chunk, raw)
+        if reason == "line-count":
+            append_service_log(
+                "webui",
+                f"transcript typo chunk rejected: job={job_id} chunk={index}/{total} "
+                f"reason=line-count source_lines={len(chunk)} corrected_lines={_typo_line_count(raw)}; retrying once",
+            )
+            if _is_job_cancelled(job_id):
+                return list(chunk)
+            raw = run_chunk(job_id, chunk, reference)
+            lines_out, reason, rejected = _review_typo_lines(chunk, raw)
+            if reason == "line-count":
+                append_service_log(
+                    "webui",
+                    f"transcript typo chunk rejected: job={job_id} chunk={index}/{total} "
+                    f"reason=line-count source_lines={len(chunk)} corrected_lines={_typo_line_count(raw)}; "
+                    "kept original chunk",
+                )
+        if reason == "line-length":
+            shown = ",".join(str(i + 1) for i in rejected[:20])
+            append_service_log(
+                "webui",
+                f"transcript typo lines rejected: job={job_id} chunk={index}/{total} "
+                f"reason=line-length lines={len(chunk)} rejected={len(rejected)} at={shown}",
+            )
+        return lines_out
+    except Exception as error:
+        append_service_log(
+            "webui",
+            f"transcript typo correction failed, kept original chunk: job={job_id} chunk={index}/{total} "
+            f"lines={len(chunk)} error={error}",
+        )
+        return list(chunk)
+
+
+def _typo_concurrency() -> int:
+    """Parallel chunks only when Grok handles the correct step; local stays sequential."""
+    try:
+        settings = grok_cli.read_grok_cli_settings(CONFIG_PATH)
+    except Exception:
+        return 1
+    if not grok_cli.handles_step(settings, "correct"):
+        return 1
+    return int(settings.get("typo_concurrency") or 1)
+
+
 def _correct_transcript_lines(
     job_id: str,
     lines: list[str],
     correct_chunk: Optional[Callable[..., str]] = None,
+    reference: str = "",
+    concurrency: Optional[int] = None,
 ) -> list[str]:
     spoken = [line.strip() for line in lines if line.strip()]
     if not spoken:
         return []
     chunks = _chunk_transcript_lines(spoken)
-    corrected: list[str] = []
     total = len(chunks)
-    for index, chunk in enumerate(chunks, start=1):
-        if _is_job_cancelled(job_id):
-            corrected.extend(chunk)
-            continue
-        if job_id in transcription_jobs:
+    run_chunk = correct_chunk or _llm_correct_transcript_chunk
+    workers = concurrency if concurrency is not None else (1 if correct_chunk else _typo_concurrency())
+    workers = max(1, min(int(workers or 1), total))
+
+    def progress(done: int) -> None:
+        if job_id in transcription_jobs and not _is_job_cancelled(job_id):
             _update_job(
                 job_id,
                 status="running",
                 progress=93,
-                message=f"Correcting transcript typos ({index}/{total})",
+                message=f"Correcting transcript typos ({done}/{total})",
             )
-        try:
-            raw = (correct_chunk or _llm_correct_transcript_chunk)(job_id, chunk)
-            corrected.extend(_accepted_typo_lines(chunk, raw))
-        except Exception as error:
-            append_service_log("webui", f"transcript typo correction failed: {error}")
-            corrected.extend(chunk)
+
+    if workers == 1:
+        corrected: list[str] = []
+        for index, chunk in enumerate(chunks, start=1):
+            if not _is_job_cancelled(job_id):
+                progress(index)
+            corrected.extend(_correct_one_typo_chunk(job_id, index, total, chunk, run_chunk, reference))
+        return corrected
+
+    # Workers only call the model; job/record updates stay on this thread.
+    results: list[Optional[list[str]]] = [None] * total
+    progress(0)
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="typo-correct") as pool:
+        futures = {
+            pool.submit(_correct_one_typo_chunk, job_id, index, total, chunk, run_chunk, reference): index - 1
+            for index, chunk in enumerate(chunks, start=1)
+        }
+        done = 0
+        for future in as_completed(futures):
+            position = futures[future]
+            try:
+                results[position] = future.result()
+            except Exception:
+                results[position] = list(chunks[position])
+            done += 1
+            progress(done)
+    corrected = []
+    for position, chunk in enumerate(chunks):
+        corrected.extend(results[position] if results[position] is not None else chunk)
     return corrected
 
 
@@ -4277,6 +4498,7 @@ def _correct_asr_result(
     job_id: str,
     result: Dict[str, Any],
     correct_chunk: Optional[Callable[..., str]] = None,
+    reference: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Replace ASR text with a typo-corrected copy. Show notes stay untouched."""
     segments = result.get("segments") if isinstance(result.get("segments"), list) else []
@@ -4290,7 +4512,12 @@ def _correct_asr_result(
     if not source_lines:
         return result
 
-    corrected_lines = _correct_transcript_lines(job_id, source_lines, correct_chunk=correct_chunk)
+    if reference is None:
+        job = transcription_jobs.get(job_id) or {}
+        reference = _typo_reference_context(job.get("source_metadata"))
+    corrected_lines = _correct_transcript_lines(
+        job_id, source_lines, correct_chunk=correct_chunk, reference=reference
+    )
     updated_segments = []
     cursor = 0
     for segment in segments:
