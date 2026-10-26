@@ -144,6 +144,7 @@ def _episode_from_feed(
     except ElementTree.ParseError:
         return None
     slug_match: Optional[AppleEpisode] = None
+    slug_score = 0
     for item in root.iter():
         if _local_name(item.tag) != "item":
             continue
@@ -152,8 +153,9 @@ def _episode_from_feed(
             continue
         if _item_matches_episode_id(item, episode_id):
             return episode
-        if slug_match is None and _slug_matches_title(slug, episode.title):
-            slug_match = episode
+        score = _slug_match_score(slug, episode.title)
+        if score > slug_score:
+            slug_match, slug_score = episode, score
     return slug_match
 
 
@@ -197,11 +199,29 @@ def _item_matches_episode_id(item: ElementTree.Element, episode_id: str) -> bool
 
 
 def _slug_matches_title(slug: str, title: str) -> bool:
+    return _slug_match_score(slug, title) > 0
+
+
+def _slug_match_score(slug: str, title: str) -> int:
+    """2 = same normalized text, 1 = slug found in the title, 0 = no match.
+
+    A match may not run into extra digits, so "ep1" never matches "EP199".
+    """
     slug_norm = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", slug.lower())
     title_norm = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", title.lower())
     if len(slug_norm) < 3:
-        return False
-    return slug_norm in title_norm
+        return 0
+    if slug_norm == title_norm:
+        return 2
+    start = title_norm.find(slug_norm)
+    while start >= 0:
+        end = start + len(slug_norm)
+        before_ok = start == 0 or not (slug_norm[0].isdigit() and title_norm[start - 1].isdigit())
+        after_ok = end == len(title_norm) or not (slug_norm[-1].isdigit() and title_norm[end].isdigit())
+        if before_ok and after_ok:
+            return 1
+        start = title_norm.find(slug_norm, start + 1)
+    return 0
 
 
 def _lookup_show(show_id: str) -> dict:

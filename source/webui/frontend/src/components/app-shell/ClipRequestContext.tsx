@@ -1,10 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useClipRequestsQuery, type ClipRequest } from "../../api/clipRequests";
+import { useClipRequestDetailQuery, useClipRequestsQuery, type ClipRequest } from "../../api/clipRequests";
 
 type ClipRequestContextValue = {
   requests: ClipRequest[];
   selectedId: string;
+  /** Selected request; the full record once it has loaded, else the list summary. */
   selected: ClipRequest | null;
+  /** True while the full record of the selected request is loading. */
+  selectedLoading: boolean;
   select: (id: string) => void;
 };
 
@@ -33,19 +36,29 @@ export function ClipRequestProvider({ children }: { children: ReactNode }) {
     setSelectedId(next?.id || "");
   }, [requests, selectedId]);
 
-  const selected = useMemo(
+  const selectedSummary = useMemo(
     () => requests.find((item) => item.id === selectedId) || null,
     [requests, selectedId]
   );
+  // Opening (selecting) a request loads its full body; the list only has summaries.
+  const detail = useClipRequestDetailQuery(selectedSummary);
+  const selected = useMemo(() => {
+    if (!selectedSummary) return null;
+    const full = detail.data;
+    if (full && full.id === selectedSummary.id) return { ...selectedSummary, ...full, summary: false };
+    return selectedSummary;
+  }, [selectedSummary, detail.data]);
+  const selectedLoading = detail.isFetching && !detail.data;
 
   const value = useMemo(
     () => ({
       requests,
       selectedId,
       selected,
+      selectedLoading,
       select
     }),
-    [requests, selected, selectedId]
+    [requests, selected, selectedId, selectedLoading]
   );
 
   return <ClipRequestContext.Provider value={value}>{children}</ClipRequestContext.Provider>;

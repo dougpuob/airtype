@@ -372,3 +372,13 @@ class AppleEpisodeResolutionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SlugMatchTests(unittest.TestCase):
+    def test_short_episode_slug_does_not_match_longer_number(self) -> None:
+        from app import apple_podcast as ap
+        self.assertEqual(ap._slug_match_score("ep1-ω", "EP199 | 挖挖"), 0)
+        self.assertEqual(ap._slug_match_score("ep1-ω", "EP1 |( *・ω・)╰—╯✄"), 2)
+        self.assertEqual(ap._slug_match_score("ep2-ω", "EP2 |( *・ω・)╰✄-╯"), 2)
+        self.assertEqual(ap._slug_match_score("ep10-熔斷", "EP10 | 熔斷 崩盤受傷的都來療傷"), 1)
+        self.assertEqual(ap._slug_match_score("ep10-熔斷", "EP100 | 熔斷"), 0)

@@ -1,10 +1,11 @@
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import { Box, Button, Chip, IconButton, LinearProgress, Typography } from "@mui/material";
+import { useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useCancelClipRequestMutation, useDeleteClipRequestMutation, type ClipRequest } from "../../api/clipRequests";
 import { useSettingsQuery } from "../../api/settings";
 import { openObsidianDraft } from "../../utils/obsidian";
-import { useSaveClipRequestMutation } from "../../api/clipRequests";
+import { clipHasNote, loadFullClipRequest, useSaveClipRequestMutation } from "../../api/clipRequests";
 import { useClipRequestSelection } from "./ClipRequestContext";
 
 const statusLabel: Record<string, string> = {
@@ -73,6 +74,7 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
   const deleteClip = useDeleteClipRequestMutation();
   const saveClip = useSaveClipRequestMutation();
   const settingsQuery = useSettingsQuery();
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -83,15 +85,20 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
   }
 
   async function saveRequest(request: ClipRequest) {
-    if (request.status !== "completed" || !request.note) return;
+    if (request.status !== "completed" || !clipHasNote(request)) return;
+    // The list only has summaries; load the full note first.
+    const full = await loadFullClipRequest(queryClient, request);
+    if (!full.note) return;
+    // Mark saved before opening Obsidian. On mobile, obsidian:// switches away
+    // from the browser and can cancel the mark-saved request if it runs after.
+    await saveClip.mutateAsync(request.id);
     await openObsidianDraft(
-      { noteTitle: request.note_title || request.title || "Untitled", note: request.note },
+      { noteTitle: full.note_title || full.title || "Untitled", note: full.note },
       {
         defaultFolder: settingsQuery.data?.obsidian?.default_folder,
         vaultName: settingsQuery.data?.obsidian?.vault_name
       }
     );
-    await saveClip.mutateAsync(request.id);
   }
 
   return (
@@ -232,7 +239,7 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
                     size="small"
                     variant="contained"
                     fullWidth
-                    disabled={!task.note || saveClip.isPending}
+                    disabled={!clipHasNote(task) || saveClip.isPending}
                     onClick={(event) => {
                       event.stopPropagation();
                       void saveRequest(task);

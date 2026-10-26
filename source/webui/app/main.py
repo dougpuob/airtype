@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Any, Callable, Dict, Optional
@@ -259,10 +259,41 @@ def _auth_session_ok(token: str, auth: Dict[str, Any]) -> bool:
     )
 
 
+LOCAL_API_TOKEN_PATH = os.path.expanduser("~/.airtype/api-token")
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+_PROXY_HEADERS = ("cf-connecting-ip", "x-forwarded-for", "x-real-ip", "forwarded")
+
+
+def _local_api_token() -> str:
+    try:
+        with open(LOCAL_API_TOKEN_PATH, "r", encoding="utf-8") as token_file:
+            return token_file.read().strip()
+    except OSError:
+        return ""
+
+
+def _local_api_token_ok(request: Request) -> bool:
+    """Scripts on this machine may call the API with the token in ~/.airtype/api-token.
+
+    Only direct loopback connections count; anything that came through a proxy or tunnel is refused.
+    """
+    supplied = request.headers.get("x-airtype-token", "").strip()
+    if not supplied:
+        return False
+    client_host = request.client.host if request.client else ""
+    if client_host not in _LOOPBACK_HOSTS:
+        return False
+    if any(request.headers.get(name) for name in _PROXY_HEADERS):
+        return False
+    expected = _local_api_token()
+    return len(expected) >= 32 and hmac.compare_digest(supplied, expected)
+
+
 def _request_has_valid_auth(request: Request, auth: Dict[str, Any]) -> bool:
-    return _auth_session_ok(request.cookies.get(AUTH_SESSION_COOKIE, ""), auth) or _basic_auth_ok(
-        request.headers.get("authorization", ""),
-        auth,
+    return (
+        _auth_session_ok(request.cookies.get(AUTH_SESSION_COOKIE, ""), auth)
+        or _basic_auth_ok(request.headers.get("authorization", ""), auth)
+        or _local_api_token_ok(request)
     )
 
 
@@ -367,6 +398,7 @@ def startup_managed_processes() -> None:
     llm = settings.get("llm", {})
     llm_servers = settings.get("llm_servers", [])
     clip_requests.configure(WEBUI_DATA_DIR)
+    threading.Thread(target=clip_requests.warm_cache, name="clip-requests-warm", daemon=True).start()
     append_service_log(
         "webui",
         f"loaded config path={CONFIG_PATH} data_dir={WEBUI_DATA_DIR} records_dir={RECORDS_DIR}",
@@ -1736,8 +1768,19 @@ def _run_post_clip(request_id: str, url: str) -> None:
 
 
 @app.get("/api/clip-requests")
-async def list_clip_requests():
-    return {"requests": clip_requests.list_pending()}
+def list_clip_requests(request: Request):
+    # Sync handler: runs in the threadpool, so a cold build never blocks the event loop.
+    # The body is cached in clip_requests until the pending list changes; the ETag
+    # lets a page refresh get 304 instead of re-downloading the whole list.
+    accepts_gzip = "gzip" in (request.headers.get("accept-encoding") or "").lower()
+    etag, body = clip_requests.pending_response_body(compress=accepts_gzip)
+    headers = {"ETag": etag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}
+    if_none_match = request.headers.get("if-none-match") or ""
+    if etag and etag in [item.strip() for item in if_none_match.split(",")]:
+        return Response(status_code=304, headers=headers)
+    if accepts_gzip:
+        headers["Content-Encoding"] = "gzip"
+    return Response(content=body, media_type="application/json", headers=headers)
 
 
 @app.get("/api/clip-requests/{request_id}")
@@ -3804,6 +3847,14 @@ def _sync_voice_clip(job_id: str) -> None:
             except Exception as error:
                 append_service_log("webui", f"clip article generation failed: {error}")
         title = str(job.get("title") or job.get("source_name") or "Untitled transcript")
+        capture_post = _read_app_settings().get("capture_post") or {}
+        if article_text or source_text:
+            clip_requests.update(clip_id, progress=96, message="AI title")
+            source_title = title
+            title = clip_pipeline.generate_ai_title(
+                article_text or source_text, title, capture_post=capture_post, chat=_clip_chat
+            )
+            title = clip_pipeline.with_episode_label(title, source_title)
         tags = str(job.get("ai_tags") or "")
         if not tags and (article_text or source_text):
             try:

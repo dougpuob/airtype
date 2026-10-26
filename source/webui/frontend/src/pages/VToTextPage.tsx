@@ -18,7 +18,7 @@ import { chatWithLocalLlm } from "../api/localLlm";
 import { uploadNoteMedia } from "../api/immich";
 import type { NoteMediaImage } from "../api/immich";
 import { chainWarningsFromPayload, useImportPostMutation } from "../api/postWeaver";
-import { useCreateClipRequestMutation, useSaveClipRequestMutation } from "../api/clipRequests";
+import { clipHasNote, loadFullClipRequest, useCreateClipRequestMutation, useSaveClipRequestMutation } from "../api/clipRequests";
 import { useSettingsQuery } from "../api/settings";
 import { fetchClipId, fetchWebArticleJob, startWebArticleJob } from "../api/webArticle";
 import type { WebArticleImage, WebArticleJob } from "../api/webArticle";
@@ -883,12 +883,21 @@ export function VToTextPage() {
   }
 
   async function saveToObsidian() {
-    const selected = clipSelection.selected;
-    if (!selected || selected.status !== "completed" || !selected.note) {
+    const current = clipSelection.selected;
+    if (!current || current.status !== "completed" || !clipHasNote(current)) {
       setToast("Select a completed request before saving to Obsidian");
       return;
     }
     try {
+      // The queue list only has summaries; load the full note if it is not here yet.
+      const selected = await loadFullClipRequest(queryClient, current);
+      if (!selected.note) {
+        setToast("This request has no note to save");
+        return;
+      }
+      // Mark saved before opening Obsidian. On mobile, obsidian:// switches away
+      // from the browser and can cancel the mark-saved request if it runs after.
+      await saveClipRequest.mutateAsync(selected.id);
       await openObsidianDraft(
         { noteTitle: selected.note_title || selected.title || "Untitled", note: selected.note },
         {
@@ -896,7 +905,6 @@ export function VToTextPage() {
           vaultName: settingsQuery.data?.obsidian?.vault_name
         }
       );
-      await saveClipRequest.mutateAsync(selected.id);
       setToast("Note copied. Opening Obsidian");
     } catch (caught) {
       setToast(caught instanceof Error ? caught.message : "Could not open Obsidian");
@@ -917,7 +925,7 @@ export function VToTextPage() {
     ? {
         noteTitle: selectedClip.note_title || selectedClip.title || selectedClip.source,
         content: selectedClip.content,
-        polishedContent: selectedClip.polished_content,
+        polishedContent: selectedClip.polished_content || "",
         aiTags: selectedClip.ai_tags,
         sources: selectedClip.sources || [],
         tags: selectedClip.tags || [],
@@ -930,7 +938,9 @@ export function VToTextPage() {
       }
     : null;
   const previewEmptyMessage = selectedClip
-    ? selectedClip.status === "failed"
+    ? clipSelection.selectedLoading
+      ? "Loading the full note…"
+      : selectedClip.status === "failed"
       ? selectedClip.error || "This request failed"
       : "This request is still running. The draft will show up here when it finishes."
     : emptyMessage;
@@ -1084,7 +1094,7 @@ export function VToTextPage() {
             </Stack>
             <Button
               variant="contained"
-              disabled={!selectedClip || selectedClip.status !== "completed" || !selectedClip.note}
+              disabled={!selectedClip || selectedClip.status !== "completed" || !clipHasNote(selectedClip)}
               onClick={saveToObsidian}
               sx={{ whiteSpace: "nowrap" }}
             >

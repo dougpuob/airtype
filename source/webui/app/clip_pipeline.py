@@ -270,6 +270,50 @@ def build_draft(
     }
 
 
+def generate_ai_title(text: str, fallback_title: str, *, capture_post: dict[str, Any], chat: Chat) -> str:
+    """AI title from the (polished) text; falls back to the given title when disabled or on failure."""
+    title = _sanitize_title(fallback_title)
+    if not capture_post.get("ai_title_enabled", True) or not str(text or "").strip():
+        return title
+    system_prompt = str(capture_post.get("title_system_prompt") or "").strip()
+    try:
+        generated = chat(system_prompt or "只輸出一個標題。", text, "title").strip()
+        return _sanitize_title(generated.splitlines()[0] if generated else "") or title
+    except Exception:
+        return title or _sanitize_title(str(text)[:30])
+
+
+_EPISODE_PATTERNS = (
+    re.compile(r"S\d{1,3}\s*E\d{1,4}", re.IGNORECASE),
+    re.compile(r"(?<![A-Za-z])EP?\.?\s?\d{1,5}(?!\d)", re.IGNORECASE),
+    re.compile(r"第\s*[\d一二三四五六七八九十百千零〇]+\s*[集話回期]"),
+    re.compile(r"#\d{1,5}(?!\d)"),
+)
+
+
+def episode_label(title: str) -> str:
+    """Episode marker (EP707, 第12集, S2E3, #45) as written in a podcast/episode title."""
+    text = str(title or "")
+    for pattern in _EPISODE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return " ".join(match.group(0).split())
+    return ""
+
+
+def with_episode_label(title: str, source_title: str) -> str:
+    """Prefix the source title's episode marker to an AI title that lacks it."""
+    label = episode_label(source_title)
+    clean = _sanitize_title(title)
+    if not label:
+        return clean
+    digits = re.sub(r"\D", "", label)
+    existing = episode_label(clean)
+    if existing and (re.sub(r"\D", "", existing) == digits or not digits):
+        return clean
+    return _sanitize_title(f"{label} {clean}") if clean else _sanitize_title(label)
+
+
 def _finish_text(
     request_id: str,
     *,
@@ -297,15 +341,9 @@ def _finish_text(
         return
     app_settings = settings()
     capture_post = app_settings.get("capture_post") or {}
-    title = _sanitize_title(fallback_title)
     if capture_post.get("ai_title_enabled", True):
         clip_requests.update(request_id, progress=90, message="AI title")
-        system_prompt = str(capture_post.get("title_system_prompt") or "").strip()
-        try:
-            generated = chat(system_prompt or "只輸出一個標題。", polished or content, "title").strip()
-            title = _sanitize_title(generated.splitlines()[0] if generated else "") or title
-        except Exception:
-            title = title or _sanitize_title(content[:30])
+    title = generate_ai_title(polished or content, fallback_title, capture_post=capture_post, chat=chat)
     if _stopped(request_id):
         return
     clip_requests.update(request_id, progress=96, message="AI tags")
