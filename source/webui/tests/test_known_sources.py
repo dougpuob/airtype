@@ -65,6 +65,21 @@ class KnownSourceRoutingTests(unittest.TestCase):
             "v-to-text",
         )
 
+    def test_facebook_posts_route_to_capture_post(self) -> None:
+        for url in (
+            "https://www.facebook.com/share/p/1EC8342Gce/",
+            "https://www.facebook.com/groups/worriorrock/permalink/4726654250936935/",
+            "https://www.facebook.com/dougpuob/posts/pfbid02mDZxLuefPWiBWoLdkRvJ4",
+            "https://fb.watch/abc123/",
+        ):
+            self.assertEqual(known_sources.route_for_url(url), "capture-post", url)
+        # Profiles and group member pages are not single posts.
+        self.assertEqual(
+            known_sources.route_for_url("https://www.facebook.com/groups/1632817630320628/user/100000366204205/"),
+            known_sources.WEB_ARTICLE_PIPELINE,
+        )
+        self.assertIsNone(known_sources.match_known_source("https://notfacebook.com/share/p/abc/"))
+
     def test_lookalike_domains_never_match(self) -> None:
         self.assertIsNone(known_sources.match_known_source("https://notyoutube.com/watch?v=abc"))
         self.assertIsNone(known_sources.match_known_source("https://youtube.com.evil.io/watch"))

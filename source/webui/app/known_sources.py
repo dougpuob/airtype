@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 from . import linkedin_post
 from . import instagram_weaver
+from . import facebook_post
 
 
 @dataclass(frozen=True)
@@ -32,7 +33,8 @@ class KnownSource:
 # Pipeline ids:
 #   "capture-post" — Threads chain collection (app/post_weaver.py) and
 #                    public LinkedIn posts (app/linkedin_post.py) and
-#                    Instagram posts/reels (app/instagram_weaver.py)
+#                    Instagram posts/reels (app/instagram_weaver.py) and
+#                    public Facebook posts (app/facebook_post.py)
 #   "v-to-text"    — media download + whisper transcription
 #                    (Apple Podcasts resolves the episode enclosure first)
 KNOWN_SOURCE_HOSTS: tuple[KnownSource, ...] = (
@@ -56,6 +58,12 @@ LINKEDIN_POST_SOURCE = KnownSource(host="linkedin.com", pipeline="capture-post")
 # photo posts keep their caption and images and videos are Whisper-transcribed
 # into the same note. Other Instagram URLs (e.g. stories) stay on V-to-Text.
 INSTAGRAM_POST_SOURCE = KnownSource(host="instagram.com", pipeline="capture-post")
+
+# Facebook posts, share links, photos, videos and reels go to Capture Post
+# (app/facebook_post.py): post text, photos to Immich, videos Whisper-transcribed
+# into the same note. Other Facebook pages (profiles, group/member pages) are not
+# single posts and stay on the generic web-article pipeline.
+FACEBOOK_POST_SOURCE = KnownSource(host="facebook.com", pipeline="capture-post")
 
 
 # Any path containing this marker is a known video source (YouTube Shorts)
@@ -110,6 +118,8 @@ def match_known_source(url: str) -> Optional[KnownSource]:
         return LINKEDIN_POST_SOURCE
     if instagram_weaver.is_instagram_post_url(url):
         return INSTAGRAM_POST_SOURCE
+    if facebook_post.is_facebook_post_url(url):
+        return FACEBOOK_POST_SOURCE
     for source in KNOWN_SOURCE_HOSTS:
         if _host_matches(host, source.host):
             return source
@@ -177,6 +187,16 @@ def known_sources_payload() -> dict[str, Any]:
                 "paths": ["/p/", "/reel/", "/reels/", "/tv/"],
                 "pipeline": INSTAGRAM_POST_SOURCE.pipeline,
                 "label": PIPELINE_LABELS.get(INSTAGRAM_POST_SOURCE.pipeline, INSTAGRAM_POST_SOURCE.pipeline),
+            },
+            {
+                "host": FACEBOOK_POST_SOURCE.host,
+                "paths": [
+                    "/share/p/", "/share/v/", "/share/r/", "/<user>/posts/", "/groups/<group>/posts/",
+                    "/groups/<group>/permalink/", "/permalink.php", "/story.php", "/photo", "/<page>/videos/",
+                    "/reel/", "/watch/?v=", "fb.watch/",
+                ],
+                "pipeline": FACEBOOK_POST_SOURCE.pipeline,
+                "label": PIPELINE_LABELS.get(FACEBOOK_POST_SOURCE.pipeline, FACEBOOK_POST_SOURCE.pipeline),
             },
         ],
         "shorts_path_marker": SHORTS_PATH_MARKER,

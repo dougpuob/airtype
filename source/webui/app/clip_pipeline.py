@@ -132,11 +132,12 @@ def run_post(
         sources = [url, str(payload.get("post_url") or "")]
         media_urls = list(payload.get("media_urls") or [])
         fallback_title = str(payload.get("title") or "") or _first_line(content)
-        # Instagram lists its videos separately: their CDN URLs have no file extension.
+        # Instagram and Facebook list their videos separately: their CDN URLs have no
+        # file extension. A Facebook video may have only its watch URL (yt-dlp fallback).
         videos = [
             {"post_url": str(item.get("post_url") or url), "video_url": str(item.get("video_url") or "")}
             for item in payload.get("videos") or []
-            if isinstance(item, dict) and item.get("video_url")
+            if isinstance(item, dict) and (item.get("video_url") or item.get("post_url"))
         ]
     if not content:
         raise RuntimeError("No post content was captured")

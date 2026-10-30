@@ -64,6 +64,7 @@ from .ai_tags import AI_TAGS_SYSTEM_PROMPT, build_ai_tags_prompt, normalize_ai_t
 from .note_id import canonical_source_id, note_guid_for_source
 from .post_weaver import collect_threads_chain, posts_to_markdown
 from . import instagram_weaver
+from . import facebook_post
 
 app = FastAPI(title="AirType API", description="Aircraft Cabin Configuration & Speech Recognition API")
 
@@ -1635,6 +1636,13 @@ def _load_public_post(url: str) -> dict[str, Any]:
     if instagram_weaver.is_instagram_post_url(url):
         return _load_instagram_post(url.strip())
 
+    if facebook_post.is_facebook_post_url(url):
+        # Open Graph on Facebook has no post text; read the logged-out page data instead.
+        try:
+            return facebook_post.fetch_facebook_post(url.strip())
+        except facebook_post.FacebookPostError as error:
+            raise ValueError(str(error)) from error
+
     try:
         fetch_request = urllib.request.Request(
             url,
@@ -1803,7 +1811,7 @@ POST_VIDEO_MAX_BYTES = 500 * 1024 * 1024
 
 
 def _transcribe_post_video(post_url: str, video_url: str) -> str:
-    """Download one Threads or Instagram post video and return its Whisper transcript.
+    """Download one Threads, Instagram or Facebook post video and return its Whisper transcript.
 
     The CDN URL collected with the post is tried first (it is fresh, and works for
     posts that were read with the saved login). If it fails, the public embed
@@ -1823,8 +1831,10 @@ def _transcribe_post_video(post_url: str, video_url: str) -> str:
                 direct_error = error
                 append_service_log("webui", f"post video direct download failed; trying embed: {error}")
         if not media_path:
-            if post_url and instagram_weaver.is_instagram_post_url(post_url):
-                # Instagram CDN links expire; let yt-dlp fetch the post's audio again.
+            if post_url and (
+                instagram_weaver.is_instagram_post_url(post_url) or facebook_post.is_facebook_video_page(post_url)
+            ):
+                # Instagram/Facebook CDN links expire; let yt-dlp fetch the post's audio again.
                 try:
                     metadata = _download_media_page(post_url, destination, POST_VIDEO_MAX_BYTES, None)
                 except Exception as error:
@@ -1855,6 +1865,8 @@ def _transcribe_post_video(post_url: str, video_url: str) -> str:
 def _post_video_referer(post_url: str) -> str:
     if post_url and instagram_weaver.is_instagram_post_url(post_url):
         return "https://www.instagram.com/"
+    if post_url and facebook_post.is_facebook_host(post_url):
+        return "https://www.facebook.com/"
     return "https://www.threads.com/"
 
 
