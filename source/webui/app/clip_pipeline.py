@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from . import clip_requests
 from . import known_sources
+from . import source_tags
 from . import web_article
 from .note_id import note_guid_for_source
 
@@ -201,6 +202,7 @@ def run_post(
         settings=settings,
         chat=chat,
         external_pages=external_pages,
+        extra_tags=source_tags.post_tags(source_list, payload),
     )
 
 
@@ -252,7 +254,13 @@ def build_draft(
     share_url: str,
     notes: str = "",
     external_content: str = "",
+    extra_tags: list[str] | None = None,
 ) -> dict[str, Any]:
+    """Draft fields and the Obsidian note.
+
+    Frontmatter tags: date, airtype, kind, the source sites, ``extra_tags``
+    (platform / author from the capture), then the AI hashtags.
+    """
     date_parts = _date_parts()
     clean_title = _sanitize_title(title) or "Untitled"
     note_title = f"{date_parts['date']} {clean_title}"
@@ -261,8 +269,9 @@ def build_draft(
         date_parts["date"],
         "airtype",
         KIND_TAGS.get(kind, "airtype"),
-        *_domain_tags(source_list),
-        *[part.strip() for part in ai_tags.replace("，", ",").split(",") if part.strip()],
+        *source_tags.domain_tags(source_list),
+        *(extra_tags or []),
+        *ai_tag_values(ai_tags),
     ])
     user_notes = str(notes or "")
     external_block = str(external_content or "") if kind == "post" else ""
@@ -353,6 +362,7 @@ def _finish_text(
     settings: SettingsFn,
     chat: Chat,
     external_pages: list[dict[str, str]] | None = None,
+    extra_tags: list[str] | None = None,
 ) -> None:
     if _stopped(request_id):
         return
@@ -396,6 +406,7 @@ def _finish_text(
         share_url=share_url,
         notes=_request_notes(request_id),
         external_content=format_external_content(pages) if kind == "post" else "",
+        extra_tags=extra_tags,
     )
     clip_requests.update(
         request_id,
@@ -494,16 +505,17 @@ def _yaml_text(value: str) -> str:
     return f'"{_yaml_quote(text)}"'
 
 
-def _domain_tags(urls: list[str]) -> list[str]:
-    tags = []
-    for value in urls:
-        host = (urlparse(value).hostname or "").lower().removeprefix("www.")
-        if not host or host.endswith(".ts.net"):
-            continue
-        name = host.split(".")[0]
-        if name and name not in tags:
-            tags.append(name)
-    return tags
+def ai_tag_values(ai_tags: str) -> list[str]:
+    """AI hashtags (``#中文 #English`` lines) as frontmatter tag values without ``#``.
+
+    Same rule as the WebUI's ``yamlTagsFromAiTags``; a plain comma list is
+    still accepted.
+    """
+    text = str(ai_tags or "")
+    values = [item.lstrip("#") for item in re.findall(r"#[^\s#,，]+", text)]
+    if not values:
+        values = [part.strip() for part in text.replace("，", ",").split(",")]
+    return [value for value in values if value and not value.isdigit()]
 
 
 def _unique(values: list[str]) -> list[str]:

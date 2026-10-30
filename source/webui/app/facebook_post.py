@@ -367,6 +367,16 @@ def _actor_name(story: dict[str, Any]) -> str:
     return ""
 
 
+def _actor_id(story: dict[str, Any]) -> str:
+    """Numeric id of the post's author (the user name is only in some URLs)."""
+    actors = story.get("actors")
+    if isinstance(actors, list):
+        for actor in actors:
+            if isinstance(actor, dict) and _NUMERIC_ID.fullmatch(str(actor.get("id") or "")):
+                return str(actor["id"])
+    return ""
+
+
 def _video_owner_name(blocks: list[Any]) -> str:
     """Owner of a reel/video page, whose creation story has no ``actors``."""
     for block in blocks:
@@ -510,6 +520,8 @@ def parse_post_html(page: str, url: str = "") -> dict[str, Any]:
     return {
         "text": text,
         "author": (_actor_name(story) if story else "") or (_video_owner_name(blocks) if story else ""),
+        "author_id": _actor_id(story) if story else "",
+        "post_id": str(story.get("post_id") or "") if story else "",
         "group": _group_name(story) if story else "",
         "published": published,
         "image_urls": image_urls,
@@ -612,6 +624,8 @@ def fetch_facebook_post(url: str, *, timeout_seconds: int = 30, fetch=fetch_page
         "post_url": post_url if post_url != clean_url(url) else "",
         "title": title,
         "author": author,
+        "author_id": fields.get("author_id") or "",
+        "post_id": fields.get("post_id") or "",
         "group": group,
         "published": fields.get("published") or "",
         "text": text or body,
