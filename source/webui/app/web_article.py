@@ -228,6 +228,187 @@ def _trafilatura_config():
     return config
 
 
+# Pages that came back as a JavaScript-app shell: the only "content" is the
+# <noscript> hint, so saving it as the article body is junk.
+JS_SHELL_PATTERNS = (
+    re.compile(r"doesn['’]?t work properly without javascript", re.IGNORECASE),
+    re.compile(r"(please\s+)?enable\s+javascript", re.IGNORECASE),
+    re.compile(r"javascript\s+(is\s+)?(required|disabled|must be enabled)", re.IGNORECASE),
+    re.compile(r"you need to enable javascript", re.IGNORECASE),
+    re.compile(r"請(啟用|開啟|启用|开启)\s*javascript", re.IGNORECASE),
+)
+JS_SHELL_MAX_BODY_CHARS = 300
+
+
+def is_javascript_shell(markdown: str) -> bool:
+    """True when extracted Markdown is just an "enable JavaScript" notice."""
+    body_lines = [
+        line.strip()
+        for line in (markdown or "").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    body = "\n".join(body_lines)
+    if not body:
+        return False
+    if not any(pattern.search(body) for pattern in JS_SHELL_PATTERNS):
+        return False
+    remaining = body
+    for pattern in JS_SHELL_PATTERNS:
+        remaining = pattern.sub("", remaining)
+    return len(body) <= JS_SHELL_MAX_BODY_CHARS or len(remaining.strip()) < 80
+
+
+JOB_104_PATTERN = re.compile(
+    r"^https?://(?:www\.|m\.)?104\.com\.tw/job/([A-Za-z0-9]+)", re.IGNORECASE
+)
+
+
+def job_104_id(url: str) -> str:
+    """The 104 job id in ``url`` (``https://www.104.com.tw/job/<id>``), or ""."""
+    match = JOB_104_PATTERN.match((url or "").strip())
+    return match.group(1) if match else ""
+
+
+def _join_descriptions(items: Any) -> str:
+    values: list[str] = []
+    for item in items or []:
+        if isinstance(item, dict):
+            value = item.get("description") or item.get("language") or ""
+        else:
+            value = str(item or "")
+        value = str(value).strip()
+        if value:
+            values.append(value)
+    return "、".join(values)
+
+
+def job_104_markdown(payload: dict, *, job_id: str = "") -> str:
+    """Render a 104 ``/api/jobs/<id>`` JSON response as Markdown."""
+    data = (payload or {}).get("data") or {}
+    if not isinstance(data, dict) or not data:
+        raise RuntimeError("104 job API returned no job data.")
+    header = data.get("header") or {}
+    detail = data.get("jobDetail") or {}
+    condition = data.get("condition") or {}
+    welfare = data.get("welfare") or {}
+
+    job_name = str(header.get("jobName") or "").strip()
+    cust_name = str(header.get("custName") or "").strip()
+    if not job_name:
+        raise RuntimeError("104 job API returned no job title.")
+    title = f"{job_name} – {cust_name}" if cust_name else job_name
+    lines: list[str] = [f"# {title}", ""]
+
+    def add_field(label: str, value: Any) -> None:
+        text = str(value or "").strip()
+        if text:
+            lines.append(f"- {label}：{text}")
+
+    add_field("公司", cust_name)
+    add_field("職缺連結", f"https://www.104.com.tw/job/{job_id}" if job_id else "")
+    add_field("更新日期", header.get("appearDate"))
+    add_field("職務類別", _join_descriptions(detail.get("jobCategory")))
+    add_field("工作待遇", detail.get("salary"))
+    location = "".join(
+        str(detail.get(key) or "").strip() for key in ("addressRegion", "addressDetail")
+    )
+    add_field("上班地點", location)
+    add_field("地標", detail.get("landmark"))
+    add_field("管理責任", detail.get("manageResp"))
+    add_field("出差外派", detail.get("businessTrip"))
+    add_field("休假制度", detail.get("vacationPolicy"))
+    add_field("可上班日", detail.get("startWorkingDay"))
+    add_field("需求人數", detail.get("needEmp"))
+    lines.append("")
+
+    description = str(detail.get("jobDescription") or "").strip()
+    if description:
+        lines.extend(["## 工作內容", "", description, ""])
+
+    condition_lines: list[str] = []
+
+    def add_condition(label: str, value: Any) -> None:
+        text = str(value or "").strip()
+        if text:
+            condition_lines.append(f"- {label}：{text}")
+
+    add_condition("工作經歷", condition.get("workExp"))
+    add_condition("學歷要求", condition.get("edu"))
+    add_condition("科系要求", _join_descriptions(condition.get("major")))
+    languages: list[str] = []
+    for item in condition.get("language") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("language") or "").strip()
+        ability = item.get("ability") or {}
+        levels = "、".join(
+            f"{label}{ability.get(key)}"
+            for key, label in (("listening", "聽"), ("speaking", "說"), ("reading", "讀"), ("writing", "寫"))
+            if isinstance(ability, dict) and ability.get(key)
+        )
+        if name:
+            languages.append(f"{name}（{levels}）" if levels else name)
+    add_condition("語文條件", "；".join(languages))
+    add_condition("擅長工具", _join_descriptions(condition.get("specialty")))
+    add_condition("工作技能", _join_descriptions(condition.get("skill")))
+    add_condition("具備證照", _join_descriptions(condition.get("certificate")))
+    other = str(condition.get("other") or "").strip()
+    if condition_lines or other:
+        lines.extend(["## 條件要求", ""])
+        lines.extend(condition_lines)
+        if other:
+            if condition_lines:
+                lines.append("")
+            lines.append(other)
+        lines.append("")
+
+    welfare_text = str(welfare.get("welfare") or "").strip() if isinstance(welfare, dict) else ""
+    welfare_tags = _join_descriptions(welfare.get("tag")) if isinstance(welfare, dict) else ""
+    if welfare_text or welfare_tags:
+        lines.extend(["## 福利制度", ""])
+        if welfare_tags:
+            lines.extend([welfare_tags, ""])
+        if welfare_text:
+            lines.extend([welfare_text, ""])
+
+    return "\n".join(lines).strip() + "\n"
+
+
+def _fetch_104_job(job_id: str, *, timeout_seconds: int = 60) -> str:
+    """Fetch a 104 job through its public JSON API and render Markdown.
+
+    The job page is a Vue SPA whose server HTML is only a noscript shell.
+    Plain urllib works; curl_cffi Chrome impersonation gets a 403 here.
+    """
+    import json
+
+    api_url = f"https://www.104.com.tw/api/jobs/{urllib.parse.quote(job_id)}"
+    headers = {
+        "User-Agent": BROWSER_USER_AGENT,
+        "Accept": "application/json",
+        "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+        "Referer": f"https://www.104.com.tw/job/{job_id}",
+    }
+    try:
+        request = urllib.request.Request(api_url, headers=headers)
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            status = getattr(response, "status", 200)
+            if status != 200:
+                raise RuntimeError(f"104 job API returned {status} for job {job_id}.")
+            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(
+            f"104 job API returned {error.code} for job {job_id}; the job may be closed or removed."
+        ) from error
+    except urllib.error.URLError as error:
+        raise RuntimeError(f"Could not reach 104 job API: {error.reason}") from error
+    except ValueError as error:
+        raise RuntimeError(f"104 job API returned invalid JSON for job {job_id}.") from error
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"104 job API returned unexpected data for job {job_id}.")
+    return job_104_markdown(payload, job_id=job_id)
+
+
 def html_to_markdown(html: str, *, url: str = "") -> str:
     """Turn page HTML into article Markdown, including images and links."""
     try:
@@ -250,6 +431,10 @@ def html_to_markdown(html: str, *, url: str = "") -> str:
         raise RuntimeError(
             "Could not extract an article from this page. The site may require login, block extraction, or load most of its content dynamically."
         )
+    if is_javascript_shell(markdown):
+        raise RuntimeError(
+            "This page only returned a JavaScript app shell (\"enable JavaScript\" notice), so its content could not be captured without a browser."
+        )
 
     title = _extract_page_title(html, url)
     stripped = markdown.lstrip()
@@ -265,6 +450,9 @@ def fetch_markdown(url: str, *, api_key: str = "", timeout_seconds: int = 60) ->
     working after the md.genedai.me extractor was replaced.
     """
     del api_key
+    job_id = job_104_id(url)
+    if job_id:
+        return _fetch_104_job(job_id, timeout_seconds=timeout_seconds)
     html = fetch_html(url, timeout_seconds=timeout_seconds)
     return html_to_markdown(html, url=url)
 

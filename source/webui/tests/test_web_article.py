@@ -229,6 +229,142 @@ class FetchMarkdownTests(unittest.TestCase):
         self.assertIn("Could not extract an article", str(ctx.exception))
 
 
+JOB_104_PAYLOAD = {
+    "data": {
+        "header": {
+            "jobName": "AI軟體研發工程師",
+            "custName": "測試科技股份有限公司",
+            "appearDate": "2026/10/28",
+        },
+        "jobDetail": {
+            "jobDescription": "工作內容\n* 開發 AI 自主系統\n* 建立目標辨識模型",
+            "jobCategory": [{"description": "軟體工程師"}, {"description": "AI工程師"}],
+            "salary": "待遇面議",
+            "addressRegion": "台北市中山區",
+            "addressDetail": "松江路111號",
+            "needEmp": "1人",
+        },
+        "condition": {
+            "workExp": "2年以上",
+            "edu": "大學",
+            "major": ["電機電子工程相關"],
+            "language": [
+                {"language": "英文", "ability": {"listening": "精通", "speaking": "中等"}}
+            ],
+            "specialty": [{"description": "Python"}, {"description": "PyTorch"}],
+            "other": "熟悉 Linux 開發環境",
+        },
+        "welfare": {"tag": [], "welfare": "◆ 獎金/禮品類\n\t1.年終獎金"},
+    }
+}
+
+JS_SHELL_HTML = """<!DOCTYPE html><html><head><title>工作頁－104人力銀行</title></head>
+<body><noscript><strong>We're sorry but vue-start doesn't work properly without JavaScript enabled. Please enable it to continue.</strong></noscript>
+<div id="app"></div></body></html>"""
+
+
+class _FakeUrlopenResponse:
+    def __init__(self, body: bytes, status: int = 200) -> None:
+        self._body = body
+        self.status = status
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class Job104Tests(unittest.TestCase):
+    def test_job_id_parsing(self) -> None:
+        self.assertEqual(
+            web_article.job_104_id(
+                "https://www.104.com.tw/job/92ppf?jobsource=vipshare&utm_source=vip"
+            ),
+            "92ppf",
+        )
+        self.assertEqual(web_article.job_104_id("https://m.104.com.tw/job/abc12"), "abc12")
+        self.assertEqual(web_article.job_104_id("https://www.104.com.tw/company/awt21ew"), "")
+        self.assertEqual(web_article.job_104_id("https://example.com/job/92ppf"), "")
+
+    def test_payload_renders_markdown(self) -> None:
+        markdown = web_article.job_104_markdown(JOB_104_PAYLOAD, job_id="92ppf")
+        self.assertTrue(markdown.startswith("# AI軟體研發工程師 – 測試科技股份有限公司\n"))
+        self.assertIn("- 工作待遇：待遇面議", markdown)
+        self.assertIn("- 上班地點：台北市中山區松江路111號", markdown)
+        self.assertIn("- 職務類別：軟體工程師、AI工程師", markdown)
+        self.assertIn("## 工作內容", markdown)
+        self.assertIn("建立目標辨識模型", markdown)
+        self.assertIn("- 語文條件：英文（聽精通、說中等）", markdown)
+        self.assertIn("- 擅長工具：Python、PyTorch", markdown)
+        self.assertIn("熟悉 Linux 開發環境", markdown)
+        self.assertIn("## 福利制度", markdown)
+        self.assertIn("年終獎金", markdown)
+        self.assertEqual(web_article.extract_title(markdown), "AI軟體研發工程師 – 測試科技股份有限公司")
+        self.assertGreater(web_article.article_body_chars(markdown), 50)
+
+    def test_payload_without_data_raises(self) -> None:
+        with self.assertRaises(RuntimeError):
+            web_article.job_104_markdown({"data": {}})
+
+    def test_fetch_markdown_uses_104_api_not_html(self) -> None:
+        import json
+
+        captured: dict = {}
+
+        def fake_urlopen(request, timeout=None):
+            captured["url"] = request.full_url
+            captured["headers"] = {k.lower(): v for k, v in request.header_items()}
+            return _FakeUrlopenResponse(json.dumps(JOB_104_PAYLOAD).encode("utf-8"))
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen), patch(
+            "curl_cffi.requests.get", side_effect=AssertionError("HTML fetch must not run")
+        ):
+            markdown = web_article.fetch_markdown(
+                "https://www.104.com.tw/job/92ppf?jobsource=vipshare"
+            )
+        self.assertEqual(captured["url"], "https://www.104.com.tw/api/jobs/92ppf")
+        self.assertEqual(captured["headers"]["accept"], "application/json")
+        self.assertEqual(captured["headers"]["referer"], "https://www.104.com.tw/job/92ppf")
+        self.assertIn("Chrome/", captured["headers"]["user-agent"])
+        self.assertIn("## 工作內容", markdown)
+
+    def test_104_http_error_is_clear(self) -> None:
+        import urllib.error
+
+        error = urllib.error.HTTPError(
+            "https://www.104.com.tw/api/jobs/zzz", 404, "Not Found", {}, None
+        )
+        with patch("urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(RuntimeError) as ctx:
+                web_article.fetch_markdown("https://www.104.com.tw/job/zzz")
+        self.assertIn("104 job API returned 404", str(ctx.exception))
+
+
+class JavaScriptShellTests(unittest.TestCase):
+    def test_noscript_shell_is_detected(self) -> None:
+        self.assertTrue(
+            web_article.is_javascript_shell(
+                "# 工作頁－104人力銀行\n\nWe're sorry but vue-start doesn't work properly without JavaScript enabled. Please enable it to continue.\n"
+            )
+        )
+        self.assertTrue(web_article.is_javascript_shell("You need to enable JavaScript to run this app."))
+
+    def test_real_article_mentioning_javascript_is_kept(self) -> None:
+        body = "# Guide\n\n" + ("這是一篇很長的文章內容，討論前端框架與效能。" * 20) + "\n\nSome readers may need to enable JavaScript for the demo."
+        self.assertFalse(web_article.is_javascript_shell(body))
+        self.assertFalse(web_article.is_javascript_shell(ARTICLE_MARKDOWN))
+
+    def test_fetch_markdown_rejects_js_shell_page(self) -> None:
+        with patch("curl_cffi.requests.get", return_value=_FakeResponse(200, JS_SHELL_HTML)):
+            with self.assertRaises(RuntimeError) as ctx:
+                web_article.fetch_markdown("https://spa.example.com/page")
+        self.assertIn("JavaScript", str(ctx.exception))
+
+
 class RunJobTests(unittest.TestCase):
     def test_success_uploads_tags_shares_and_rewrites(self) -> None:
         payload = _run_article_job(
