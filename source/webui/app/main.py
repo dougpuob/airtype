@@ -56,6 +56,7 @@ from . import clip_pipeline
 from . import clip_requests
 from . import grok_cli
 from . import known_sources
+from . import linkedin_post
 from . import web_article
 from . import usage_stats
 from . import threads_watch
@@ -1600,11 +1601,36 @@ async def transcribe_from_url(request: UrlTranscribeRequest):
             os.unlink(temp_path)
 
 
+LINKEDIN_COOKIES_PATH = os.path.join(WEBUI_DATA_DIR, "cookies.txt")
+
+
+def _linkedin_cookies_path() -> str:
+    """Netscape cookies file for members-only LinkedIn posts.
+
+    The Settings cookies file ([webui.yt-dlp] cookies, shared with Threads and
+    yt-dlp) wins when set. Otherwise ``<data dir>/cookies.txt`` is used, so
+    LinkedIn cookies can be added without switching yt-dlp off
+    cookies-from-browser or Threads off its saved browser session.
+    """
+    ytdlp_settings = _read_backend_config_settings().get("ytdlp", {})
+    configured = str(ytdlp_settings.get("cookies") or "").strip()
+    if configured:
+        return configured
+    return LINKEDIN_COOKIES_PATH if os.path.exists(LINKEDIN_COOKIES_PATH) else ""
+
+
 def _load_public_post(url: str) -> dict[str, Any]:
     """Public Open Graph preview for a post URL. Raises ValueError on failure."""
     parsed = urllib.parse.urlparse(url.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("URL must start with http:// or https://")
+
+    if linkedin_post.is_linkedin_post_url(url):
+        # The Open Graph preview truncates LinkedIn posts; read the guest page instead.
+        try:
+            return linkedin_post.fetch_linkedin_post(url.strip(), cookies_path=_linkedin_cookies_path())
+        except linkedin_post.LinkedInPostError as error:
+            raise ValueError(str(error)) from error
 
     try:
         fetch_request = urllib.request.Request(
@@ -1726,6 +1752,64 @@ def _collect_threads_for_clip(url: str) -> dict[str, Any]:
     )
 
 
+POST_VIDEO_MAX_BYTES = 500 * 1024 * 1024
+
+
+def _transcribe_post_video(post_url: str, video_url: str) -> str:
+    """Download one Threads post video and return its Whisper transcript.
+
+    The CDN URL collected with the post is tried first (it is fresh, and works for
+    posts that were read with the saved login). If it fails, the public embed
+    downloader used by v-to-text fetches the post's video instead.
+    """
+    work_dir = tempfile.mkdtemp(prefix="airtype-post-video-")
+    try:
+        destination = os.path.join(work_dir, "video.mp4")
+        media_path = ""
+        direct_error: Optional[Exception] = None
+        if video_url:
+            try:
+                media_path = _download_post_video_direct(video_url, destination, POST_VIDEO_MAX_BYTES)
+            except Exception as error:  # noqa: BLE001 - fall back to the embed page
+                direct_error = error
+                append_service_log("webui", f"post video direct download failed; trying embed: {error}")
+        if not media_path:
+            if not (post_url and _is_threads_url(post_url)):
+                raise RuntimeError(f"Could not download the video: {direct_error or 'no video URL'}")
+            try:
+                metadata = _download_threads_embed(post_url, destination, POST_VIDEO_MAX_BYTES, None)
+            except Exception as error:
+                raise RuntimeError(
+                    "Could not download the video (the post may be private or login-only): "
+                    f"{error}"
+                ) from error
+            media_path = str(metadata.get("downloaded_path") or destination)
+        options = _settings_transcribe_options(None, None, None, None, None)
+        append_service_log("webui", f"post video transcribe start post={post_url}")
+        result = transcriber.transcribe(source_path=media_path, **options)
+        return str(result.get("text") or "").strip()
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def _download_post_video_direct(video_url: str, destination: str, max_bytes: int) -> str:
+    parsed = urllib.parse.urlparse(video_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Video URL must start with http:// or https://")
+    request = urllib.request.Request(video_url, headers={
+        "User-Agent": _bilibili_user_agent(),
+        "Referer": "https://www.threads.com/",
+    })
+    with urllib.request.urlopen(request, timeout=60) as response:
+        content_type = str(response.headers.get("Content-Type") or "").lower()
+        if content_type and not content_type.startswith(("video/", "application/octet-stream", "binary/")):
+            raise RuntimeError(f"Video URL returned {content_type}, not a video")
+        _stream_response_to_file(response, destination, max_bytes, None)
+    if os.path.getsize(destination) == 0:
+        raise RuntimeError("Video URL returned an empty file")
+    return destination
+
+
 def _run_article_clip(request_id: str, url: str) -> None:
     try:
         with _llm_job(request_id):
@@ -1753,6 +1837,7 @@ def _run_post_clip(request_id: str, url: str) -> None:
                 chat=_clip_chat,
                 collect_threads=_collect_threads_for_clip,
                 fetch_public_post=_load_public_post,
+                transcribe_video=_transcribe_post_video,
             )
     except Exception as error:
         if not clip_requests.is_cancelled(request_id):
@@ -2736,21 +2821,8 @@ def _download_threads_embed(
         "User-Agent": _bilibili_user_agent(),
         "Referer": embed_url,
     })
-    downloaded = 0
-    with urllib.request.urlopen(media_request, timeout=60) as response, open(media_path, "wb") as output:
-        total_bytes = _header_content_length(response.headers.get("Content-Length"))
-        if total_bytes and total_bytes > max_bytes:
-            raise ValueError("Remote file is larger than 2GB.")
-        while True:
-            chunk = response.read(1024 * 1024)
-            if not chunk:
-                break
-            downloaded += len(chunk)
-            if downloaded > max_bytes:
-                raise ValueError("Remote file is larger than 2GB.")
-            output.write(chunk)
-            if progress_callback:
-                progress_callback(downloaded, total_bytes)
+    with urllib.request.urlopen(media_request, timeout=60) as response:
+        _stream_response_to_file(response, media_path, max_bytes, progress_callback)
 
     return {
         "download_method": "threads-embed",
@@ -2760,6 +2832,32 @@ def _download_threads_embed(
         "resolved_url": embed_url,
         "downloaded_path": media_path,
     }
+
+
+def _stream_response_to_file(
+    response: Any,
+    path: str,
+    max_bytes: int,
+    progress_callback: Optional[Callable[[int, Optional[int]], None]],
+) -> int:
+    """Copy an open HTTP response to path in 1 MB chunks, enforcing max_bytes."""
+    limit_label = f"{max_bytes / (1024 ** 3):.0f}GB" if max_bytes >= 1024 ** 3 else f"{max_bytes // (1024 ** 2)}MB"
+    total_bytes = _header_content_length(response.headers.get("Content-Length"))
+    if total_bytes and total_bytes > max_bytes:
+        raise ValueError(f"Remote file is larger than {limit_label}.")
+    downloaded = 0
+    with open(path, "wb") as output:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            downloaded += len(chunk)
+            if downloaded > max_bytes:
+                raise ValueError(f"Remote file is larger than {limit_label}.")
+            output.write(chunk)
+            if progress_callback:
+                progress_callback(downloaded, total_bytes)
+    return downloaded
 
 
 def _threads_media_url_from_embed(page: str) -> str:

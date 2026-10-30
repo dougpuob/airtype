@@ -51,9 +51,9 @@ A macOS desktop speech-to-text app. Double-press Right Ctrl or Right Option to s
 - **Background ASR** — transcription runs in a background thread with detailed timing logs
 - **Voice activity detection** — recordings below RMS threshold are skipped
 - **URL transcription** — download and transcribe audio/video from YouTube, Bilibili, Instagram, TikTok, etc.
-- **Obsidian Clipper** — one page captures everything: Threads posts, audio/video URLs, and any other web page (fetched locally and converted to Markdown with Trafilatura); every note carries a GUID frontmatter and runs AI polish → AI title → AI tags before saving to Obsidian
+- **Obsidian Clipper** — one page captures everything: Threads posts, public LinkedIn posts, audio/video URLs, and any other web page (fetched locally and converted to Markdown with Trafilatura); every note carries a GUID frontmatter and runs AI polish → AI title → AI tags before saving to Obsidian
 - **Note photos in Immich** — photos from posts and articles are uploaded to a dedicated Immich account, tagged with the note GUID, and rendered in Obsidian through key-gated share links
-- **Known-source routing** — Threads, YouTube/Bilibili, Instagram, TikTok, and direct media files keep their dedicated pipelines; everything else falls through to the generic web-article pipeline
+- **Known-source routing** — Threads, LinkedIn posts (`/posts/`, `/feed/update/`, `lnkd.in/p/`), YouTube/Bilibili, Instagram, TikTok, and direct media files keep their dedicated pipelines; everything else falls through to the generic web-article pipeline
 - **Async job queue** — long-running transcriptions run as background jobs with progress tracking
 - **Local LLM chat** — query transcripts with ollama or llama.cpp models
 - **Web UI** — settings management, transcription records, and configuration

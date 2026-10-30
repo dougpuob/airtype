@@ -20,6 +20,12 @@ Chat = Callable[..., str]
 SettingsFn = Callable[[], dict[str, Any]]
 ThreadsFn = Callable[[str], dict[str, Any]]
 PublicPostFn = Callable[[str], dict[str, Any]]
+# (post_url, video_url) -> Whisper transcript text. Raises when the video cannot be fetched.
+VideoTranscribeFn = Callable[[str, str], str]
+
+# Threads chains rarely carry more than one or two clips; cap the Whisper work per capture.
+MAX_POST_VIDEOS = 3
+VIDEO_TRANSCRIPT_HEADING = "## Video Transcript"
 
 POLISH_SYSTEM = (
     "你是嚴謹、克制的繁體中文編輯。忠實保留原文的觀點、時間線與事實，"
@@ -98,10 +104,12 @@ def run_post(
     chat: Chat,
     collect_threads: ThreadsFn,
     fetch_public_post: PublicPostFn,
+    transcribe_video: VideoTranscribeFn | None = None,
 ) -> None:
     if _stopped(request_id):
         return
     clip_requests.update(request_id, status="running", progress=8, message="Capturing post")
+    videos: list[dict[str, str]] = []
     host = urlparse(url).hostname or ""
     if host.endswith("threads.com") or host.endswith("threads.net"):
         payload = collect_threads(url)
@@ -115,11 +123,13 @@ def run_post(
             if isinstance(post, dict):
                 media_urls.extend(post.get("media_urls") or [])
         fallback_title = str(payload.get("author") or "") or _first_line(content)
+        videos = post_videos(posts)
     else:
         payload = fetch_public_post(url)
         content = str(payload.get("markdown") or payload.get("text") or "").strip()
         guid = str(payload.get("guid") or "") or note_guid_for_source(url)
-        sources = [url]
+        # A short link (e.g. lnkd.in/p/...) also lists the post page it resolved to.
+        sources = [url, str(payload.get("post_url") or "")]
         media_urls = list(payload.get("media_urls") or [])
         fallback_title = str(payload.get("title") or "") or _first_line(content)
     if not content:
@@ -163,6 +173,16 @@ def run_post(
             linked_urls,
             timeout_seconds=int(web_to_markdown.get("timeout_seconds") or 60),
         )
+    if videos and transcribe_video is not None:
+        transcripts = transcribe_post_videos(
+            request_id,
+            videos,
+            transcribe_video=transcribe_video,
+            fallback_post_url=url,
+        )
+        if transcripts is None:
+            return
+        content = append_video_transcripts(content, transcripts, skipped=max(0, len(videos) - MAX_POST_VIDEOS))
     _finish_text(
         request_id,
         kind="post",
@@ -499,6 +519,82 @@ def _first_line(text: str) -> str:
 def _looks_like_video(url: str) -> bool:
     path = urlparse(url).path.lower()
     return path.endswith((".mp4", ".mov", ".webm", ".m4v", ".mkv"))
+
+
+def post_videos(posts: list[Any]) -> list[dict[str, str]]:
+    """Video attachments in a Threads chain, in order, with the post each one came from."""
+    found: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for post in posts or []:
+        if not isinstance(post, dict):
+            continue
+        post_url = str(post.get("url") or "").strip()
+        for item in post.get("media_urls") or []:
+            video_url = str(item or "").strip()
+            if not video_url or video_url in seen or not _looks_like_video(video_url):
+                continue
+            seen.add(video_url)
+            found.append({"post_url": post_url, "video_url": video_url})
+    return found
+
+
+def transcribe_post_videos(
+    request_id: str,
+    videos: list[dict[str, str]],
+    *,
+    transcribe_video: VideoTranscribeFn,
+    fallback_post_url: str = "",
+) -> list[dict[str, str]] | None:
+    """Whisper each video (up to MAX_POST_VIDEOS). A failed video records its error
+    instead of failing the capture. Returns None when the request was stopped."""
+    selected = videos[:MAX_POST_VIDEOS]
+    results: list[dict[str, str]] = []
+    for index, video in enumerate(selected, start=1):
+        if _stopped(request_id):
+            return None
+        label = f"Transcribing video {index}/{len(selected)}" if len(selected) > 1 else "Transcribing video"
+        clip_requests.update(request_id, progress=min(75, 45 + index * 10), message=label)
+        post_url = str(video.get("post_url") or "") or fallback_post_url
+        text = ""
+        error = ""
+        try:
+            text = str(transcribe_video(post_url, str(video.get("video_url") or "")) or "").strip()
+            if not text:
+                error = "Whisper found no speech in the video"
+        except Exception as caught:  # noqa: BLE001 - one bad video must not drop the post
+            error = " ".join(str(caught).split())[:300] or caught.__class__.__name__
+        results.append({"post_url": post_url, "text": text, "error": error})
+    return results
+
+
+def format_video_transcripts(transcripts: list[dict[str, str]], *, skipped: int = 0) -> str:
+    """Video Transcript block appended to a post's Original Content."""
+    if not transcripts:
+        return ""
+    blocks = [VIDEO_TRANSCRIPT_HEADING]
+    multiple = len(transcripts) > 1
+    for index, item in enumerate(transcripts, start=1):
+        if multiple:
+            blocks.append(f"### Video {index}")
+        post_url = str(item.get("post_url") or "").strip()
+        if post_url:
+            blocks.append(post_url)
+        text = str(item.get("text") or "").strip()
+        if text:
+            blocks.append(text)
+        else:
+            reason = str(item.get("error") or "").strip() or "unknown error"
+            blocks.append(f"_(Video transcript unavailable: {reason})_")
+    if skipped:
+        blocks.append(f"_({skipped} more video(s) in this thread were not transcribed.)_")
+    return "\n\n".join(blocks)
+
+
+def append_video_transcripts(content: str, transcripts: list[dict[str, str]], *, skipped: int = 0) -> str:
+    block = format_video_transcripts(transcripts, skipped=skipped)
+    if not block:
+        return content
+    return f"{content.rstrip()}\n\n{block}" if content.strip() else block
 
 
 def extract_post_external_urls(content: str, *, skip: list[str] | None = None) -> list[str]:

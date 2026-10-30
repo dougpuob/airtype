@@ -8,14 +8,17 @@ flowchart TD
   route{route_for_url}
   url --> route
 
-  route -->|threads.com threads.net| post[Capture Post]
+  route -->|threads.com threads.net LinkedIn 貼文| post[Capture Post]
   route -->|YouTube Bilibili Instagram TikTok Apple Podcasts Shorts 或媒體檔| voice[V-to-Text]
   route -->|其餘網頁| article[Web Article]
 
   post --> threads{Threads?}
   threads -->|是| chain[抓整串貼文]
-  threads -->|否| og[讀 Open Graph 預覽]
+  threads -->|否| linkedin{LinkedIn?}
+  linkedin -->|是| guest[讀訪客頁 JSON-LD 全文 展開 lnkd.in]
+  linkedin -->|否| og[讀 Open Graph 預覽]
   chain --> photos[照片上傳 Immich]
+  guest --> photos
   og --> photos
   photos --> polish[LLM 潤稿 標題 標籤]
   polish --> notePost["Obsidian: Original Content"]
@@ -44,6 +47,6 @@ flowchart TD
 三條筆記路徑的差別：
 
 - **Web Article**：Trafilatura 抽出正文與圖片，圖片進 Immich。原文進 Original Content，再潤稿、下標題、貼標籤。
-- **Capture Post**：Threads 走整串貼文；其他貼文網址只讀 Open Graph。圖片同樣進 Immich，筆記區塊與文章相同。Instagram、TikTok 不走這裡，它們被歸到 V-to-Text。
+- **Capture Post**：Threads 走整串貼文；LinkedIn 公開貼文（`/posts/`、`/feed/update/`、`lnkd.in/p/`）讀未登入的訪客頁 JSON-LD 取得全文、作者、日期與圖片，內文的 `lnkd.in` 連結會換成實際網址；需要登入的貼文會直接報錯。其他貼文網址只讀 Open Graph。圖片同樣進 Immich，筆記區塊與文章相同。Instagram、TikTok 不走這裡，它們被歸到 V-to-Text。
 - **V-to-Text**：下載後做 Whisper。錯字修正只改辨識片段，節目簡介不送進這一步。Apple Podcasts 的簡介排在 Original Transcript 上方。潤稿用的是改過的逐字稿。本機上傳走同一條 Whisper 之後的路徑，只是沒有下載與節目簡介。
 - **IME**：`/api/transcribe/ime` 停在原始辨識文字，不改錯字，也不寫 Obsidian 筆記。

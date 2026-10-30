@@ -33,6 +33,11 @@ _TIKTOK_VIDEO = re.compile(
     re.IGNORECASE,
 )
 
+# LinkedIn post ids: /feed/update/urn:li:activity:<id> or the
+# /posts/<author>_<slug>-activity-<id>-<hash> share slug.
+_LINKEDIN_URN = re.compile(r"urn:li:(activity|share|ugcPost):(\d{10,})", re.IGNORECASE)
+_LINKEDIN_SLUG = re.compile(r"-(activity|share|ugcPost)-(\d{10,})(?=-|/|$)", re.IGNORECASE)
+
 _TRACKING_KEYS = {
     "fbclid",
     "gclid",
@@ -84,6 +89,10 @@ def canonical_source_id(url: str) -> str:
     tiktok_id = _tiktok_id(host, parsed)
     if tiktok_id:
         return f"tiktok:{tiktok_id}"
+
+    linkedin_id = _linkedin_post_id(host, parsed)
+    if linkedin_id:
+        return f"linkedin:{linkedin_id}"
 
     return f"web:{_canonical_web_url(parsed)}"
 
@@ -172,6 +181,19 @@ def _tiktok_id(host: str, parsed: urllib.parse.ParseResult) -> str:
         return ""
     match = _TIKTOK_VIDEO.match(parsed.path or "")
     return match.group("video_id") if match else ""
+
+
+def _linkedin_post_id(host: str, parsed: urllib.parse.ParseResult) -> str:
+    if not _host_is(host, "linkedin.com"):
+        return ""
+    path = urllib.parse.unquote(parsed.path or "")
+    if not re.match(r"^/(?:posts|feed/update|embed/feed/update)/", path, re.IGNORECASE):
+        return ""
+    match = _LINKEDIN_URN.search(path) or _LINKEDIN_SLUG.search(path)
+    if not match:
+        return ""
+    kind = {"ugcpost": "ugcPost"}.get(match.group(1).lower(), match.group(1).lower())
+    return f"{kind}:{match.group(2)}"
 
 
 def _canonical_web_url(parsed: urllib.parse.ParseResult) -> str:
