@@ -155,7 +155,7 @@ class RunPostVideoTranscriptTests(unittest.TestCase):
 
 class TranscribePostVideoTests(unittest.TestCase):
     def test_direct_download_then_whisper(self) -> None:
-        def direct(_url, destination, _max):
+        def direct(_url, destination, _max, **_kwargs):
             with open(destination, "wb") as output:
                 output.write(b"x")
             return destination

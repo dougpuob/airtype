@@ -63,7 +63,7 @@ from . import threads_watch
 from .ai_tags import AI_TAGS_SYSTEM_PROMPT, build_ai_tags_prompt, normalize_ai_tags
 from .note_id import canonical_source_id, note_guid_for_source
 from .post_weaver import collect_threads_chain, posts_to_markdown
-from .instagram_weaver import extract_instagram_post
+from . import instagram_weaver
 
 app = FastAPI(title="AirType API", description="Aircraft Cabin Configuration & Speech Recognition API")
 
@@ -1632,6 +1632,9 @@ def _load_public_post(url: str) -> dict[str, Any]:
         except linkedin_post.LinkedInPostError as error:
             raise ValueError(str(error)) from error
 
+    if instagram_weaver.is_instagram_post_url(url):
+        return _load_instagram_post(url.strip())
+
     try:
         fetch_request = urllib.request.Request(
             url,
@@ -1691,6 +1694,50 @@ def _load_public_post(url: str) -> dict[str, Any]:
         "markdown": posts_to_markdown(
             [{"text": text, "url": url, "media_urls": media_urls}]
         ),
+        "guid": note_guid_for_source(url),
+        "source_id": canonical_source_id(url),
+    }
+
+
+def _load_instagram_post(url: str) -> dict[str, Any]:
+    """Caption, photos and videos of an Instagram post/reel for Capture Post.
+
+    Public posts are read without cookies; the yt-dlp cookies from Settings are
+    only tried when that fails (login-only posts). Videos are returned
+    separately so the post pipeline can Whisper them into the same note.
+    """
+    ytdlp_settings = _read_backend_config_settings().get("ytdlp", {})
+    cookies_path = os.path.expanduser(str(ytdlp_settings.get("cookies") or "").strip())
+    cookies_browser = str(ytdlp_settings.get("cookies_from_browser") or "").strip()
+    try:
+        post = instagram_weaver.fetch_instagram_post(
+            url,
+            cookies_path=cookies_path if cookies_path and os.path.exists(cookies_path) else "",
+            cookies_from_browser=cookies_browser,
+        )
+    except instagram_weaver.InstagramCaptureError as error:
+        raise ValueError(str(error)) from error
+    text = str(post.get("text") or "").strip()
+    image_urls = [item for item in post.get("image_urls") or [] if item]
+    videos = [
+        {"post_url": post["url"], "video_url": str(video.get("video_url") or "")}
+        for video in post.get("videos") or []
+        if video.get("video_url") and video.get("has_audio", True)
+    ]
+    author = str(post.get("author") or "")
+    if not text and not image_urls and not videos:
+        raise ValueError("This Instagram post has no caption, photos or video.")
+    body = text or (f"Instagram post by @{author}" if author else "Instagram post")
+    return {
+        "kind": "post",
+        "url": url,
+        "post_url": post["url"],
+        "title": "",
+        "author": author,
+        "text": body,
+        "media_urls": image_urls,
+        "videos": videos,
+        "markdown": posts_to_markdown([{"text": body, "url": post["url"], "media_urls": image_urls}]),
         "guid": note_guid_for_source(url),
         "source_id": canonical_source_id(url),
     }
@@ -1756,7 +1803,7 @@ POST_VIDEO_MAX_BYTES = 500 * 1024 * 1024
 
 
 def _transcribe_post_video(post_url: str, video_url: str) -> str:
-    """Download one Threads post video and return its Whisper transcript.
+    """Download one Threads or Instagram post video and return its Whisper transcript.
 
     The CDN URL collected with the post is tried first (it is fresh, and works for
     posts that were read with the saved login). If it fails, the public embed
@@ -1769,10 +1816,23 @@ def _transcribe_post_video(post_url: str, video_url: str) -> str:
         direct_error: Optional[Exception] = None
         if video_url:
             try:
-                media_path = _download_post_video_direct(video_url, destination, POST_VIDEO_MAX_BYTES)
+                media_path = _download_post_video_direct(
+                    video_url, destination, POST_VIDEO_MAX_BYTES, referer=_post_video_referer(post_url)
+                )
             except Exception as error:  # noqa: BLE001 - fall back to the embed page
                 direct_error = error
                 append_service_log("webui", f"post video direct download failed; trying embed: {error}")
+        if not media_path:
+            if post_url and instagram_weaver.is_instagram_post_url(post_url):
+                # Instagram CDN links expire; let yt-dlp fetch the post's audio again.
+                try:
+                    metadata = _download_media_page(post_url, destination, POST_VIDEO_MAX_BYTES, None)
+                except Exception as error:
+                    raise RuntimeError(
+                        "Could not download the video (the post may be private or login-only): "
+                        f"{error}"
+                    ) from error
+                media_path = str(metadata.get("downloaded_path") or destination)
         if not media_path:
             if not (post_url and _is_threads_url(post_url)):
                 raise RuntimeError(f"Could not download the video: {direct_error or 'no video URL'}")
@@ -1792,13 +1852,21 @@ def _transcribe_post_video(post_url: str, video_url: str) -> str:
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
-def _download_post_video_direct(video_url: str, destination: str, max_bytes: int) -> str:
+def _post_video_referer(post_url: str) -> str:
+    if post_url and instagram_weaver.is_instagram_post_url(post_url):
+        return "https://www.instagram.com/"
+    return "https://www.threads.com/"
+
+
+def _download_post_video_direct(
+    video_url: str, destination: str, max_bytes: int, referer: str = "https://www.threads.com/"
+) -> str:
     parsed = urllib.parse.urlparse(video_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("Video URL must start with http:// or https://")
     request = urllib.request.Request(video_url, headers={
         "User-Agent": _bilibili_user_agent(),
-        "Referer": "https://www.threads.com/",
+        "Referer": referer,
     })
     with urllib.request.urlopen(request, timeout=60) as response:
         content_type = str(response.headers.get("Content-Type") or "").lower()

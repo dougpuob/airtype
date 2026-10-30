@@ -45,8 +45,19 @@ class KnownSourceRoutingTests(unittest.TestCase):
         )
 
     def test_instagram_and_tiktok(self) -> None:
+        # Instagram posts and reels are captured as posts (caption + photos + Whisper).
+        for url in (
+            "https://www.instagram.com/p/DfFNi8dAcO6/?cplk=Z2kyNm43bWs4N2pm",
+            "https://www.instagram.com/reel/Chunk8-jurw/",
+            "https://www.instagram.com/reels/Cop84x6u7CP/",
+            "https://www.instagram.com/tv/BkfuX9UB-eK/",
+            "https://www.instagram.com/hkepc/p/DfFNi8dAcO6/",
+            "https://instagram.com/p/DfFNi8dAcO6",
+        ):
+            self.assertEqual(known_sources.route_for_url(url), "capture-post", url)
+        # Other Instagram pages stay on V-to-Text.
         self.assertEqual(
-            known_sources.match_known_source("https://www.instagram.com/reel/abc/").pipeline,
+            known_sources.match_known_source("https://www.instagram.com/stories/user/123/").pipeline,
             "v-to-text",
         )
         self.assertEqual(

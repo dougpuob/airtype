@@ -467,3 +467,245 @@ class InstagramPostExtractor:
 def extract_instagram_post(url: str, cookie_header: str = "") -> InstagramPost:
     """Extract Instagram post data from a public URL."""
     return InstagramPostExtractor().extract(url, cookie_header)
+
+# --------------------------------------------------------------------------- #
+# Capture Post: public Instagram posts via yt-dlp's logged-out media query
+# --------------------------------------------------------------------------- #
+#
+# The plain post page now returns a logged-out shell (no JSON-LD, no caption in
+# Open Graph), so the HTML strategies above find nothing. yt-dlp's Instagram
+# extractor already knows the logged-out GraphQL query Instagram's own web app
+# uses for public posts, including the LSD token and browser impersonation it
+# needs. Capture Post reuses that request and keeps the raw media node
+# (caption, author, photos, carousel items, video URLs) instead of yt-dlp's
+# video-only result, so photo posts no longer fail with "There is no video".
+
+INSTAGRAM_HOST = "instagram.com"
+_POST_KINDS = ("p", "reel", "reels", "tv")
+
+
+class InstagramCaptureError(RuntimeError):
+    """An Instagram post could not be captured."""
+
+
+def _instagram_host_matches(url: str) -> bool:
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower().strip(".")
+    except ValueError:
+        return False
+    return host == INSTAGRAM_HOST or host.endswith("." + INSTAGRAM_HOST)
+
+
+def instagram_shortcode(url: str) -> str:
+    """Shortcode of an Instagram post/reel URL, or "" when the URL is not one.
+
+    Accepts ``/p/<code>``, ``/reel/<code>``, ``/reels/<code>``, ``/tv/<code>``
+    and the ``/<username>/p/<code>`` form Instagram uses in og:url.
+    """
+    if not _instagram_host_matches(url):
+        return ""
+    parts = [part for part in urllib.parse.urlparse(url).path.split("/") if part]
+    for index, part in enumerate(parts[:2]):
+        if part.lower() in _POST_KINDS and index + 1 < len(parts):
+            code = parts[index + 1]
+            if re.fullmatch(r"[A-Za-z0-9_-]{5,}", code):
+                return code
+    return ""
+
+
+def is_instagram_post_url(url: str) -> bool:
+    return bool(instagram_shortcode(url))
+
+
+def canonical_instagram_url(url: str) -> str:
+    """``https://www.instagram.com/<kind>/<code>/`` without tracking query."""
+    code = instagram_shortcode(url)
+    if not code:
+        return url
+    parts = [part.lower() for part in urllib.parse.urlparse(url).path.split("/") if part]
+    kind = next((part for part in parts if part in _POST_KINDS), "p")
+    kind = "reel" if kind == "reels" else kind
+    return f"https://www.instagram.com/{kind}/{code}/"
+
+
+def _best_image(node: dict[str, Any]) -> str:
+    candidates = (node.get("image_versions2") or {}).get("candidates")
+    best = ""
+    best_area = -1
+    if isinstance(candidates, list):
+        for candidate in candidates:
+            if not isinstance(candidate, dict) or not candidate.get("url"):
+                continue
+            area = int(candidate.get("width") or 0) * int(candidate.get("height") or 0)
+            if area > best_area:
+                best, best_area = str(candidate["url"]), area
+    if not best:
+        for key in ("display_uri", "display_url", "thumbnail_url", "image_url"):
+            value = node.get(key)
+            if isinstance(value, str) and value.startswith("http"):
+                return value
+    return best
+
+
+def _best_video(node: dict[str, Any]) -> str:
+    versions = node.get("video_versions")
+    best = ""
+    best_area = -1
+    if isinstance(versions, list):
+        for version in versions:
+            if not isinstance(version, dict) or not version.get("url"):
+                continue
+            area = int(version.get("width") or 0) * int(version.get("height") or 0)
+            if area > best_area:
+                best, best_area = str(version["url"]), area
+    if not best and isinstance(node.get("video_url"), str):
+        best = node["video_url"]
+    return best
+
+
+def post_from_media_node(media: dict[str, Any], url: str) -> dict[str, Any]:
+    """Normalize one Instagram media node (logged-out or logged-in API shape).
+
+    Returns ``{shortcode, url, author, author_name, text, taken_at,
+    image_urls, videos}`` where ``videos`` lists
+    ``{"video_url", "cover_url", "has_audio"}``.
+    Carousel items keep their order; a video item contributes its video (for
+    Whisper) and its cover frame (so the note still shows the slide).
+    """
+    caption = media.get("caption")
+    if isinstance(caption, dict):
+        text = str(caption.get("text") or "")
+    elif isinstance(caption, str):
+        text = caption
+    else:
+        edges = ((media.get("edge_media_to_caption") or {}).get("edges")) or []
+        text = next(
+            (str(edge.get("node", {}).get("text") or "") for edge in edges if isinstance(edge, dict)),
+            "",
+        )
+    owner = media.get("user") or media.get("owner") or {}
+    owner = owner if isinstance(owner, dict) else {}
+    nodes = media.get("carousel_media") or (media.get("edge_sidecar_to_children") or {}).get("edges") or []
+    items: list[dict[str, Any]] = []
+    if isinstance(nodes, list) and nodes:
+        for node in nodes:
+            if isinstance(node, dict):
+                items.append(node.get("node") if isinstance(node.get("node"), dict) else node)
+    else:
+        items = [media]
+    image_urls: list[str] = []
+    videos: list[dict[str, str]] = []
+    for item in items:
+        video_url = _best_video(item)
+        image_url = _best_image(item)
+        if image_url and image_url not in image_urls:
+            image_urls.append(image_url)
+        if video_url and all(video["video_url"] != video_url for video in videos):
+            # Instagram marks videos without a sound track (has_audio: false);
+            # Whisper has nothing to transcribe there.
+            videos.append({
+                "video_url": video_url,
+                "cover_url": image_url,
+                "has_audio": item.get("has_audio") is not False,
+            })
+    taken_at = media.get("taken_at") or media.get("taken_at_timestamp") or 0
+    return {
+        "shortcode": str(media.get("code") or media.get("shortcode") or instagram_shortcode(url)),
+        "url": url,
+        "author": str(owner.get("username") or ""),
+        "author_name": str(owner.get("full_name") or ""),
+        "text": html.unescape(text).replace("\r\n", "\n").strip(),
+        "taken_at": int(taken_at) if str(taken_at).isdigit() else 0,
+        "image_urls": image_urls,
+        "videos": videos,
+    }
+
+
+def _ytdlp_media_node(url: str, ydl_options: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Run yt-dlp's Instagram extractor and keep the raw media node it parses."""
+    try:
+        import yt_dlp
+        from yt_dlp.extractor.instagram import InstagramIE
+    except ImportError as error:  # pragma: no cover - dependency is in requirements
+        raise InstagramCaptureError("yt-dlp is required to capture Instagram posts") from error
+
+    captured: list[dict[str, Any]] = []
+
+    class _CaptureIE(InstagramIE):
+        def _extract_product(self, product_media, *args, **kwargs):  # noqa: ANN001
+            if isinstance(product_media, dict):
+                captured.append(product_media)
+            return super()._extract_product(product_media, *args, **kwargs)
+
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "noplaylist": True,
+        "logger": _QuietLogger(),
+        **ydl_options,
+    }
+    last_error = ""
+    with yt_dlp.YoutubeDL(options) as ydl:
+        extractor = _CaptureIE(ydl)
+        ydl.add_info_extractor(extractor)
+        try:
+            ydl.extract_info(url, download=False, process=False, ie_key=extractor.ie_key())
+        except Exception as error:  # noqa: BLE001 - "no video" is expected for photo posts
+            last_error = " ".join(str(error).replace("ERROR: ", "").split())
+    if captured:
+        return captured[0]
+    if last_error:
+        raise InstagramCaptureError(last_error)
+    return None
+
+
+class _QuietLogger:
+    def debug(self, _msg: str) -> None:
+        pass
+
+    def info(self, _msg: str) -> None:
+        pass
+
+    def warning(self, _msg: str) -> None:
+        pass
+
+    def error(self, _msg: str) -> None:
+        pass
+
+
+def fetch_instagram_post(
+    url: str,
+    *,
+    cookies_path: str = "",
+    cookies_from_browser: str = "",
+    media_node_fn: Any = None,
+) -> dict[str, Any]:
+    """Caption, author, photos and videos of a public Instagram post.
+
+    Tries without cookies first (public posts need none). If that fails and
+    yt-dlp cookies are configured, retries once with them so login-only posts
+    can still be read. Raises InstagramCaptureError when nothing is found.
+    """
+    if not is_instagram_post_url(url):
+        raise InstagramCaptureError("Not an Instagram post URL")
+    canonical = canonical_instagram_url(url)
+    fetch = media_node_fn or _ytdlp_media_node
+    attempts: list[dict[str, Any]] = [{}]
+    if cookies_path:
+        attempts.append({"cookiefile": cookies_path})
+    elif cookies_from_browser:
+        attempts.append({"cookiesfrombrowser": (cookies_from_browser,)})
+    errors: list[str] = []
+    for options in attempts:
+        try:
+            media = fetch(canonical, options)
+        except InstagramCaptureError as error:
+            errors.append(str(error))
+            continue
+        if media:
+            return post_from_media_node(media, canonical)
+    detail = errors[-1] if errors else "Instagram returned no post data"
+    raise InstagramCaptureError(
+        f"Could not read this Instagram post (it may be private, login-only, or rate limited): {detail}"
+    )
