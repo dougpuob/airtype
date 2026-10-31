@@ -193,7 +193,13 @@
               "type": "array",
               "items": { "type": "string", "enum": ["polish", "title", "tags"] },
               "default": ["title"],
-              "description": "LLM steps that enable thinking. Other steps follow disable_thinking."
+              "description": "LLM steps that enable thinking (polish, title). Tags use tags_thinking_level instead."
+            },
+            "tags_thinking_level": {
+              "type": "string",
+              "enum": ["off", "low", "mid", "high"],
+              "default": "mid",
+              "description": "Thinking level for AI tags (關/低/中/高). Local OpenAI-compatible routes map low/mid/high to thinking_budget 256/512/1024; off disables thinking."
             }
           }
         },

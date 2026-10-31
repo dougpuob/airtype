@@ -48,6 +48,7 @@ from .config_schema import (
     render_webui_settings_toml,
     split_whisper_model_settings,
     thinking_enabled_for_step,
+    thinking_budget_for_level,
     whisper_model_path_from_settings,
 )
 from .config_schema import _toml_number as _schema_toml_number, _toml_string as _schema_toml_string
@@ -573,6 +574,7 @@ class LocalChatRequest(LocalModelsRequest):
     context: Optional[int] = None
     disable_thinking: bool = False
     enable_thinking: bool = False
+    thinking_budget: Optional[int] = None
     step: str = ""
 
 
@@ -788,6 +790,13 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
                 capture_post_input.get(
                     "thinking-steps",
                     current_capture_post.get("thinking_steps", ["title"]),
+                ),
+            ),
+            "tags_thinking_level": capture_post_input.get(
+                "tags_thinking_level",
+                capture_post_input.get(
+                    "tags-thinking-level",
+                    current_capture_post.get("tags_thinking_level", "mid"),
                 ),
             ),
         },
@@ -2703,6 +2712,7 @@ def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
         f"ai_title_enabled = {'true' if capture_post.get('ai_title_enabled') else 'false'}",
         f"title_system_prompt = {_toml_string(capture_post.get('title_system_prompt', ''))}",
         f"thinking_steps = {_toml_string_array(capture_post.get('thinking_steps', []))}",
+        f"tags_thinking_level = {_toml_string(capture_post.get('tags_thinking_level', 'mid'))}",
         "",
         "[webui.ime]",
         f"correction_enabled = {'true' if ime.get('correction_enabled') else 'false'}",
@@ -3676,6 +3686,12 @@ def _llm_messages(system: Optional[str], prompt: str) -> list[Dict[str, str]]:
 
 
 def _strip_thinking_blocks(text: str) -> str:
+    text = str(text or "")
+    # A capped thinking budget can leak reasoning without an opening tag; the
+    # real answer is whatever follows the last closing tag.
+    closing = list(re.finditer(r"</think>|<\|/think\|>", text, flags=re.IGNORECASE))
+    if closing:
+        text = text[closing[-1].end():]
     cleaned = re.sub(r"<think>[\s\S]*?</think>", "", str(text or ""), flags=re.IGNORECASE)
     cleaned = re.sub(r"<\|think\|>[\s\S]*?<\|/?think\|>", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"^\s*</?think>\s*", "", cleaned, flags=re.IGNORECASE)
@@ -3704,6 +3720,15 @@ def _request_with_thinking_step(request: LocalChatRequest) -> LocalChatRequest:
         return request
     settings = _read_app_settings()
     capture_post = settings.get("capture_post") if isinstance(settings.get("capture_post"), dict) else {}
+    if step == "tags":
+        budget = thinking_budget_for_level(capture_post.get("tags_thinking_level"))
+        if budget is None:
+            return request.model_copy(
+                update={"enable_thinking": False, "disable_thinking": True, "thinking_budget": None, "step": step}
+            )
+        return request.model_copy(
+            update={"enable_thinking": True, "disable_thinking": False, "thinking_budget": budget, "step": step}
+        )
     if thinking_enabled_for_step(step, capture_post.get("thinking_steps")):
         return request.model_copy(update={"enable_thinking": True, "disable_thinking": False, "step": step})
     return request.model_copy(update={"enable_thinking": False, "step": step})
@@ -3713,6 +3738,9 @@ def _apply_thinking_payload(payload_body: Dict[str, Any], request: LocalChatRequ
     if request.enable_thinking:
         payload_body["think"] = True
         payload_body["chat_template_kwargs"] = {"enable_thinking": True}
+        if request.thinking_budget and "options" not in payload_body:
+            # oMLX / OpenAI-compatible local servers cap reasoning tokens here; Ollama has no equivalent.
+            payload_body["thinking_budget"] = int(request.thinking_budget)
         return
     if request.disable_thinking:
         payload_body["think"] = False

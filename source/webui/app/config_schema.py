@@ -53,6 +53,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "ai_title_enabled": True,
         "title_system_prompt": "你是擅長提煉文章重點的繁體中文標題編輯。請根據使用者提供的文章產生一個約 30 個字的標題；不要使用冒號、不要提供多個選項、不要加入引號或解釋，只輸出標題。",
         "thinking_steps": ["title"],
+        "tags_thinking_level": "mid",
     },
     "ime": {
         "correction_enabled": False,
@@ -65,6 +66,12 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
     },
 }
 LLM_THINKING_STEPS = ("polish", "title", "tags")
+# Shared thinking levels (關 / 低 / 中 / 高). Each connection method maps a level to
+# its own request params; methods without a thinking knob simply ignore it.
+THINKING_LEVELS = ("off", "low", "mid", "high")
+DEFAULT_TAGS_THINKING_LEVEL = "mid"
+# Local OpenAI-compatible servers (oMLX): thinking token cap per level.
+THINKING_LEVEL_BUDGETS = {"low": 256, "mid": 512, "high": 1024}
 DEFAULT_WEBUI_DATA_DIR = "~/.airtype/data"
 DEFAULT_CONFIG_SCHEMA_PATH = Path(__file__).resolve().parents[3] / "config.schema.json"
 
@@ -261,6 +268,18 @@ def thinking_enabled_for_step(step: str, thinking_steps: Any) -> bool:
     return str(step or "").strip() in normalize_thinking_steps(thinking_steps)
 
 
+def normalize_thinking_level(value: Any, default: str = DEFAULT_TAGS_THINKING_LEVEL) -> str:
+    level = str(value or "").strip().lower()
+    aliases = {"關": "off", "none": "off", "false": "off", "低": "low", "中": "mid", "medium": "mid", "高": "high"}
+    level = aliases.get(level, level)
+    return level if level in THINKING_LEVELS else default
+
+
+def thinking_budget_for_level(level: Any) -> Optional[int]:
+    """Token cap for a thinking level; None for ``off``."""
+    return THINKING_LEVEL_BUDGETS.get(normalize_thinking_level(level))
+
+
 def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(settings)
 
@@ -343,6 +362,10 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         capture_post.get("thinking_steps"),
         use_default=not has_thinking_steps,
     )
+    if "tags_thinking_level" not in capture_post_input and "tags-thinking-level" in capture_post_input:
+        capture_post["tags_thinking_level"] = capture_post_input["tags-thinking-level"]
+    capture_post["tags_thinking_level"] = normalize_thinking_level(capture_post.get("tags_thinking_level"))
+    # Tags thinking is driven by tags_thinking_level; "tags" in thinking_steps is ignored.
 
     ime_input = _dict_value(normalized.get("ime"))
     ime = {
@@ -431,6 +454,7 @@ def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
         f"ai_title_enabled = {'true' if capture_post.get('ai_title_enabled') else 'false'}",
         f"title_system_prompt = {_toml_string(capture_post.get('title_system_prompt', ''))}",
         f"thinking_steps = {_toml_string_array(capture_post.get('thinking_steps', []))}",
+        f"tags_thinking_level = {_toml_string(capture_post.get('tags_thinking_level', 'mid'))}",
         "",
         "[webui.ime]",
         f"correction_enabled = {'true' if ime.get('correction_enabled') else 'false'}",

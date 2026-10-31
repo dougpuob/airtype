@@ -51,6 +51,7 @@ export type AppSettings = {
     ai_title_enabled?: boolean;
     title_system_prompt?: string;
     thinking_steps?: Array<"polish" | "title" | "tags">;
+    tags_thinking_level?: ThinkingLevel;
   };
   ime?: {
     correction_enabled?: boolean;
@@ -107,3 +108,6 @@ export function aiRouteMode(settings?: AppSettings): "local" | "cloud" | "mixed"
   if (kinds.size > 1) return "mixed";
   return kinds.has("cloud") ? "cloud" : "local";
 }
+
+/** Shared thinking level; each AI route maps it to its own request params. */
+export type ThinkingLevel = "off" | "low" | "mid" | "high";

@@ -46,7 +46,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useSettingsQuery, useUpdateSettingsMutation } from "../api/settings";
-import type { AiRoute, AiRouteType, AiStep, AppSettings } from "../types/settings";
+import type { AiRoute, AiRouteType, AiStep, AppSettings, ThinkingLevel } from "../types/settings";
 import { AI_STEPS, API_ROUTE_TYPES, CLI_ROUTE_TYPES, isCloudRoute } from "../types/settings";
 import { PageScaffold, WorkspacePanel } from "./PageScaffold";
 
@@ -95,6 +95,20 @@ const routeTypeInfo: Partial<
   "chatgpt-codex": { bin: "codex", help: "OpenAI Codex CLI, ChatGPT plan login.", login: "codex login" },
   "claude-code": { bin: "claude", help: "Claude Code CLI, Claude plan login.", login: "claude auth login" },
   "grok-cli": { bin: "~/.grok/bin/grok", help: "Grok Build CLI.", login: "grok login" }
+};
+
+const thinkingLevelOptions: Array<{ value: ThinkingLevel; label: string }> = [
+  { value: "off", label: "關" },
+  { value: "low", label: "低" },
+  { value: "mid", label: "中" },
+  { value: "high", label: "高" }
+];
+
+const thinkingLevelHelp: Record<ThinkingLevel, string> = {
+  off: "No thinking; fastest.",
+  low: "Thinking budget 256 tokens.",
+  mid: "Thinking budget 512 tokens (recommended).",
+  high: "Thinking budget 1024 tokens; slowest."
 };
 
 const stepInfo: Record<AiStep, { label: string; description: string; thinking: boolean }> = {
@@ -194,6 +208,7 @@ export function SettingsPage() {
   const canSave = Boolean(draft) && !settingsQuery.isLoading && !updateSettings.isPending && !hasRouteErrors;
   const authEnabled = Boolean(draft?.auth?.enabled);
   const thinkingSteps = draft?.capture_post?.thinking_steps ?? ["title"];
+  const tagsThinkingLevel: ThinkingLevel = draft?.capture_post?.tags_thinking_level ?? "mid";
   const aiTitleEnabled = draft?.capture_post?.ai_title_enabled ?? true;
   const fallbackName =
     draft?.default_llm_server_name || routes.find((route) => route.type === "openai-compat")?.name || "";
@@ -653,7 +668,27 @@ export function SettingsPage() {
                             </TextField>
                           </Grid>
                           <Grid size={{ xs: 12, sm: 4, md: 3 }}>
-                            {info.thinking ? (
+                            {step === "tags" ? (
+                              <TextField
+                                select
+                                fullWidth
+                                size="small"
+                                label="Thinking (local)"
+                                value={tagsThinkingLevel}
+                                onChange={(event) =>
+                                  updateSection("capture_post", {
+                                    tags_thinking_level: event.target.value as ThinkingLevel
+                                  })
+                                }
+                                helperText={thinkingLevelHelp[tagsThinkingLevel]}
+                              >
+                                {thinkingLevelOptions.map((option) => (
+                                  <MenuItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </MenuItem>
+                                ))}
+                              </TextField>
+                            ) : info.thinking ? (
                               <FormControlLabel
                                 control={
                                   <Switch
