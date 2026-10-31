@@ -313,7 +313,9 @@ class AppleEpisodeResolutionTests(unittest.TestCase):
             seen.append(timeout)
             raise grok_cli.GrokTimeout("grok timed out")
 
-        with mock.patch.object(grok_cli, "read_grok_cli_settings", return_value=settings), mock.patch.object(
+        with mock.patch.object(webui, "CONFIG_PATH", "/nonexistent/airtype-config.toml"), mock.patch.object(
+            grok_cli, "read_grok_cli_settings", return_value=settings
+        ), mock.patch.object(
             grok_cli, "run_grok_cli", side_effect=timeouts
         ), mock.patch.object(webui, "_record_llm_usage"), mock.patch.object(webui, "append_service_log"), \
                 mock.patch.object(webui, "_local_chat_completion") as local:
@@ -330,7 +332,9 @@ class AppleEpisodeResolutionTests(unittest.TestCase):
                 raise reply
             return reply
 
-        with mock.patch.object(grok_cli, "read_grok_cli_settings", return_value=settings), mock.patch.object(
+        with mock.patch.object(webui, "CONFIG_PATH", "/nonexistent/airtype-config.toml"), mock.patch.object(
+            grok_cli, "read_grok_cli_settings", return_value=settings
+        ), mock.patch.object(
             grok_cli, "run_grok_cli", side_effect=flaky
         ), mock.patch.object(webui, "_record_llm_usage"), mock.patch.object(webui, "append_service_log"):
             self.assertEqual(webui._local_chat_response(request), "修好")
@@ -348,7 +352,9 @@ class AppleEpisodeResolutionTests(unittest.TestCase):
             seen.append(timeout)
             raise RuntimeError("not signed in")
 
-        with mock.patch.object(grok_cli, "read_grok_cli_settings", return_value=settings), mock.patch.object(
+        with mock.patch.object(webui, "CONFIG_PATH", "/nonexistent/airtype-config.toml"), mock.patch.object(
+            grok_cli, "read_grok_cli_settings", return_value=settings
+        ), mock.patch.object(
             grok_cli, "run_grok_cli", side_effect=fails
         ), mock.patch.object(webui, "_record_llm_usage"), mock.patch.object(webui, "append_service_log"):
             self.assertIsNone(webui._grok_cli_response(request))

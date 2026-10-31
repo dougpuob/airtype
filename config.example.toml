@@ -93,7 +93,7 @@ create_album = false
 
 [[webui.llm-server]]
 # Unique name for this LLM server.
-name = "llama.cpp"
+name = "oMLX"
 provider = "openai"
 endpoint = "http://LLM_SERVER:8088/"
 api_key = ""
@@ -104,4 +104,63 @@ temperature = 0.4
 system = "No explanations or detailed listings are needed; simply organize the verbatim transcript, including correcting typos, polishing sentences, and stringing the transcript together into an article."
 
 [webui]
-default-llm-server-name = "llama.cpp"
+default-llm-server-name = "oMLX"
+
+# AI routes: named cloud routes. Every [[webui.llm-server]] above is also a
+# route (type "openai-compat"). Manage these in Settings → AI routes.
+[[webui.ai-route]]
+name = "Grok CLI"
+type = "grok-cli"            # Grok Build CLI with its own `grok login`
+bin = "~/.grok/bin/grok"
+model = ""                   # empty = CLI default
+reasoning_effort = "low"
+timeout_seconds = 180
+correct_timeout_seconds = 180
+typo_concurrency = 4
+
+# [[webui.ai-route]]
+# name = "xAI API"
+# type = "grok-api"          # xAI OpenAI-compatible API
+# endpoint = "https://api.x.ai"
+# api_key = ""
+# model = "grok-4"
+# typo_concurrency = 4
+
+# [[webui.ai-route]]
+# name = "ChatGPT"
+# type = "chatgpt"           # OpenAI API
+# endpoint = "https://api.openai.com/v1"
+# api_key = ""
+# model = "gpt-4.1-mini"
+
+# [[webui.ai-route]]
+# name = "Gemini"
+# type = "gemini"            # Gemini OpenAI-compatible API (AI Studio key)
+# endpoint = "https://generativelanguage.googleapis.com/v1beta/openai"
+# api_key = ""
+# model = "gemini-2.5-flash"
+
+# [[webui.ai-route]]
+# name = "ChatGPT Codex"
+# type = "chatgpt-codex"     # `codex exec`, uses `codex login` (ChatGPT plan)
+# bin = "codex"
+# model = ""
+# reasoning_effort = "low"
+# timeout_seconds = 180
+
+# [[webui.ai-route]]
+# name = "Claude Code"
+# type = "claude-code"       # `claude -p`, uses `claude auth login` (Claude plan)
+# bin = "claude"
+# model = ""                 # e.g. sonnet, haiku
+# reasoning_effort = "low"
+# timeout_seconds = 180
+
+# Route name per AI step. Empty = default-llm-server-name. Polish / title / tags
+# fall back to that local server when a cloud route fails; correct keeps the
+# original text instead.
+[webui.ai-steps]
+correct = ""
+polish = ""
+title = ""
+tags = ""

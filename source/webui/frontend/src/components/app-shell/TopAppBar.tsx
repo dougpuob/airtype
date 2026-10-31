@@ -6,6 +6,7 @@ import { useAuthStatusQuery, useLogoutMutation } from "../../api/auth";
 import { useSettingsQuery } from "../../api/settings";
 import { useLocalLlmHealthQuery, useWhisperServerStatusQuery } from "../../api/serviceStatus";
 import { useWorkGuard } from "../../hooks/useWorkGuard";
+import { aiRouteMode } from "../../types/settings";
 
 type TopAppBarProps = {
   sidebarWidth: number;
@@ -32,6 +33,16 @@ export function TopAppBar({ sidebarWidth, onMenuClick }: TopAppBarProps) {
     online: llmHealth.data?.ok === true,
     disabled: !settingsQuery.data?.llm?.provider || !settingsQuery.data?.llm?.endpoint
   });
+  // AI steps can run on cloud routes (Grok) or the local server; label the chip by what is in use.
+  const llmMode = aiRouteMode(settingsQuery.data);
+  const llmLabel =
+    llmMode === "cloud"
+      ? compact ? "Cloud" : "Cloud LLM"
+      : llmMode === "mixed"
+        ? compact ? "Cloud+Local" : "Cloud + Local LLM"
+        : compact ? "Local" : "Local LLM";
+  const llmChipState: ChipState =
+    llmMode === "cloud" && !settingsQuery.isLoading ? { label: "In use", color: "info" } : llm;
 
   return (
     <AppBar
@@ -96,7 +107,19 @@ export function TopAppBar({ sidebarWidth, onMenuClick }: TopAppBarProps) {
           sx={{ display: { xs: "none", sm: "flex" }, minWidth: 0, overflow: "hidden" }}
         >
           <ServiceChip label={compact ? "ASR" : "ASR Server"} state={asr} />
-          <ServiceChip label={compact ? "LLM" : "LLM Server"} state={llm} />
+          <Tooltip
+            title={
+              llmMode === "local"
+                ? "AI steps use the local LLM server."
+                : llmMode === "cloud"
+                  ? "All AI steps use cloud routes (Settings → AI steps). Cloud routes are not health-checked."
+                  : "Some AI steps use cloud routes; status shows the local LLM server."
+            }
+          >
+            <span>
+              <ServiceChip label={llmLabel} state={llmChipState} />
+            </span>
+          </Tooltip>
         </Stack>
         {authQuery.data?.enabled ? (
           compact ? (
@@ -128,8 +151,8 @@ export function TopAppBar({ sidebarWidth, onMenuClick }: TopAppBarProps) {
 }
 
 type ChipState = {
-  label: "Checking" | "Ready" | "Offline";
-  color: "default" | "success" | "error";
+  label: "Checking" | "Ready" | "Offline" | "In use";
+  color: "default" | "success" | "error" | "info";
 };
 
 function ServiceChip({ label, state }: { label: string; state: ChipState }) {

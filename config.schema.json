@@ -131,7 +131,7 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "name": { "type": "string", "default": "llama.cpp" },
+              "name": { "type": "string", "default": "oMLX" },
               "provider": { "type": "string", "default": "openai" },
               "endpoint": { "type": "string", "default": "http://114.34.75.131:8088/" },
               "api_key": {
@@ -248,9 +248,40 @@
             }
           }
         },
+        "ai-route": {
+          "type": "array",
+          "description": "Named cloud AI routes. Every [[webui.llm-server]] is also a route (type openai-compat). Managed in Settings → AI routes.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "default": "Grok CLI", "description": "Unique route name used by [webui.ai-steps]." },
+              "type": { "type": "string", "enum": ["grok-cli", "grok-api", "chatgpt", "chatgpt-codex", "claude-code", "gemini"], "default": "grok-cli", "description": "CLI types (grok-cli, chatgpt-codex, claude-code) use bin + the CLI's own login; API types (grok-api, chatgpt, gemini) use endpoint + api_key." },
+              "bin": { "type": "string", "default": "~/.grok/bin/grok", "description": "CLI routes: binary name or path." },
+              "endpoint": { "type": "string", "description": "API routes: OpenAI-compatible API base; /chat/completions is appended." },
+              "api_key": { "type": "string", "description": "API routes: bearer API key." },
+              "model": { "type": "string", "default": "", "description": "Model id; empty = CLI default." },
+              "reasoning_effort": { "type": "string", "default": "low", "description": "CLI routes: low / medium / high, empty = CLI default." },
+              "timeout_seconds": { "type": "integer", "default": 180, "minimum": 10, "maximum": 900 },
+              "correct_timeout_seconds": { "type": "integer", "default": 180, "minimum": 10, "maximum": 900 },
+              "typo_concurrency": { "type": "integer", "default": 4, "minimum": 1, "maximum": 8 }
+            }
+          }
+        },
+        "ai-steps": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Route name per AI step. Empty = default-llm-server-name. Polish/title/tags fall back to it when a cloud route fails; correct keeps the original text.",
+          "properties": {
+            "correct": { "type": "string", "default": "" },
+            "polish": { "type": "string", "default": "" },
+            "title": { "type": "string", "default": "" },
+            "tags": { "type": "string", "default": "" }
+          }
+        },
         "default-llm-server-name": {
           "type": "string",
-          "default": "llama.cpp",
+          "default": "oMLX",
           "description": "Name of the default LLM server (matches the `name` field in [[webui.llm-server]]."
         }
       }

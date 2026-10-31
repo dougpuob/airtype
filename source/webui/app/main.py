@@ -50,10 +50,13 @@ from .config_schema import (
     thinking_enabled_for_step,
     whisper_model_path_from_settings,
 )
+from .config_schema import _toml_number as _schema_toml_number, _toml_string as _schema_toml_string
 from .whisper import WhisperCppNotConfigured, transcriber
 from . import apple_podcast
 from . import clip_pipeline
 from . import clip_requests
+from . import ai_routes
+from . import cli_routes
 from . import grok_cli
 from . import known_sources
 from . import linkedin_post
@@ -725,7 +728,7 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
     current_auth = current_settings.get("auth", {})
     current_auth = current_auth if isinstance(current_auth, dict) else {}
     model_dir, model_filename = _split_whisper_model_settings(whisper_input)
-    return {
+    nested = {
         "whisper": {
             "remote_endpoint": whisper_input.get("remote_endpoint", ""),
             "model_dir": model_dir,
@@ -815,6 +818,32 @@ def _settings_request_to_nested(incoming: Dict[str, Any]) -> Dict[str, Any]:
         "llm_servers": incoming.get("llm_servers", []),
         "default_llm_server_name": incoming.get("default_llm_server_name") or llm_input.get("name", "default"),
     }
+    return _apply_incoming_ai_routes(nested, incoming)
+
+
+def _apply_incoming_ai_routes(nested: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
+    """Settings sends one route list; local routes become [[webui.llm-server]]."""
+    if isinstance(incoming.get("ai_steps"), dict):
+        nested["ai_steps"] = ai_routes.normalize_steps(incoming["ai_steps"])
+    routes = incoming.get("ai_routes")
+    if not isinstance(routes, list):
+        return nested
+    nested["ai_routes"] = routes
+    local_routes = [
+        {key: value for key, value in route.items() if key != "type"}
+        for route in routes
+        if isinstance(route, dict)
+        and str(route.get("type") or ai_routes.LOCAL_ROUTE_TYPE) == ai_routes.LOCAL_ROUTE_TYPE
+        and str(route.get("name") or "").strip()
+    ]
+    if not local_routes:
+        return nested
+    default_name = str(nested.get("default_llm_server_name") or "")
+    selected = next((route for route in local_routes if route.get("name") == default_name), local_routes[0])
+    nested["llm_servers"] = local_routes
+    nested["default_llm_server_name"] = str(selected.get("name"))
+    nested["llm"] = {**nested.get("llm", {}), **selected}
+    return nested
 
 
 def _settings_for_whisper_action(incoming: Dict[str, Any]) -> Dict[str, Any]:
@@ -1204,6 +1233,76 @@ async def list_local_models(request: LocalModelsRequest):
         raise HTTPException(status_code=502, detail=f"Could not load local models: {str(e)}")
 
 
+class AiRouteTestRequest(BaseModel):
+    route: Dict[str, Any] = {}
+
+
+@app.post("/api/ai-routes/test")
+async def test_ai_route(request: AiRouteTestRequest):
+    """Cheap reachability check for one route from the Settings form (saved or not)."""
+    route = request.route if isinstance(request.route, dict) else {}
+    try:
+        detail = await asyncio.to_thread(_test_ai_route, route)
+        return {"ok": True, "detail": detail}
+    except Exception as error:
+        return {"ok": False, "error": " ".join(str(error).split())[:300] or type(error).__name__}
+
+
+def _test_ai_route(route: Dict[str, Any]) -> str:
+    route_type = str(route.get("type") or ai_routes.LOCAL_ROUTE_TYPE)
+    if route_type == "grok-cli":
+        normalized = ai_routes.normalize_cloud_route({**route, "name": route.get("name") or "test"}) or {}
+        binary = os.path.expanduser(str(normalized.get("bin") or ""))
+        if not binary or not os.path.isfile(binary):
+            raise ValueError(f"grok binary not found: {binary or '(empty)'}")
+        if not os.access(binary, os.X_OK):
+            raise ValueError(f"grok binary is not executable: {binary}")
+        completed = subprocess.run(
+            [binary, "--no-auto-update", "--version"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if completed.returncode != 0:
+            raise ValueError(f"grok --version exited {completed.returncode}: {(completed.stderr or completed.stdout).strip()[:200]}")
+        return (completed.stdout or "").strip().splitlines()[0] if completed.stdout.strip() else "grok CLI found"
+    if route_type in cli_routes.CLI_ROUTE_TYPES:
+        normalized = ai_routes.normalize_cloud_route({**route, "name": route.get("name") or "test"}) or {}
+        return cli_routes.probe_cli_route(normalized)
+    if route_type in ai_routes.API_ROUTE_TYPES:
+        normalized = ai_routes.normalize_cloud_route({**route, "name": route.get("name") or "test"}) or {}
+        api_key = normalized.get("api_key") or ""
+        if not api_key:
+            # The form leaves a saved key blank; look it up by route name.
+            saved = next(
+                (item for item in ai_routes.read_ai_config(CONFIG_PATH)["routes"] if item.get("name") == route.get("name")),
+                {},
+            )
+            api_key = saved.get("api_key") or ""
+        if not api_key:
+            raise ValueError("no API key set")
+        try:
+            payload = _http_json_with_timeout(
+                "GET", ai_routes.openai_api_url(normalized["endpoint"], "/models"), 10, api_key=api_key
+            )
+        except ValueError as error:
+            if re.search(r"HTTP (400|401|403)\b", str(error)):
+                raise ValueError(f"API key rejected ({str(error).split(' from ')[0]})") from error
+            raise
+        model_ids = [str(item.get("id")) for item in payload.get("data", []) if isinstance(item, dict) and item.get("id")]
+        # Gemini lists ids as "models/gemini-…".
+        model_ids = [model_id.removeprefix("models/") for model_id in model_ids]
+        model = str(normalized.get("model") or "")
+        if model and model_ids and model not in model_ids:
+            return f"{len(model_ids)} models; {model} not listed"
+        return f"{len(model_ids)} models available" if model_ids else "API reachable"
+    provider = str(route.get("provider") or "llama.cpp")
+    endpoint = str(route.get("endpoint") or "")
+    _check_local_llm_health(provider, endpoint, str(route.get("api_key") or "") or None)
+    return f"{provider} reachable"
+
+
 @app.post("/api/local-llm/health")
 async def local_llm_health(request: LocalModelsRequest):
     try:
@@ -1416,7 +1515,7 @@ async def chat_with_local_model(request: LocalChatRequest):
             f"model={request.model or ''} "
             f"error={e}",
         )
-        raise HTTPException(status_code=502, detail=f"Local LLM request failed: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"LLM request failed: {str(e)}")
 
 
 @app.post("/api/transcribe/url/jobs")
@@ -2403,7 +2502,19 @@ def _read_app_settings() -> Dict[str, Any]:
             merged["llm"] = normalize_app_settings({"llm": selected})["llm"]
         merged["llm_servers"] = llm_servers
         merged["default_llm_server_name"] = default_llm_server_name or merged["llm"].get("name", "default")
+    ai_config = ai_routes.read_ai_config(CONFIG_PATH)
+    merged["ai_routes"] = _all_ai_routes(merged.get("llm_servers") or [merged["llm"]], ai_config["routes"])
+    merged["ai_steps"] = ai_config["steps"]
     return merged
+
+
+def _all_ai_routes(llm_servers: list[Dict[str, Any]], cloud_routes: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    local = [
+        {**server, "type": ai_routes.LOCAL_ROUTE_TYPE}
+        for server in llm_servers
+        if isinstance(server, dict) and server.get("name")
+    ]
+    return local + [dict(route) for route in cloud_routes]
 
 
 def _write_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -2424,6 +2535,19 @@ def _write_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         merged["llm"] = normalize_app_settings({"llm": selected})["llm"]
     merged["llm_servers"] = llm_servers
     merged["default_llm_server_name"] = default_llm_server_name
+    # Routes and step bindings are rewritten on every save; keep the saved ones
+    # when the request does not carry them so a save never drops Grok routes.
+    current_ai = ai_routes.read_ai_config(CONFIG_PATH)
+    if isinstance(settings.get("ai_routes"), list):
+        cloud_routes = ai_routes.merge_cloud_routes(
+            [route for route in settings["ai_routes"] if ai_routes.is_cloud_route(route)],
+            current_ai["routes"],
+        )
+    else:
+        cloud_routes = current_ai["routes"]
+    steps = ai_routes.normalize_steps(settings["ai_steps"]) if isinstance(settings.get("ai_steps"), dict) else current_ai["steps"]
+    merged["ai_routes"] = _all_ai_routes(llm_servers, cloud_routes)
+    merged["ai_steps"] = steps
     _write_backend_config_settings(merged)
     return merged
 
@@ -2510,6 +2634,13 @@ def _write_backend_config_settings(settings: Dict[str, Any]) -> None:
 
     text = remove_webui_sections(text).rstrip()
     backend_text = _render_backend_config_settings(settings)
+    cloud_routes = [route for route in settings.get("ai_routes") or [] if ai_routes.is_cloud_route(route)]
+    backend_text += "\n\n" + ai_routes.render_ai_toml(
+        cloud_routes,
+        settings.get("ai_steps") or {},
+        _schema_toml_string,
+        _schema_toml_number,
+    )
     if text:
         text = f"{text}\n\n{backend_text}\n"
     else:
@@ -3588,10 +3719,84 @@ def _apply_thinking_payload(payload_body: Dict[str, Any], request: LocalChatRequ
         payload_body["chat_template_kwargs"] = {"enable_thinking": False}
 
 
+def _resolve_step_route(step: str) -> Dict[str, Any]:
+    """The route bound to an AI step. Unbound steps and plain chat use the default local server."""
+    step = str(step or "").strip()
+    if step not in ai_routes.AI_STEPS:
+        return {"type": ai_routes.LOCAL_ROUTE_TYPE, "name": ""}
+    try:
+        ai_config = ai_routes.read_ai_config(CONFIG_PATH)
+    except Exception as error:
+        append_service_log("webui", f"could not read AI routes, using default local LLM: {error}")
+        return {"type": ai_routes.LOCAL_ROUTE_TYPE, "name": ""}
+    name = ai_config["steps"].get(step, "")
+    if not name:
+        return {"type": ai_routes.LOCAL_ROUTE_TYPE, "name": ""}
+    for route in ai_config["routes"]:
+        if route.get("name") == name:
+            return route
+    servers, _ = _read_backend_llm_servers()
+    for server in servers:
+        if server.get("name") == name:
+            return {**server, "type": ai_routes.LOCAL_ROUTE_TYPE}
+    append_service_log("webui", f"AI step {step} is bound to unknown route {name!r}; using default local LLM")
+    return {"type": ai_routes.LOCAL_ROUTE_TYPE, "name": ""}
+
+
+def _route_kind_label(route: Dict[str, Any]) -> str:
+    """Short label such as 'Cloud · Grok CLI' or 'Local · oMLX' for progress messages."""
+    if ai_routes.is_cloud_route(route):
+        return f"Cloud · {route.get('name') or route.get('type')}"
+    name = str(route.get("name") or "")
+    if not name:
+        settings = _read_app_settings()
+        name = str(settings.get("default_llm_server_name") or settings.get("llm", {}).get("name") or "LLM")
+    return f"Local · {name}"
+
+
+def _step_route_label(step: str) -> str:
+    try:
+        return _route_kind_label(_resolve_step_route(step))
+    except Exception:
+        return "LLM"
+
+
+def _request_for_local_route(request: LocalChatRequest, server: Dict[str, Any]) -> LocalChatRequest:
+    """Point a request at a non-default local server bound to its step."""
+    model = str(server.get("selected_model") or server.get("model") or "").strip()
+    if not model:
+        models = server.get("models") if isinstance(server.get("models"), list) else []
+        model = next((str(candidate).strip() for candidate in models if str(candidate).strip()), "")
+    if not model or not server.get("endpoint"):
+        return request
+    return request.model_copy(
+        update={
+            "provider": str(server.get("provider") or "llama.cpp"),
+            "endpoint": str(server.get("endpoint")),
+            "api_key": str(server.get("api_key") or "") or None,
+            "model": model,
+            "disable_thinking": bool(server.get("disable_thinking")),
+        }
+    )
+
+
 def _local_chat_response(request: LocalChatRequest) -> str:
-    grok_text = _grok_cli_response(request)
-    if grok_text is not None:
-        return grok_text
+    route = _resolve_step_route(request.step)
+    route_type = str(route.get("type") or "")
+    if route_type == "grok-cli":
+        grok_text = _grok_cli_response(request, route)
+        if grok_text is not None:
+            return grok_text
+    elif route_type in ai_routes.API_ROUTE_TYPES:
+        api_text = _cloud_api_response(request, route)
+        if api_text is not None:
+            return api_text
+    elif route_type in cli_routes.CLI_ROUTE_TYPES:
+        cli_text = _cli_route_response(request, route)
+        if cli_text is not None:
+            return cli_text
+    elif route.get("name"):
+        request = _request_for_local_route(request, route)
     with _llm_lock:
         request = _request_with_thinking_step(request)
         started = time.monotonic()
@@ -3609,14 +3814,14 @@ class GrokCorrectFailed(RuntimeError):
     """Grok could not correct a typo chunk; the caller keeps the original text."""
 
 
-def _grok_cli_response(request: LocalChatRequest) -> Optional[str]:
-    """Text-only steps listed in [webui.grok-cli]; None means use the local LLM.
+def _grok_cli_response(request: LocalChatRequest, route: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Run a step bound to a grok-cli route; None means use the default local LLM.
 
     The ``correct`` step never falls back: the local model does not fix typos,
     so a Grok failure raises GrokCorrectFailed and the chunk stays as-is.
     """
-    settings = grok_cli.read_grok_cli_settings(CONFIG_PATH)
-    if not grok_cli.handles_step(settings, request.step):
+    settings = route if route is not None else _resolve_step_route(request.step)
+    if settings.get("type") != "grok-cli":
         return None
     is_correct = str(request.step or "").strip() == "correct"
     timeout = grok_cli.step_timeout(settings, request.step)
@@ -3643,6 +3848,90 @@ def _grok_cli_response(request: LocalChatRequest) -> Optional[str]:
             return None
         usage_request = usage_request.model_copy(update={"model": grok_cli.payload_model(payload, settings["model"])})
         _record_llm_usage(usage_request, grok_cli.usage_payload(payload), text, started, True)
+        return _strip_thinking_blocks(text)
+    return None
+
+
+def _openai_api_chat(request: LocalChatRequest, route: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+    """One chat completion against an OpenAI-compatible cloud API (xAI, OpenAI, Gemini)."""
+    body: Dict[str, Any] = {
+        "model": request.model,
+        "messages": _llm_messages(request.system, request.prompt),
+    }
+    if route.get("type") != "chatgpt":
+        # Newer OpenAI models only accept the default temperature.
+        body["temperature"] = request.temperature
+    payload = _http_json(
+        "POST",
+        ai_routes.openai_api_url(str(route.get("endpoint") or ""), "/chat/completions"),
+        body,
+        api_key=request.api_key,
+    )
+    choices = payload.get("choices", [])
+    if not choices:
+        return "", payload
+    return _strip_thinking_blocks(_message_text(choices[0].get("message") or {})), payload
+
+
+def _cloud_api_response(request: LocalChatRequest, route: Dict[str, Any]) -> Optional[str]:
+    """Run a step through a cloud chat API; same fallback rules as grok-cli."""
+    route_type = str(route.get("type") or "")
+    defaults = ai_routes.API_ROUTE_DEFAULTS.get(route_type, {})
+    is_correct = str(request.step or "").strip() == "correct"
+    api_request = request.model_copy(
+        update={
+            "provider": route_type,
+            "endpoint": str(route.get("endpoint") or defaults.get("endpoint") or ""),
+            "api_key": str(route.get("api_key") or "") or None,
+            "model": str(route.get("model") or defaults.get("model") or ""),
+            "enable_thinking": False,
+            "disable_thinking": False,
+        }
+    )
+    started = time.monotonic()
+    try:
+        if not api_request.api_key:
+            raise RuntimeError(f"route {route.get('name')!r} has no API key")
+        text, payload = _openai_api_chat(api_request, {**route, "endpoint": api_request.endpoint})
+        if not text.strip():
+            raise RuntimeError(f"{route_type} returned empty text")
+    except Exception as error:
+        _record_llm_usage(api_request, None, "", started, False)
+        if is_correct:
+            raise GrokCorrectFailed(f"{route_type} correct failed: {error}") from error
+        append_service_log("webui", f"{route_type} {request.step} failed, falling back to local LLM: {error}")
+        return None
+    _record_llm_usage(api_request, payload, text, started, True)
+    return text
+
+
+def _cli_route_response(request: LocalChatRequest, route: Dict[str, Any]) -> Optional[str]:
+    """Run a step through Codex / Claude Code CLI; same retry and fallback rules as grok-cli."""
+    route_type = str(route.get("type") or "")
+    is_correct = str(request.step or "").strip() == "correct"
+    timeout = int(route.get("correct_timeout_seconds" if is_correct else "timeout_seconds") or 180)
+    attempts = 2 if is_correct else 1
+    usage_request = request.model_copy(update={"provider": route_type, "model": route.get("model") or route_type})
+    for attempt in range(1, attempts + 1):
+        started = time.monotonic()
+        try:
+            text, usage = cli_routes.run_cli_route(route, request.system or "", request.prompt, timeout)
+        except cli_routes.CliTimeout as error:
+            _record_llm_usage(usage_request, None, "", started, False)
+            if attempt < attempts:
+                append_service_log("webui", f"{route_type} {request.step} timed out ({error}); retrying once")
+                continue
+            if is_correct:
+                raise GrokCorrectFailed(f"{route_type} correct failed after {attempts} attempts: {error}") from error
+            append_service_log("webui", f"{route_type} {request.step} failed, falling back to local LLM: {error}")
+            return None
+        except Exception as error:
+            _record_llm_usage(usage_request, None, "", started, False)
+            if is_correct:
+                raise GrokCorrectFailed(f"{route_type} correct failed: {error}") from error
+            append_service_log("webui", f"{route_type} {request.step} failed, falling back to local LLM: {error}")
+            return None
+        _record_llm_usage(usage_request, usage or None, text, started, True)
         return _strip_thinking_blocks(text)
     return None
 
@@ -4572,13 +4861,13 @@ def _llm_correct_transcript_chunk(job_id: str, lines: list[str], reference: str 
     provider = str(llm.get("provider") or "llama.cpp")
     endpoint = str(llm.get("endpoint") or "http://127.0.0.1:8080")
     server_name = str(llm.get("name") or settings.get("default_llm_server_name") or "default")
-    grok_settings = grok_cli.read_grok_cli_settings(CONFIG_PATH)
-    if grok_cli.handles_step(grok_settings, "correct"):
+    route = _resolve_step_route("correct")
+    if ai_routes.is_cloud_route(route):
         append_service_log(
             "webui",
-            "requesting grok-cli typo correction: "
-            f"model={grok_settings['model'] or 'default'} chars={len(source)} "
-            f"reference_chars={len(reference or '')} timeout={grok_settings['correct_timeout_seconds']}s",
+            f"requesting {route.get('type')} typo correction: route={route.get('name')} "
+            f"model={route.get('model') or 'default'} chars={len(source)} "
+            f"reference_chars={len(reference or '')}",
         )
     else:
         append_service_log(
@@ -4657,14 +4946,14 @@ def _correct_one_typo_chunk(
 
 
 def _typo_concurrency() -> int:
-    """Parallel chunks only when Grok handles the correct step; local stays sequential."""
+    """Parallel chunks only when a cloud route handles the correct step; local stays sequential."""
     try:
-        settings = grok_cli.read_grok_cli_settings(CONFIG_PATH)
+        route = _resolve_step_route("correct")
     except Exception:
         return 1
-    if not grok_cli.handles_step(settings, "correct"):
+    if not ai_routes.is_cloud_route(route):
         return 1
-    return int(settings.get("typo_concurrency") or 1)
+    return int(route.get("typo_concurrency") or 1)
 
 
 def _correct_transcript_lines(
@@ -4849,7 +5138,7 @@ def _generate_transcription_article(
             )
         ).strip()
     if not article_text:
-        raise RuntimeError("Local LLM returned an empty article")
+        raise RuntimeError("LLM returned an empty article")
 
     existing = existing if isinstance(existing, dict) else {}
     now = datetime.now(timezone.utc).isoformat()
@@ -4907,7 +5196,7 @@ def _generate_transcription_tags(content: str, title: str, job_id: str = "") -> 
         )
     tags = normalize_ai_tags(raw)
     if not tags:
-        raise RuntimeError("Local LLM returned no hashtags")
+        raise RuntimeError("LLM returned no hashtags")
     return tags
 
 
@@ -5106,7 +5395,7 @@ def _run_url_transcription_job(
             job_id,
             status="running",
             progress=96,
-            message=f"Requesting Local LLM article ({article_request_chars} chars)",
+            message=f"Requesting {_step_route_label('polish')} article ({article_request_chars} chars)",
         )
         article_text = ""
         try:
@@ -5120,7 +5409,7 @@ def _run_url_transcription_job(
                 message="Generating AI tags",
             )
         except Exception as article_error:
-            append_service_log("webui", f"Local LLM article generation failed: {article_error}")
+            append_service_log("webui", f"AI article generation failed: {article_error}")
             _update_job(
                 job_id,
                 status="running",
@@ -5145,7 +5434,7 @@ def _run_url_transcription_job(
                 message="Transcript, article, and tags ready" if article_text else "Transcript and tags ready",
             )
         except Exception as tags_error:
-            append_service_log("webui", f"Local LLM tag generation failed: {tags_error}")
+            append_service_log("webui", f"AI tag generation failed: {tags_error}")
             _update_job(
                 job_id,
                 status="completed",

@@ -374,7 +374,7 @@ def remove_webui_sections(text: str) -> str:
     import re
 
     pattern = re.compile(
-        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:auth|whisper-server|llm-server|yt-dlp|ytdlp|obsidian|capture-post|capture_post|web-to-markdown|immich|ime)\]{1,2})\n.*?(?=^\[|\Z)"
+        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:auth|whisper-server|llm-server|yt-dlp|ytdlp|obsidian|capture-post|capture_post|web-to-markdown|immich|ime|ai-route|ai-steps)\]{1,2})\n.*?(?=^\[|\Z)"
     )
     text = pattern.sub("", text)
     header_pattern = re.compile(

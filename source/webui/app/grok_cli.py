@@ -34,6 +34,11 @@ def read_grok_cli_settings(config_path: str | Path) -> Dict[str, Any]:
     """Read [webui.grok-cli]. The WebUI settings writer leaves this section alone."""
     webui = read_config(config_path).get("webui", {})
     section = webui.get("grok-cli") if isinstance(webui, dict) else None
+    return normalize_grok_cli_settings(section if isinstance(section, dict) else {})
+
+
+def normalize_grok_cli_settings(section: Dict[str, Any]) -> Dict[str, Any]:
+    """Fill defaults and clamp values for one grok-cli settings table."""
     section = section if isinstance(section, dict) else {}
     settings = {**DEFAULT_GROK_CLI_SETTINGS, **section}
     settings["enabled"] = bool(settings.get("enabled"))
