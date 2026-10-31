@@ -33,16 +33,13 @@ export function TopAppBar({ sidebarWidth, onMenuClick }: TopAppBarProps) {
     online: llmHealth.data?.ok === true,
     disabled: !settingsQuery.data?.llm?.provider || !settingsQuery.data?.llm?.endpoint
   });
-  // AI steps can run on cloud routes (Grok) or the local server; label the chip by what is in use.
-  const llmMode = aiRouteMode(settingsQuery.data);
-  const llmLabel =
-    llmMode === "cloud"
-      ? compact ? "Cloud" : "Cloud LLM"
-      : llmMode === "mixed"
-        ? compact ? "Cloud+Local" : "Cloud + Local LLM"
-        : compact ? "Local" : "Local LLM";
-  const llmChipState: ChipState =
-    llmMode === "cloud" && !settingsQuery.isLoading ? { label: "In use", color: "info" } : llm;
+  // Cloud: "In use" when any AI step is bound to a cloud route; no health check.
+  const cloudInUse = aiRouteMode(settingsQuery.data) !== "local";
+  const cloud: ChipState = settingsQuery.isLoading
+    ? { label: "Checking", color: "default" }
+    : cloudInUse
+      ? { label: "In use", color: "info" }
+      : { label: "Not in use", color: "default" };
 
   return (
     <AppBar
@@ -106,18 +103,19 @@ export function TopAppBar({ sidebarWidth, onMenuClick }: TopAppBarProps) {
           alignItems="center"
           sx={{ display: { xs: "none", sm: "flex" }, minWidth: 0, overflow: "hidden" }}
         >
-          <ServiceChip label={compact ? "ASR" : "ASR Server"} state={asr} />
-          <Tooltip
-            title={
-              llmMode === "local"
-                ? "AI steps use the local LLM server."
-                : llmMode === "cloud"
-                  ? "All AI steps use cloud routes (Settings → AI steps). Cloud routes are not health-checked."
-                  : "Some AI steps use cloud routes; status shows the local LLM server."
-            }
-          >
+          <Tooltip title="ASR (Whisper) server health (polled every 10s).">
             <span>
-              <ServiceChip label={llmLabel} state={llmChipState} />
+              <ServiceChip label={compact ? "ASR" : "ASR Server"} state={asr} />
+            </span>
+          </Tooltip>
+          <Tooltip title="Local LLM server health (polled every 10s).">
+            <span>
+              <ServiceChip label={compact ? "Local" : "Local LLM"} state={llm} />
+            </span>
+          </Tooltip>
+          <Tooltip title="In use = at least one AI step uses a cloud route (Settings → AI steps). Not health-checked.">
+            <span>
+              <ServiceChip label="Cloud" state={cloud} />
             </span>
           </Tooltip>
         </Stack>
@@ -151,7 +149,7 @@ export function TopAppBar({ sidebarWidth, onMenuClick }: TopAppBarProps) {
 }
 
 type ChipState = {
-  label: "Checking" | "Ready" | "Offline" | "In use";
+  label: "Checking" | "Ready" | "Offline" | "In use" | "Not in use";
   color: "default" | "success" | "error" | "info";
 };
 
