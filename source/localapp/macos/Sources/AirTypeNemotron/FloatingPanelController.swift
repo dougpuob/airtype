@@ -5,6 +5,13 @@ import SwiftUI
 final class FloatingPanelController {
     private let normalSize = NSSize(width: 144, height: 32)
     private let errorSize = NSSize(width: 220, height: 32)
+    // localapp: wider panel that shows the streaming (partial) transcript under the timer row.
+    private let textSize = NSSize(width: 380, height: 66)
+    // Overlay text: up to `FloatingPanelModel.maxTextLines` lines. Past two lines the panel grows
+    // upward (its bottom edge stays where the two-line panel ended) so the newest text stays visible.
+    private let textFont = NSFont.systemFont(ofSize: 13, weight: .medium)
+    private let textWidth: CGFloat = 380 - 24
+    private var textAnchorTop: CGFloat?
     private let configStore: ConfigStore
     private let onMove: (Double, Double) -> Void
     private let model = FloatingPanelModel()
@@ -44,8 +51,61 @@ final class FloatingPanelController {
     }
 
     func hide() {
+        textAnchorTop = nil
         model.stop()
         panel.orderOut(nil)
+    }
+
+    /// localapp: show the live transcript; keeps the panel's top edge fixed while resizing.
+    func setPartialText(_ text: String) {
+        model.partialText = text
+        guard !text.isEmpty else {
+            textAnchorTop = nil
+            resizeKeepingTop(to: normalSize)
+            return
+        }
+        let lines = lineCount(for: FloatingPanelModel.displayText(text))
+        let lineHeight = ceil(textFont.ascender - textFont.descender + textFont.leading) + 1
+        let extra = CGFloat(max(0, lines - 2)) * lineHeight
+        let size = NSSize(width: textSize.width, height: textSize.height + extra)
+        if textAnchorTop == nil || panel.frame.size == normalSize {
+            textAnchorTop = panel.frame.maxY
+        }
+        guard let anchorTop = textAnchorTop, panel.frame.size != size else { return }
+        // <= 2 lines: top stays put. > 2 lines: bottom stays where the two-line panel ended,
+        // so the whole window moves up instead of growing down / off screen.
+        let bottom = anchorTop - textSize.height
+        var frame = NSRect(x: panel.frame.midX - size.width / 2, y: bottom, width: size.width, height: size.height)
+        let visible = screenFrame(containing: NSPoint(x: panel.frame.midX, y: panel.frame.midY))
+        if frame.maxY > visible.maxY { frame.origin.y = visible.maxY - frame.height }
+        if frame.minY < visible.minY { frame.origin.y = visible.minY }
+        frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
+        panel.setFrame(frame, display: true)
+    }
+
+    private func lineCount(for text: String) -> Int {
+        let rect = (text as NSString).boundingRect(
+            with: NSSize(width: textWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: textFont]
+        )
+        let lineHeight = textFont.ascender - textFont.descender + textFont.leading
+        let lines = Int(ceil(rect.height / max(1, lineHeight) - 0.05))
+        return min(FloatingPanelModel.maxTextLines, max(1, lines))
+    }
+
+    /// localapp: recording stopped, flushing the last chunk through Nemotron.
+    func showFinalizing() {
+        model.finalize()
+        panel.orderFrontRegardless()
+    }
+
+    private func resizeKeepingTop(to size: NSSize) {
+        guard panel.frame.size != size else { return }
+        let top = panel.frame.maxY
+        let centerX = panel.frame.midX
+        let frame = NSRect(x: centerX - size.width / 2, y: top - size.height, width: size.width, height: size.height)
+        panel.setFrame(frame, display: true)
     }
 
     func showMicrophoneError(_ message: String) {
@@ -152,6 +212,11 @@ final class FloatingPanelModel: ObservableObject {
     @Published var levels = Array(repeating: 0.08, count: 24)
     @Published var errorText: String?
     @Published var isTranscribing = false
+    @Published var partialText = ""
+
+    static let maxTextLines = 5
+    /// Tail of the transcript shown in the overlay (head-truncated past `maxTextLines`).
+    static func displayText(_ text: String) -> String { String(text.suffix(220)) }
 
     private var startedAt = Date()
     private var timer: Timer?
@@ -204,7 +269,16 @@ final class FloatingPanelModel: ObservableObject {
         reset()
     }
 
+    func finalize() {
+        timer?.invalidate()
+        timer = nil
+        isTranscribing = true
+        transcribingDots = ""
+        elapsedText = "Finalizing"
+    }
+
     func reset() {
+        partialText = ""
         isTranscribing = false
         transcribingDots = ""
         errorText = nil
@@ -237,6 +311,7 @@ struct FloatingPanelView: View {
                 .font(.system(size: 12, weight: .bold, design: .default))
                 .foregroundStyle(.red)
             } else {
+              VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     if model.isTranscribing {
                         HStack(spacing: 0) {
@@ -259,17 +334,27 @@ struct FloatingPanelView: View {
                             .frame(width: 70, height: 18)
                     }
                 }
+                if !model.partialText.isEmpty {
+                    Text(FloatingPanelModel.displayText(model.partialText))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white)
+                        .lineLimit(FloatingPanelModel.maxTextLines)
+                        .truncationMode(.head)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 6)
+                }
+              }
             }
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
-            Capsule()
+            RoundedRectangle(cornerRadius: 16)
                 .fill(Color(red: 0.09, green: 0.11, blue: 0.13))
         )
         .overlay(
-            Capsule()
+            RoundedRectangle(cornerRadius: 16)
                 .stroke(
                     model.errorText == nil
                         ? Color(red: 0.33, green: 0.91, blue: 0.60)

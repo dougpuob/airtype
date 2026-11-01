@@ -2,23 +2,26 @@ import AppKit
 import AVFoundation
 import Foundation
 
-private final class LLMModelMenuSelection: NSObject {
-    let serverName: String
-    let modelName: String
-
-    init(serverName: String, modelName: String) {
-        self.serverName = serverName
-        self.modelName = modelName
-    }
-}
-
 @MainActor
 final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     private let configStore = ConfigStore()
     private let audioRecorder = AudioRecorder()
     private let pasteController = PasteController()
-    private let backendClient = BackendClient()
-    private let backendProcessManager = BackendProcessManager()
+    // Merged former localapp + localapp2. ASR Engine ▸ Local (sherpa-onnx in-process: Qwen3-ASR / Fun-ASR-Nano /
+    // Nemotron; default Qwen3-ASR) or ▸ Remote (WebUI /api/transcribe/ime → whisper-server, from localapp).
+    // Recreated in start() once the config (remote endpoints / auth) is loaded.
+    private var engine: ASREngine = ASREngineKind.current.makeEngine()
+    private let liveTyper = LiveTyper()
+    private var engineState: ASREngineState = .notLoaded
+    private var liveTargetPID: pid_t?
+    private var latestDisplayText = ""
+    private static let liveTypingDefaultsKey = "liveTypingEnabled"
+    private var liveTypingEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: Self.liveTypingDefaultsKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: Self.liveTypingDefaultsKey) }
+    }
+    /// Remote Whisper has no partial results, so it always pastes on stop (the Live Typing setting is kept).
+    private var liveTypingActive: Bool { liveTypingEnabled && !engine.kind.isRemote }
     private var statusItem: NSStatusItem?
     private weak var microphoneDeviceMenu: NSMenu?
     private var hotkeyMonitor: HotkeyMonitor?
@@ -34,6 +37,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         case recording
     }
     private var recordingState: RecordingState = .idle
+    private var settingsWindow: SettingsWindowController?
 
     func start() {
         do {
@@ -45,7 +49,11 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             return
         }
         migrateLegacyMicrophoneSelection()
-        backendProcessManager.startIfNeeded(config: configStore.config, projectRoot: configStore.projectRoot)
+        configureRemoteSettings()
+        if engine.kind.isRemote {
+            engine = ASREngineKind.remoteWhisper.makeEngine()
+        }
+        loadEngine()
         if configStore.config.microphone.mode == "always" {
             audioRecorder.prepare(
                 microphoneDeviceName: configStore.config.microphone.selectedDeviceName,
@@ -75,14 +83,48 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         timedMicrophoneReleaseTimer = nil
         hotkeyMonitor?.stop()
         audioRecorder.stop()
-        backendProcessManager.stop()
+        engine.cancel()
+    }
+
+    private func loadEngine() {
+        engineState = .loading
+        engine.load { [weak self] state in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.engineState = state
+                self.rebuildMenu()
+                if case .failed(let message) = state {
+                    let hint = self.engine.kind.isRemote ? "Remote ASR unreachable" : "\(self.engine.kind.shortName) model missing"
+                    self.floatingPanel?.showMicrophoneError(hint)
+                    Logger.shared.log("\(self.engine.kind.shortName) engine failed to load: \(message)")
+                }
+            }
+        }
+    }
+
+    /// Remote endpoint list / auth come from [localapp.backend-endpoint] + [webui.auth] of the app config
+    /// (~/.airtype-experiment/config.toml, seeded from ~/.airtype/config.toml); AIRTYPE_REMOTE_ENDPOINT overrides.
+    private func configureRemoteSettings() {
+        RemoteWhisperSettings.configure(
+            backend: configStore.config.backend,
+            auth: configStore.config.webui.auth,
+            remoteASR: configStore.config.remoteASR
+        )
+    }
+
+    private var recognitionLanguage: String {
+        switch configStore.config.chineseMode.mode {
+        case "en": return "en"
+        case "auto", "auto-tw", "auto-cn": return "auto"
+        default: return "zh"
+        }
     }
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = StatusIcon.make(recording: false)
         item.button?.imagePosition = .imageOnly
-        item.button?.toolTip = "AirType"
+        item.button?.toolTip = "AirType (\(engine.kind.shortName))"
         statusItem = item
         rebuildMenu()
     }
@@ -303,6 +345,19 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     private func beginRecordingIfStillPreparing(inputID expectedInputID: Int) {
         guard recordingState == .preparing else { return }
         guard activeInputID == expectedInputID else { return }
+        guard engineState == .ready else {
+            Logger.shared.log("\(inputLogPrefix(activeInputID))\(engine.kind.shortName) engine not ready: \(engineState)")
+            if engine.kind.isRemote, case .failed = engineState {
+                loadEngine() // re-check the remote server so the next try can work without a menu click
+            }
+            NSSound.beep()
+            recordingState = .idle
+            statusItem?.button?.image = StatusIcon.make(recording: false)
+            floatingPanel?.hide()
+            audioRecorder.stop()
+            finishInput(activeInputID, startedAt: activeInputStartedAt, result: "SKIPPED", details: "reason=engine_not_ready")
+            return
+        }
         guard refreshMicrophoneAvailability(
             playErrorSound: true,
             reason: "recording_begin"
@@ -324,14 +379,46 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         let inputID = activeInputID
         recordingState = .recording
         floatingPanel?.showRecording()
+        liveTyper.reset()
+        latestDisplayText = ""
+        liveTargetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let mode = config.chineseMode.mode
+        // Remote gets the raw chinese-mode (zh-tw / zh-cn / en / auto-*) and maps it to WebUI languages itself.
+        let sessionLanguage = engine.kind.isRemote ? mode : recognitionLanguage
+        engine.startSession(language: sessionLanguage) { [weak self] raw in
+            DispatchQueue.main.async {
+                self?.handlePartial(raw: raw, mode: mode, inputID: inputID)
+            }
+        }
+        let engine: ASREngine = engine
         audioRecorder.start(
             microphoneDeviceName: config.microphone.selectedDeviceName,
             preRollSeconds: config.microphone.preRollSeconds,
             onLevel: { [weak self] level in
                 Task { @MainActor in self?.floatingPanel?.setLevel(level) }
-            }
+            },
+            onPCM: { pcm in engine.feed(pcm) }
         )
-        Logger.shared.log("\(inputLogPrefix(inputID))recording capture active: microphone_mode=\(config.microphone.mode), pre_roll_seconds=\(config.microphone.preRollSeconds)")
+        Logger.shared.log(
+            "\(inputLogPrefix(inputID))streaming capture active: microphone_mode=\(config.microphone.mode), "
+            + "pre_roll_seconds=\(config.microphone.preRollSeconds), language=\(sessionLanguage), "
+            + "engine=\(engine.kind.rawValue), output=\(liveTypingActive ? "live_typing" : "paste_on_stop")"
+        )
+    }
+
+    private var targetIsFrontmost: Bool {
+        guard let liveTargetPID else { return false }
+        return NSWorkspace.shared.frontmostApplication?.processIdentifier == liveTargetPID
+    }
+
+    private func handlePartial(raw: String, mode: String, inputID: Int?) {
+        guard recordingState == .recording, activeInputID == inputID else { return }
+        let display = TranscriptFormatter.format(raw, mode: mode)
+        latestDisplayText = display
+        floatingPanel?.setPartialText(display)
+        if liveTypingActive, targetIsFrontmost, AXIsProcessTrusted() {
+            liveTyper.apply(display)
+        }
     }
 
     private func stopRecording() {
@@ -355,50 +442,61 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             return
         }
 
-        guard let wavData = audioRecorder.stopAndMakeWav() else {
-            floatingPanel?.hide()
-            Logger.shared.log("\(inputLogPrefix(inputID))recording skipped: no wav data")
-            if configStore.config.microphone.mode == "on_demand" {
-                audioRecorder.stop()
-            }
-            finishInput(inputID, startedAt: inputStartedAt, result: "SKIPPED", details: "reason=no_wav_data")
-            return
-        }
-
+        audioRecorder.stopStreaming()
         if configStore.config.microphone.mode == "on_demand" {
             audioRecorder.stop()
         }
 
-        let config = configStore.config
+        let mode = configStore.config.chineseMode.mode
         let targetApp = targetApp
-        floatingPanel?.showTranscribing()
-        Logger.shared.log("\(inputLogPrefix(inputID))recording stopped; wav_bytes=\(wavData.count)")
-        Logger.shared.log("\(inputLogPrefix(inputID))submitting ASR: endpoint=\(config.backend.selectedEndpoint), language=\(config.chineseMode.mode), wav_bytes=\(wavData.count)")
-        Task {
-            do {
-                let text = try await backendClient.transcribeIME(
-                    wavData: wavData,
-                    endpoint: config.backend.selectedEndpoint,
-                    language: config.chineseMode.mode,
-                    auth: config.webui.auth,
-                    inputID: inputID
-                )
-                await MainActor.run {
-                    Logger.shared.log("\(self.inputLogPrefix(inputID))ASR completed; paste requested")
-                    self.pasteController.paste(text, to: targetApp) { ok in
-                        self.floatingPanel?.hide()
-                        let result = ok ? "COMPLETE" : "FAILED"
-                        let details = "paste=\(ok ? "ok" : "failed"), chars=\(text.count)"
-                        self.finishInput(inputID, startedAt: inputStartedAt, result: result, details: details)
+        floatingPanel?.showFinalizing()
+        Logger.shared.log("\(inputLogPrefix(inputID))recording stopped; finalizing \(engine.kind.shortName) session")
+        engine.finish { [weak self] raw in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let finalText = TranscriptFormatter.format(raw, mode: mode)
+                guard TextPolisher.enabled, !finalText.isEmpty else {
+                    self.deliverFinal(finalText, targetApp: targetApp, inputID: inputID, startedAt: inputStartedAt)
+                    return
+                }
+                // 停錄後 LLM 整理 (local oMLX, thinking off). On any failure paste the original ASR text.
+                Logger.shared.log("\(self.inputLogPrefix(inputID))LLM polish requested chars=\(finalText.count)")
+                TextPolisher.polish(finalText, llm: self.configStore.config.webui.llm) { polished in
+                    DispatchQueue.main.async {
+                        let output = polished.map { TranscriptFormatter.format($0, mode: mode, fixEnglishCase: false) } ?? finalText
+                        self.deliverFinal(output.isEmpty ? finalText : output, targetApp: targetApp, inputID: inputID, startedAt: inputStartedAt)
                     }
                 }
-            } catch {
-                Logger.shared.log("\(self.inputLogPrefix(inputID))ASR failed: \(error)")
-                await MainActor.run {
-                    self.floatingPanel?.hide()
-                    self.finishInput(inputID, startedAt: inputStartedAt, result: "FAILED", details: "reason=asr_failed")
-                }
             }
+        }
+    }
+
+    private func deliverFinal(_ finalText: String, targetApp: RunningAppIdentity?, inputID: Int?, startedAt: Date?) {
+        Logger.shared.log("\(inputLogPrefix(inputID))final transcript chars=\(finalText.count)")
+        if liveTypingActive, targetIsFrontmost, AXIsProcessTrusted() {
+            liveTyper.apply(finalText)
+            floatingPanel?.hide()
+            finishInput(inputID, startedAt: startedAt, result: "COMPLETE", details: "output=live_typing, chars=\(finalText.count)")
+            return
+        }
+
+        // Paste-on-stop mode, or the user switched apps mid-dictation: paste whatever was not typed live.
+        let typed = liveTyper.typed
+        let remainder = finalText.hasPrefix(typed) ? String(finalText.dropFirst(typed.count)) : finalText
+        guard !remainder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            floatingPanel?.hide()
+            let result = finalText.isEmpty ? "SKIPPED" : "COMPLETE"
+            finishInput(inputID, startedAt: startedAt, result: result, details: "output=nothing_to_paste, chars=\(finalText.count)")
+            return
+        }
+        pasteController.paste(remainder, to: targetApp) { [weak self] ok in
+            self?.floatingPanel?.hide()
+            self?.finishInput(
+                inputID,
+                startedAt: startedAt,
+                result: ok ? "COMPLETE" : "FAILED",
+                details: "output=paste, paste=\(ok ? "ok" : "failed"), chars=\(remainder.count)"
+            )
         }
     }
 
@@ -410,6 +508,11 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         statusItem?.button?.image = StatusIcon.make(recording: false)
         floatingPanel?.hide()
         targetApp = nil
+        engine.cancel()
+        if targetIsFrontmost {
+            liveTyper.erase()
+        }
+        liveTyper.reset()
 
         if configStore.config.microphone.mode == "on_demand" {
             audioRecorder.stop()
@@ -437,11 +540,105 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             activeInputID = nil
             activeInputStartedAt = nil
             targetApp = nil
+            liveTargetPID = nil
         }
     }
 
     private func rebuildMenu() {
         let menu = NSMenu()
+
+        let engineTitle: String
+        let name = engine.kind.shortName
+        let isRemote = engine.kind.isRemote
+        let remoteEndpoint = (engine as? RemoteWhisperEngine)?.endpoint ?? RemoteWhisperSettings.selectedEndpoint
+        switch engineState {
+        case .notLoaded: engineTitle = "\(name): not loaded"
+        case .loading: engineTitle = isRemote ? "\(name): checking \(remoteEndpoint)…" : "\(name): loading…"
+        case .ready: engineTitle = isRemote ? "\(name): ready (\(remoteEndpoint))" : "\(name): ready (local)"
+        case .failed: engineTitle = isRemote ? "\(name): unreachable (\(remoteEndpoint))" : "\(name): model missing (see README)"
+        }
+        let engineItem = NSMenuItem(title: engineTitle, action: nil, keyEquivalent: "")
+        engineItem.isEnabled = false
+        menu.addItem(engineItem)
+
+        // ASR Engine ▸ Local ▸ (ONNX models)  |  Remote ▸ (Whisper servers, Test connection)
+        let engineMenu = NSMenu()
+        let localMenu = NSMenu()
+        let storedLocal = ASREngineKind.storedLocalModel
+        for kind in ASREngineKind.localCases {
+            let item = NSMenuItem(title: kind.title, action: #selector(selectEngine(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = kind.rawValue
+            // Checkmark = model that Local uses (shown even while Remote is active).
+            item.state = (isRemote ? storedLocal == kind : engine.kind == kind) ? .on : .off
+            localMenu.addItem(item)
+        }
+        let localItem = NSMenuItem(title: "Local", action: nil, keyEquivalent: "")
+        localItem.state = isRemote ? .off : .on
+        localItem.submenu = localMenu
+        engineMenu.addItem(localItem)
+
+        let remoteMenu = NSMenu()
+        let selectedRemote = RemoteWhisperSettings.selectedEndpoint
+        if RemoteWhisperSettings.endpoints.isEmpty {
+            let empty = NSMenuItem(title: "No Server Configured", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            remoteMenu.addItem(empty)
+        }
+        for endpoint in RemoteWhisperSettings.endpoints {
+            let item = NSMenuItem(title: endpoint, action: #selector(selectRemoteEndpoint(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = endpoint
+            item.state = isRemote && endpoint == selectedRemote ? .on : .off
+            item.isEnabled = RemoteWhisperSettings.envEndpoint == nil || endpoint == RemoteWhisperSettings.envEndpoint
+            let target = RemoteWhisperSettings.target(for: endpoint)
+            item.toolTip = target.protocolKind == .openAITranscriptions
+                ? "\(target.protocolKind.title) · \(target.model)"
+                : target.protocolKind.title
+            remoteMenu.addItem(item)
+        }
+        remoteMenu.addItem(.separator())
+        let configureItem = NSMenuItem(title: "Configure…", action: #selector(openRemoteSettings), keyEquivalent: "")
+        configureItem.target = self
+        remoteMenu.addItem(configureItem)
+        let testItem = NSMenuItem(title: "Test Connection", action: #selector(testRemoteConnection), keyEquivalent: "")
+        testItem.target = self
+        testItem.isEnabled = !RemoteWhisperSettings.endpoints.isEmpty
+        remoteMenu.addItem(testItem)
+        let remoteItem = NSMenuItem(title: "Remote", action: nil, keyEquivalent: "")
+        remoteItem.state = isRemote ? .on : .off
+        remoteItem.submenu = remoteMenu
+        engineMenu.addItem(remoteItem)
+
+        let engineMenuItem = NSMenuItem(title: "ASR Engine", action: nil, keyEquivalent: "")
+        engineMenuItem.submenu = engineMenu
+        menu.addItem(engineMenuItem)
+
+        let openCCTitle = TranscriptFormatter.openCCPath == nil ? "OpenCC Not Installed" : "OpenCC Taiwan Phrases"
+        let openCCItem = NSMenuItem(title: openCCTitle, action: #selector(toggleOpenCC), keyEquivalent: "")
+        openCCItem.target = self
+        openCCItem.state = TranscriptFormatter.useOpenCC && TranscriptFormatter.openCCPath != nil ? .on : .off
+        openCCItem.isEnabled = TranscriptFormatter.openCCPath != nil
+        menu.addItem(openCCItem)
+        let numeralsItem = NSMenuItem(title: "Arabic Numerals", action: #selector(toggleArabicNumerals), keyEquivalent: "")
+        numeralsItem.target = self
+        numeralsItem.state = ChineseNumerals.enabled ? .on : .off
+        menu.addItem(numeralsItem)
+        let polishItem = NSMenuItem(title: "LLM Polish", action: #selector(toggleLLMPolish), keyEquivalent: "")
+        polishItem.target = self
+        polishItem.state = TextPolisher.enabled ? .on : .off
+        menu.addItem(polishItem)
+        menu.addItem(.separator())
+
+        let liveItem = NSMenuItem(title: "Live Typing", action: #selector(toggleLiveTyping), keyEquivalent: "")
+        liveItem.target = self
+        liveItem.state = liveTypingActive ? .on : .off
+        if isRemote {
+            liveItem.isEnabled = false
+            liveItem.toolTip = "Remote ASR pastes the text after recording stops."
+        }
+        menu.addItem(liveItem)
+        menu.addItem(.separator())
 
         let moveLockItem = NSMenuItem(
             title: "Move Lock",
@@ -456,7 +653,10 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         let languageMenu = NSMenu()
         addLanguageItem(to: languageMenu, title: "Traditional Chinese", mode: "zh-tw")
         addLanguageItem(to: languageMenu, title: "Simplified Chinese", mode: "zh-cn")
-        let languageItem = NSMenuItem(title: "Chinese Mode", action: nil, keyEquivalent: "")
+        addLanguageItem(to: languageMenu, title: "English", mode: "en")
+        addLanguageItem(to: languageMenu, title: "Auto Detect – Traditional", mode: "auto-tw")
+        addLanguageItem(to: languageMenu, title: "Auto Detect – Simplified", mode: "auto-cn")
+        let languageItem = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
         languageItem.submenu = languageMenu
         menu.addItem(languageItem)
 
@@ -471,7 +671,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         let microphoneModeMenu = NSMenu()
         let timeoutMinutes = configStore.config.microphone.alwaysOnTimeoutMinutes
         let alwaysOnTitle = timeoutMinutes > 0
-            ? "Always On (\(timeoutMinutes) min)"
+            ? "Always On – \(timeoutMinutes) min"
             : "Always On"
         addMicrophoneModeItem(to: microphoneModeMenu, title: alwaysOnTitle, mode: "always")
         addMicrophoneModeItem(to: microphoneModeMenu, title: "On Demand", mode: "on_demand")
@@ -479,10 +679,11 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         microphoneModeItem.submenu = microphoneModeMenu
         menu.addItem(microphoneModeItem)
 
-        // The LLM Server menu is only relevant for the web UI and is not needed in the local app.
-        // It has been removed to simplify the local menu.
 
         menu.addItem(.separator())
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
         let reloadConfigItem = NSMenuItem(
             title: "Reload Config",
             action: #selector(reloadConfig),
@@ -562,96 +763,79 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         menu.addItem(item)
     }
 
-    private func rebuildLLMServerMenu(_ menu: NSMenu) {
-        let servers = configStore.availableLLMServers()
-        if servers.isEmpty {
-            let item = NSMenuItem(title: "No LLM servers configured", action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
+    @objc private func selectEngine(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let kind = ASREngineKind(rawValue: raw), !kind.isRemote else { return }
+        guard kind != engine.kind else { return }
+        guard recordingState == .idle else {
+            NSSound.beep()
             return
         }
+        ASREngineKind.persistLocalModel(kind)
+        ASREngineKind.persistBackend(remote: false)
+        switchEngine(to: kind)
+    }
 
-        var modelMenusByServer: [String: NSMenu] = [:]
-        var loadingItemsByServer: [String: NSMenuItem] = [:]
-        for server in servers {
-            let displayName = server.name == server.provider ? server.name : "\(server.name) (\(server.provider))"
-            let item = NSMenuItem(
-                title: displayName,
-                action: nil,
-                keyEquivalent: ""
-            )
-            item.representedObject = server.name
-            item.state = configStore.config.webui.selectedServerName == server.name ? .on : .off
-            let modelMenu = NSMenu()
-            if server.models.isEmpty {
-                let loadingItem = NSMenuItem(title: "Loading models...", action: nil, keyEquivalent: "")
-                loadingItem.isEnabled = false
-                modelMenu.addItem(loadingItem)
-                loadingItemsByServer[server.name] = loadingItem
-            } else {
-                for modelName in server.models {
-                    addLLMModelItem(to: modelMenu, title: modelName, serverName: server.name, model: modelName)
-                }
-            }
-            modelMenusByServer[server.name] = modelMenu
-            item.submenu = modelMenu
-            menu.addItem(item)
+    @objc private func selectRemoteEndpoint(_ sender: NSMenuItem) {
+        guard let endpoint = sender.representedObject as? String else { return }
+        guard recordingState == .idle else {
+            NSSound.beep()
+            return
         }
+        RemoteWhisperSettings.select(endpoint)
+        ASREngineKind.persistBackend(remote: true)
+        switchEngine(to: .remoteWhisper, force: true)
+    }
 
-        // Fetch models asynchronously from all configured servers
-        let backendEndpoint = configStore.config.backend.selectedEndpoint
-        Task {
-            do {
-                let models = try await backendClient.fetchAllLLMModels(endpoint: backendEndpoint, auth: configStore.config.webui.auth)
-                await MainActor.run {
-                    let modelsByServer = Dictionary(grouping: models) { model in
-                        model.server ?? ""
-                    }
-                    let modelNamesByServer = modelsByServer.mapValues { serverModels in
-                        serverModels.map(\.name)
-                    }
-                    configStore.updateLLMServerModels(modelNamesByServer)
-                    for server in servers {
-                        guard let modelMenu = modelMenusByServer[server.name] else { continue }
-                        modelMenu.removeAllItems()
-                        let serverModels = modelsByServer[server.name] ?? []
-                        if serverModels.isEmpty {
-                            let emptyItem = NSMenuItem(title: "No models found", action: nil, keyEquivalent: "")
-                            emptyItem.isEnabled = false
-                            modelMenu.addItem(emptyItem)
-                        } else {
-                            for model in serverModels {
-                                addLLMModelItem(to: modelMenu, title: model.name, serverName: server.name, model: model.name)
-                            }
-                        }
-                    }
-                }
-            } catch {
-                Logger.shared.log("Failed to fetch LLM models: \(error)")
-                await MainActor.run {
-                    for server in servers {
-                        guard let modelMenu = modelMenusByServer[server.name] else { continue }
-                        if let loadingItem = loadingItemsByServer[server.name] {
-                            modelMenu.removeItem(loadingItem)
-                        }
-                        let errorItem = NSMenuItem(title: "Failed to load models", action: nil, keyEquivalent: "")
-                        errorItem.isEnabled = false
-                        modelMenu.addItem(errorItem)
-                    }
-                }
+    @objc private func testRemoteConnection() {
+        let endpoint = RemoteWhisperSettings.selectedEndpoint
+        if engine.kind.isRemote {
+            loadEngine() // refreshes the status line at the top of the menu
+            return
+        }
+        RemoteWhisperEngine.checkHealth(target: RemoteWhisperSettings.target(for: endpoint)) { ok, detail in
+            Logger.shared.log("Remote ASR test: endpoint=\(endpoint), ok=\(ok), detail=\(detail)")
+            DispatchQueue.main.async {
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                alert.messageText = ok ? "Remote ASR Reachable" : "Remote ASR Unreachable"
+                alert.informativeText = "\(endpoint): \(detail)"
+                alert.runModal()
             }
         }
     }
 
-    private func addLLMModelItem(to menu: NSMenu, title: String, serverName: String, model: String) {
-        let item = NSMenuItem(title: title, action: #selector(selectLLMModel(_:)), keyEquivalent: "")
-        item.target = self
-        item.representedObject = LLMModelMenuSelection(serverName: serverName, modelName: model)
-        let currentModel = configStore.config.webui.selectedModelName.isEmpty
-            ? configStore.config.webui.llm.selectedModel
-            : configStore.config.webui.selectedModelName
-        item.state = configStore.config.webui.selectedServerName == serverName && currentModel == model ? .on : .off
-        menu.addItem(item)
+    private func switchEngine(to kind: ASREngineKind, force: Bool = false) {
+        guard force || kind != engine.kind else { return }
+        engine.cancel()
+        configureRemoteSettings()
+        engine = kind.makeEngine()
+        Logger.shared.log("ASR engine switched to \(kind.rawValue)"
+            + (kind.isRemote ? " endpoint=\(RemoteWhisperSettings.selectedEndpoint)" : ""))
+        statusItem?.button?.toolTip = "AirType (\(kind.shortName))"
+        loadEngine()
+        rebuildMenu()
+    }
+
+    @objc private func toggleOpenCC() {
+        UserDefaults.standard.set(!TranscriptFormatter.useOpenCC, forKey: TranscriptFormatter.openCCDefaultsKey)
+        rebuildMenu()
+    }
+
+    @objc private func toggleArabicNumerals() {
+        UserDefaults.standard.set(!ChineseNumerals.enabled, forKey: ChineseNumerals.defaultsKey)
+        Logger.shared.log("Arabic numerals \(ChineseNumerals.enabled ? "on" : "off")")
+        rebuildMenu()
+    }
+
+    @objc private func toggleLLMPolish() {
+        UserDefaults.standard.set(!TextPolisher.enabled, forKey: TextPolisher.defaultsKey)
+        Logger.shared.log("LLM polish \(TextPolisher.enabled ? "on" : "off")")
+        rebuildMenu()
+    }
+
+    @objc private func toggleLiveTyping() {
+        liveTypingEnabled.toggle()
+        rebuildMenu()
     }
 
     @objc private func toggleMoveLock(_ sender: NSMenuItem) {
@@ -680,46 +864,74 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @objc private func reloadConfig() {
-        let previousBackendMode = configStore.config.backend.mode
-        let previousBackendEndpoint = configStore.config.backend.selectedEndpoint
-
         do {
             try configStore.load()
             migrateLegacyMicrophoneSelection()
-
-            let backendChanged = previousBackendMode != configStore.config.backend.mode
-                || previousBackendEndpoint != configStore.config.backend.selectedEndpoint
-            if backendChanged {
-                backendProcessManager.stop()
-            }
-            backendProcessManager.startIfNeeded(
-                config: configStore.config,
-                projectRoot: configStore.projectRoot
-            )
-
             applyMicrophoneRuntimeSettings(reason: "reload_config")
             floatingPanel?.applyConfig()
+            configureRemoteSettings()
+            if engine.kind.isRemote, remoteEngineIsStale {
+                switchEngine(to: .remoteWhisper, force: true)
+            } else if case .failed = engineState {
+                loadEngine()
+            }
             rebuildMenu()
-            Logger.shared.log(
-                "Reloaded the complete config and reapplied runtime settings: "
-                + "backend_changed=\(backendChanged)"
-            )
+            Logger.shared.log("Reloaded the complete config and reapplied runtime settings")
         } catch {
             Logger.shared.log("Could not reload config: \(error.localizedDescription)")
             NSSound.beep()
         }
     }
 
-    @objc private func selectLLMServer(_ sender: NSMenuItem) {
-        guard let serverName = sender.representedObject as? String else { return }
-        configStore.updateLLMServer(serverName)
-        rebuildMenu()
+    /// True when the running Remote engine no longer matches the selected endpoint / protocol / model / key.
+    private var remoteEngineIsStale: Bool {
+        guard let remote = engine as? RemoteWhisperEngine else { return false }
+        let selected = RemoteWhisperSettings.selectedEndpoint
+        let target = RemoteWhisperSettings.target(for: selected)
+        return remote.endpoint != selected
+            || remote.target.protocolKind != target.protocolKind
+            || remote.target.model != target.model
+            || remote.target.apiKey != target.apiKey
     }
 
-    @objc private func selectLLMModel(_ sender: NSMenuItem) {
-        guard let selection = sender.representedObject as? LLMModelMenuSelection else { return }
-        configStore.updateLLMSelection(serverName: selection.serverName, modelName: selection.modelName)
-        rebuildMenu()
+    @objc private func openSettings() {
+        showSettings(tab: nil)
+    }
+
+    @objc private func openRemoteSettings() {
+        showSettings(tab: SettingsWindowController.remoteTabID)
+    }
+
+    private func showSettings(tab: String?) {
+        if settingsWindow == nil {
+            let controller = SettingsWindowController(configPath: configStore.filePath)
+            controller.onSave = { [weak self] newConfig, useRemote in
+                self?.applySettings(newConfig, useRemote: useRemote)
+            }
+            settingsWindow = controller
+        }
+        settingsWindow?.present(
+            config: configStore.config,
+            remoteActive: engine.kind.isRemote,
+            tab: tab
+        )
+    }
+
+    /// Settings window → write config.toml, reload it, and reapply runtime settings without a restart.
+    private func applySettings(_ newConfig: AirTypeConfig, useRemote: Bool) {
+        configStore.replaceAndSave(newConfig)
+        if let endpoint = RemoteWhisperSettings.normalize(newConfig.remoteASR.endpoint) {
+            RemoteWhisperSettings.select(endpoint)
+        }
+        reloadConfig()
+        guard recordingState == .idle else { return }
+        if useRemote, !engine.kind.isRemote {
+            ASREngineKind.persistBackend(remote: true)
+            switchEngine(to: .remoteWhisper, force: true)
+        } else if !useRemote, engine.kind.isRemote {
+            ASREngineKind.persistBackend(remote: false)
+            switchEngine(to: ASREngineKind.storedLocalModel, force: true)
+        }
     }
 
     @objc private func quit() {

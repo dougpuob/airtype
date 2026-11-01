@@ -4,7 +4,7 @@ final class Logger {
     static let shared = Logger()
 
     private let path = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".airtype/airtype-localapp.log")
+        .appendingPathComponent(".airtype-experiment/airtype-localapp.log")
 
     private init() {}
 
@@ -23,13 +23,13 @@ final class Logger {
         let arguments = CommandLine.arguments.joined(separator: " ")
 
         let lines = [
-            "[AirTypeMac] Run started at \(now)",
-            "[AirTypeMac] Executable: name=\(appName), bundle_id=\(bundleIdentifier), version=\(version), build=\(build)",
-            "[AirTypeMac] Executable path: \(executablePath)",
-            "[AirTypeMac] Bundle path: \(bundlePath)",
-            "[AirTypeMac] Process: pid=\(process.processIdentifier), os=\(process.operatingSystemVersionString)",
-            "[AirTypeMac] Working directory: \(workingDirectory)",
-            "[AirTypeMac] Arguments: \(arguments)"
+            "[AirTypeNemotron] Run started at \(now)",
+            "[AirTypeNemotron] Executable: name=\(appName), bundle_id=\(bundleIdentifier), version=\(version), build=\(build)",
+            "[AirTypeNemotron] Executable path: \(executablePath)",
+            "[AirTypeNemotron] Bundle path: \(bundlePath)",
+            "[AirTypeNemotron] Process: pid=\(process.processIdentifier), os=\(process.operatingSystemVersionString)",
+            "[AirTypeNemotron] Working directory: \(workingDirectory)",
+            "[AirTypeNemotron] Arguments: \(arguments)"
         ]
         let text = lines.joined(separator: "\n") + "\n"
         print(text, terminator: "")
@@ -40,12 +40,12 @@ final class Logger {
             )
             try text.write(to: path, atomically: true, encoding: .utf8)
         } catch {
-            print("[AirTypeMac] log write failed: \(error)")
+            print("[AirTypeNemotron] log write failed: \(error)")
         }
     }
 
     func log(_ message: String) {
-        let text = "[AirTypeMac] \(message)"
+        let text = "[AirTypeNemotron] \(message)"
         print(text)
         do {
             try FileManager.default.createDirectory(
@@ -62,7 +62,7 @@ final class Logger {
                 try line.write(to: path, atomically: true, encoding: .utf8)
             }
         } catch {
-            print("[AirTypeMac] log write failed: \(error)")
+            print("[AirTypeNemotron] log write failed: \(error)")
         }
     }
 
@@ -82,7 +82,7 @@ final class Logger {
                 try "\n".write(to: path, atomically: true, encoding: .utf8)
             }
         } catch {
-            print("[AirTypeMac] log write failed: \(error)")
+            print("[AirTypeNemotron] log write failed: \(error)")
         }
     }
 

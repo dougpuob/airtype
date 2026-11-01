@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct AirTypeMacApp: App {
+struct AirTypeNemotronApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: AirTypeCoordinator?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if SelfTest.runIfRequested() { return }
         Logger.shared.startNewRunLog()
         NSApp.applicationIconImage = AirTypeIcon.appIcon()
         NSApp.setActivationPolicy(.accessory)

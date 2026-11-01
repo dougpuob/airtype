@@ -14,6 +14,8 @@ final class AudioRecorder: @unchecked Sendable {
     private var prepared = false
     private var isRecording = false
     private var onLevel: ((Double) -> Void)?
+    // localapp: raw 16 kHz Int16 PCM forwarded to the streaming recognizer while recording.
+    private var onPCM: ((Data) -> Void)?
     private var recordingStartedAt: Date?
     private var firstBufferLogged = false
     private var firstVoiceLogged = false
@@ -109,11 +111,21 @@ final class AudioRecorder: @unchecked Sendable {
         }
     }
 
-    func start(microphoneDeviceName: String, preRollSeconds: Double, onLevel: @escaping (Double) -> Void) {
+    func start(
+        microphoneDeviceName: String,
+        preRollSeconds: Double,
+        onLevel: @escaping (Double) -> Void,
+        onPCM: ((Data) -> Void)? = nil
+    ) {
         prepare(microphoneDeviceName: microphoneDeviceName, preRollSeconds: preRollSeconds)
         audioLock.lock()
         self.onLevel = onLevel
+        self.onPCM = onPCM
         pcm = preRollPCM
+        // Pre-roll goes to the recognizer first, under the lock, so ordering with live buffers is kept.
+        if !preRollPCM.isEmpty {
+            onPCM?(preRollPCM)
+        }
         isRecording = true
         recordingStartedAt = Date()
         firstBufferLogged = false
@@ -136,6 +148,7 @@ final class AudioRecorder: @unchecked Sendable {
         prepared = false
         activeMicrophoneDeviceName = ""
         onLevel = nil
+        onPCM = nil
         recordingStartedAt = nil
         pcm = Data()
         preRollPCM = Data()
@@ -143,10 +156,24 @@ final class AudioRecorder: @unchecked Sendable {
         Logger.shared.log("Audio recorder stopped and pre-roll cleared")
     }
 
+    /// localapp: stop forwarding audio to the streaming recognizer (no WAV is built).
+    func stopStreaming() {
+        audioLock.lock()
+        isRecording = false
+        onLevel = nil
+        onPCM = nil
+        recordingStartedAt = nil
+        let recordedBytes = pcm.count
+        pcm = Data()
+        audioLock.unlock()
+        Logger.shared.log("Audio recorder streaming stopped: pcm_bytes=\(recordedBytes)")
+    }
+
     func discardRecording(clearPreRoll: Bool) {
         audioLock.lock()
         isRecording = false
         onLevel = nil
+        onPCM = nil
         recordingStartedAt = nil
         pcm = Data()
         if clearPreRoll {
@@ -295,6 +322,7 @@ final class AudioRecorder: @unchecked Sendable {
         appendPreRoll(data)
         if isRecording {
             pcm.append(data)
+            onPCM?(data)
             callback = onLevel
             if !firstBufferLogged {
                 firstBufferLogged = true

@@ -3,6 +3,7 @@ import Foundation
 struct AirTypeConfig {
     var chineseMode = ChineseMode()
     var backend = BackendConfig()
+    var remoteASR = RemoteASRConfig()
     var microphone = MicrophoneConfig()
     var floatingDialog = FloatingDialogConfig()
     var webui = WebUIConfig()
@@ -23,6 +24,34 @@ struct BackendConfig {
         }
         return localEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+}
+
+/// [localapp.remote-asr]: the Remote ASR server edited in Settings ▸ Remote ASR.
+/// protocol: "webui-ime" (AirType WebUI /api/transcribe/ime) or "openai" (POST /v1/audio/transcriptions).
+struct RemoteASRConfig {
+    var endpoint = ""
+    var protocolName = "webui-ime"
+    var model = ""
+    var apiKey = ""
+}
+
+/// Field metadata exposed to the Settings window (mirrors the TOML schema).
+enum ConfigFieldKind {
+    case string, secret, int, number, bool, array
+}
+
+struct ConfigFieldDescriptor {
+    let section: String
+    let key: String
+    let comment: String?
+    let kind: ConfigFieldKind
+    let options: [String]
+}
+
+struct ConfigSectionDescriptor {
+    let group: String
+    let name: String
+    let fields: [ConfigFieldDescriptor]
 }
 
 struct MicrophoneConfig {
@@ -125,6 +154,7 @@ final class ConfigStore: ObservableObject {
     }
 
     func load() throws {
+        Self.seedExperimentConfigIfNeeded(at: path)
         guard FileManager.default.fileExists(atPath: path.path) else {
             throw ConfigStoreError.missingConfig(path.path)
         }
@@ -176,6 +206,44 @@ final class ConfigStore: ObservableObject {
             + "selected_model=\(config.webui.llm.selectedModel), "
             + "server_count=\(config.webui.llmServers.count)"
         )
+    }
+
+    var filePath: String { path.path }
+
+    /// Settings window: replace the whole config and write it back to config.toml.
+    func replaceAndSave(_ newConfig: AirTypeConfig) {
+        config = newConfig
+        save()
+        Logger.shared.log("Config saved from Settings window: path=\(path.path)")
+    }
+
+    static var sectionDescriptors: [ConfigSectionDescriptor] {
+        schema.map { section in
+            ConfigSectionDescriptor(group: section.group, name: section.name, fields: section.fields.map {
+                ConfigFieldDescriptor(section: $0.section, key: $0.key, comment: $0.comment, kind: $0.kind, options: $0.options)
+            })
+        }
+    }
+
+    /// Plain (unquoted) value of a field; arrays are returned comma-separated.
+    static func displayValue(section: String, key: String, in config: AirTypeConfig) -> String {
+        guard let field = schema.first(where: { $0.name == section })?.fields.first(where: { $0.key == key }) else { return "" }
+        let rendered = field.render(config)
+        if field.kind == .array {
+            return parseTomlStringArray(rendered).joined(separator: ", ")
+        }
+        return parseTomlValue(rendered)
+    }
+
+    /// Applies a plain value (arrays comma-separated) through the same validation as the TOML parser.
+    static func apply(section: String, key: String, value: String, to config: inout AirTypeConfig) {
+        guard let field = schema.first(where: { $0.name == section })?.fields.first(where: { $0.key == key }) else { return }
+        if field.kind == .array {
+            let items = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            field.apply(&config, tomlStringArray(items))
+        } else {
+            field.apply(&config, value.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
     }
 
     func updateChineseMode(_ mode: String) {
@@ -630,6 +698,8 @@ final class ConfigStore: ObservableObject {
         let comment: String?
         let apply: (inout AirTypeConfig, String) -> Void
         let render: (AirTypeConfig) -> String
+        var kind: ConfigFieldKind = .string
+        var options: [String] = []
     }
 
     private static let schema: [ConfigSectionSchema] = [
@@ -637,7 +707,8 @@ final class ConfigStore: ObservableObject {
             group: "Local App Settings",
             name: "localapp.chinese-mode",
             fields: [
-                stringField("localapp.chinese-mode", "mode", comment: #"Options: "zh-tw", "zh-cn""#,
+                stringField("localapp.chinese-mode", "mode", comment: #"Options: "zh-tw", "zh-cn", "en", "auto-tw", "auto-cn""#,
+                            options: ["zh-tw", "zh-cn", "en", "auto-tw", "auto-cn"],
                             apply: { $0.chineseMode.mode = normalizeLanguage($1) },
                             render: { $0.chineseMode.mode })
             ]
@@ -647,6 +718,7 @@ final class ConfigStore: ObservableObject {
             name: "localapp.backend-endpoint",
             fields: [
                 stringField("localapp.backend-endpoint", "mode", comment: #"Options: "local", "remote""#,
+                            options: ["local", "remote"],
                             apply: { $0.backend.mode = ["local", "remote"].contains($1) ? $1 : "local" },
                             render: { $0.backend.mode }),
                 stringField("localapp.backend-endpoint", "local_endpoint",
@@ -659,12 +731,34 @@ final class ConfigStore: ObservableObject {
         ),
         ConfigSectionSchema(
             group: "Local App Settings",
+            name: "localapp.remote-asr",
+            fields: [
+                stringField("localapp.remote-asr", "endpoint",
+                            comment: "Remote ASR server URL. Empty uses [localapp.backend-endpoint].remote_endpoint.",
+                            apply: { $0.remoteASR.endpoint = $1 },
+                            render: { $0.remoteASR.endpoint }),
+                stringField("localapp.remote-asr", "protocol", comment: #"Options: "webui-ime", "openai""#,
+                            options: ["webui-ime", "openai"],
+                            apply: { $0.remoteASR.protocolName = ["webui-ime", "openai"].contains($1) ? $1 : "webui-ime" },
+                            render: { $0.remoteASR.protocolName }),
+                stringField("localapp.remote-asr", "model", comment: "Model id for the openai protocol (ignored by webui-ime).",
+                            apply: { $0.remoteASR.model = $1 },
+                            render: { $0.remoteASR.model }),
+                stringField("localapp.remote-asr", "api_key", kind: .secret,
+                            comment: "Bearer token for the openai protocol. webui-ime uses [webui.auth].",
+                            apply: { $0.remoteASR.apiKey = $1 },
+                            render: { $0.remoteASR.apiKey })
+            ]
+        ),
+        ConfigSectionSchema(
+            group: "Local App Settings",
             name: "localapp.microphone",
             fields: [
                 stringField("localapp.microphone", "selected_device_name", comment: "Microphone Device Name. Leave empty to use the system default microphone.",
                             apply: { $0.microphone.selectedDeviceName = $1 },
                             render: { $0.microphone.selectedDeviceName }),
                 stringField("localapp.microphone", "mode", comment: #"Microphone Mode. Options: "on_demand", "always""#,
+                            options: ["on_demand", "always"],
                             apply: { $0.microphone.mode = normalizeMicrophoneMode($1) },
                             render: { $0.microphone.mode }),
                 intField("localapp.microphone", "always_on_timeout_minutes",
@@ -701,7 +795,7 @@ final class ConfigStore: ObservableObject {
                 stringField("webui.auth", "username",
                             apply: { $0.webui.auth.username = $1.isEmpty ? "airtype" : $1 },
                             render: { $0.webui.auth.username }),
-                stringField("webui.auth", "password",
+                stringField("webui.auth", "password", kind: .secret,
                             apply: { $0.webui.auth.password = $1 },
                             render: { $0.webui.auth.password })
             ]
@@ -749,7 +843,7 @@ final class ConfigStore: ObservableObject {
                 stringField("webui.llm-server", "endpoint",
                             apply: { $0.webui.llm.endpoint = $1.isEmpty ? "http://127.0.0.1:8080" : $1 },
                             render: { $0.webui.llm.endpoint }),
-                stringField("webui.llm-server", "api_key",
+                stringField("webui.llm-server", "api_key", kind: .secret,
                             apply: { $0.webui.llm.apiKey = $1 },
                             render: { $0.webui.llm.apiKey }),
                 arrayField("webui.llm-server", "models",
@@ -785,7 +879,9 @@ final class ConfigStore: ObservableObject {
     private static func stringField(
         _ section: String,
         _ key: String,
+        kind: ConfigFieldKind = .string,
         comment: String? = nil,
+        options: [String] = [],
         apply: @escaping (inout AirTypeConfig, String) -> Void,
         render: @escaping (AirTypeConfig) -> String
     ) -> ConfigFieldSchema {
@@ -794,7 +890,9 @@ final class ConfigStore: ObservableObject {
             key: key,
             comment: comment,
             apply: apply,
-            render: { tomlString(render($0)) }
+            render: { tomlString(render($0)) },
+            kind: kind,
+            options: options
         )
     }
 
@@ -810,7 +908,8 @@ final class ConfigStore: ObservableObject {
             key: key,
             comment: comment,
             apply: { config, value in apply(&config, parseTomlStringArray(value)) },
-            render: { tomlStringArray(render($0)) }
+            render: { tomlStringArray(render($0)) },
+            kind: .array
         )
     }
 
@@ -821,7 +920,7 @@ final class ConfigStore: ObservableObject {
         apply: @escaping (inout AirTypeConfig, String) -> Void,
         render: @escaping (AirTypeConfig) -> String
     ) -> ConfigFieldSchema {
-        ConfigFieldSchema(section: section, key: key, comment: comment, apply: apply, render: render)
+        ConfigFieldSchema(section: section, key: key, comment: comment, apply: apply, render: render, kind: .number)
     }
 
     private static func intField(
@@ -831,7 +930,7 @@ final class ConfigStore: ObservableObject {
         apply: @escaping (inout AirTypeConfig, String) -> Void,
         render: @escaping (AirTypeConfig) -> String
     ) -> ConfigFieldSchema {
-        ConfigFieldSchema(section: section, key: key, comment: comment, apply: apply, render: render)
+        ConfigFieldSchema(section: section, key: key, comment: comment, apply: apply, render: render, kind: .int)
     }
 
     private static func boolField(
@@ -841,7 +940,7 @@ final class ConfigStore: ObservableObject {
         apply: @escaping (inout AirTypeConfig, String) -> Void,
         render: @escaping (AirTypeConfig) -> String
     ) -> ConfigFieldSchema {
-        ConfigFieldSchema(section: section, key: key, comment: comment, apply: apply, render: render)
+        ConfigFieldSchema(section: section, key: key, comment: comment, apply: apply, render: render, kind: .bool)
     }
 
     private static func parseTomlTables(_ text: String) -> [String: [String: String]] {
@@ -1007,7 +1106,15 @@ final class ConfigStore: ObservableObject {
         if ["simple_chinese", "simplified_chinese", "simplified", "cn", "zh_cn"].contains(lowered) {
             return "zh-cn"
         }
-        return ["zh-tw", "zh-cn"].contains(lowered) ? lowered : "zh-tw"
+        // localapp: engines are multilingual, so English and auto-detect are allowed too.
+        // Auto is split by output script; legacy "auto" becomes Traditional auto.
+        if ["auto", "auto-tw", "auto_tw", "auto-zh-tw", "auto-traditional"].contains(lowered) {
+            return "auto-tw"
+        }
+        if ["auto-cn", "auto_cn", "auto-zh-cn", "auto-simplified"].contains(lowered) {
+            return "auto-cn"
+        }
+        return ["zh-tw", "zh-cn", "en"].contains(lowered) ? lowered : "zh-tw"
     }
 
     private static func normalizeMicrophoneMode(_ value: String) -> String {
@@ -1082,9 +1189,29 @@ final class ConfigStore: ObservableObject {
         }
     }
 
+    // localapp keeps its own config so menu changes never touch ~/.airtype/config.toml.
     private static var configPath: URL {
         FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".airtype-experiment/config.toml")
+    }
+
+    private static var originalConfigPath: URL {
+        FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".airtype/config.toml")
+    }
+
+    /// First run: copy ~/.airtype/config.toml (read-only) to ~/.airtype-experiment/config.toml.
+    private static func seedExperimentConfigIfNeeded(at path: URL) {
+        let fileManager = FileManager.default
+        guard !fileManager.fileExists(atPath: path.path),
+              fileManager.fileExists(atPath: originalConfigPath.path) else { return }
+        do {
+            try fileManager.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fileManager.copyItem(at: originalConfigPath, to: path)
+            Logger.shared.log("Seeded experiment config from \(originalConfigPath.path) to \(path.path)")
+        } catch {
+            Logger.shared.log("Could not seed experiment config: \(error)")
+        }
     }
 }
 
