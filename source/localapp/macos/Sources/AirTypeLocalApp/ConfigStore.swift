@@ -6,6 +6,7 @@ struct AirTypeConfig {
     var remoteASR = RemoteASRConfig()
     var microphone = MicrophoneConfig()
     var floatingDialog = FloatingDialogConfig()
+    var obsidian = ObsidianConfig()
     var webui = WebUIConfig()
 }
 
@@ -65,6 +66,14 @@ struct FloatingDialogConfig {
     var positionXRatio = 0.5
     var positionYRatio = 0.62
     var moveLock = true
+}
+
+/// [localapp.obsidian]: where the local app writes captured notes as Markdown files.
+struct ObsidianConfig {
+    /// Absolute path to the Obsidian vault root (or a folder inside it).
+    var vaultPath = ""
+    /// Optional subfolder under the vault. Empty = vault root.
+    var defaultFolder = ""
 }
 
 struct WebUIConfig {
@@ -183,6 +192,10 @@ final class ConfigStore: ObservableObject {
             "Config localapp: hotkey_triggers=right_ctrl,right_option; "
             + "chinese_mode=\(config.chineseMode.mode); "
             + "floating_dialog=(x=\(config.floatingDialog.positionXRatio), y=\(config.floatingDialog.positionYRatio), move_lock=\(config.floatingDialog.moveLock))"
+        )
+        Logger.shared.log(
+            "Config localapp.obsidian: vault_path=\(config.obsidian.vaultPath.isEmpty ? "(empty)" : config.obsidian.vaultPath), "
+            + "default_folder=\(config.obsidian.defaultFolder.isEmpty ? "(vault root)" : config.obsidian.defaultFolder)"
         )
         Logger.shared.log(
             "Config webui.whisper-server: model_dir=\(config.webui.whisper.modelDir), "
@@ -783,6 +796,20 @@ final class ConfigStore: ObservableObject {
                 boolField("localapp.floating-dialog", "move_lock",
                           apply: { $0.floatingDialog.moveLock = parseBool($1, defaultValue: true) },
                           render: { $0.floatingDialog.moveLock ? "true" : "false" })
+            ]
+        ),
+        ConfigSectionSchema(
+            group: "Local App Settings",
+            name: "localapp.obsidian",
+            fields: [
+                stringField("localapp.obsidian", "vault_path",
+                            comment: "Absolute path to the Obsidian vault folder where notes are written (e.g. .../Documents/airtype).",
+                            apply: { $0.obsidian.vaultPath = $1 },
+                            render: { $0.obsidian.vaultPath }),
+                stringField("localapp.obsidian", "default_folder",
+                            comment: "Optional subfolder under the vault. Leave empty to write at the vault root.",
+                            apply: { $0.obsidian.defaultFolder = $1 },
+                            render: { $0.obsidian.defaultFolder })
             ]
         ),
         ConfigSectionSchema(

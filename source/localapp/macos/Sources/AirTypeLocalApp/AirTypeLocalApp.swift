@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct AirTypeLocalInputApp: App {
+struct AirTypeLocalApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {

@@ -23,13 +23,13 @@ final class Logger {
         let arguments = CommandLine.arguments.joined(separator: " ")
 
         let lines = [
-            "[AirTypeLocalInput] Run started at \(now)",
-            "[AirTypeLocalInput] Executable: name=\(appName), bundle_id=\(bundleIdentifier), version=\(version), build=\(build)",
-            "[AirTypeLocalInput] Executable path: \(executablePath)",
-            "[AirTypeLocalInput] Bundle path: \(bundlePath)",
-            "[AirTypeLocalInput] Process: pid=\(process.processIdentifier), os=\(process.operatingSystemVersionString)",
-            "[AirTypeLocalInput] Working directory: \(workingDirectory)",
-            "[AirTypeLocalInput] Arguments: \(arguments)"
+            "[AirTypeLocalApp] Run started at \(now)",
+            "[AirTypeLocalApp] Executable: name=\(appName), bundle_id=\(bundleIdentifier), version=\(version), build=\(build)",
+            "[AirTypeLocalApp] Executable path: \(executablePath)",
+            "[AirTypeLocalApp] Bundle path: \(bundlePath)",
+            "[AirTypeLocalApp] Process: pid=\(process.processIdentifier), os=\(process.operatingSystemVersionString)",
+            "[AirTypeLocalApp] Working directory: \(workingDirectory)",
+            "[AirTypeLocalApp] Arguments: \(arguments)"
         ]
         let text = lines.joined(separator: "\n") + "\n"
         print(text, terminator: "")
@@ -40,12 +40,12 @@ final class Logger {
             )
             try text.write(to: path, atomically: true, encoding: .utf8)
         } catch {
-            print("[AirTypeLocalInput] log write failed: \(error)")
+            print("[AirTypeLocalApp] log write failed: \(error)")
         }
     }
 
     func log(_ message: String) {
-        let text = "[AirTypeLocalInput] \(message)"
+        let text = "[AirTypeLocalApp] \(message)"
         print(text)
         do {
             try FileManager.default.createDirectory(
@@ -62,7 +62,7 @@ final class Logger {
                 try line.write(to: path, atomically: true, encoding: .utf8)
             }
         } catch {
-            print("[AirTypeLocalInput] log write failed: \(error)")
+            print("[AirTypeLocalApp] log write failed: \(error)")
         }
     }
 
@@ -82,7 +82,7 @@ final class Logger {
                 try "\n".write(to: path, atomically: true, encoding: .utf8)
             }
         } catch {
-            print("[AirTypeLocalInput] log write failed: \(error)")
+            print("[AirTypeLocalApp] log write failed: \(error)")
         }
     }
 

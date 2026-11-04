@@ -170,6 +170,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSTabViewDeleg
         case "localapp.backend-endpoint": return "Backend"
         case "localapp.microphone": return "Microphone"
         case "localapp.floating-dialog": return "Floating Dialog"
+        case "localapp.obsidian": return "Obsidian"
         case "webui.auth": return "Web UI Auth"
         case "webui.whisper-server": return "Whisper Server"
         default: return section
@@ -178,6 +179,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSTabViewDeleg
 
     private static func fieldLabel(_ key: String) -> String {
         switch key {
+        case "vault_path": return "Vault Path"
+        case "default_folder": return "Default Folder"
         case "api_key": return "API Key"
         case "contextLength": return "Context Length"
         case "selected-model": return "Selected Model"

@@ -12,12 +12,12 @@ let sherpaDir = ProcessInfo.processInfo.environment["SHERPA_ONNX_DIR"]
 let sherpaLib = "\(sherpaDir)/lib"
 
 let package = Package(
-    name: "AirTypeLocalInput",
+    name: "AirTypeLocalApp",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "AirTypeLocalInput", targets: ["AirTypeLocalInput"])
+        .executable(name: "AirTypeLocalApp", targets: ["AirTypeLocalApp"])
     ],
     targets: [
         // Vendored copy of sherpa-onnx v2.0.1 c-api.h (header only; library is linked from sherpaLib).
@@ -26,9 +26,9 @@ let package = Package(
             path: "Sources/CSherpaOnnx"
         ),
         .executableTarget(
-            name: "AirTypeLocalInput",
+            name: "AirTypeLocalApp",
             dependencies: ["CSherpaOnnx"],
-            path: "Sources/AirTypeLocalInput",
+            path: "Sources/AirTypeLocalApp",
             linkerSettings: [
                 .unsafeFlags([
                     "-L\(sherpaLib)",
