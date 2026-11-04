@@ -139,3 +139,22 @@ export function useSaveClipRequestMutation() {
     }
   });
 }
+
+export type SaveAllResult = {
+  saved: number;
+  failed: number;
+  skipped: number;
+  vault: string;
+  errors: { id: string; error: string }[];
+};
+
+/** Write every completed, unsaved note straight into the Obsidian vault. */
+export function useSaveAllClipRequestsMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiRequest<SaveAllResult>("/api/clip-requests/save-all", { method: "POST" }),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["clip-requests"] });
+    }
+  });
+}

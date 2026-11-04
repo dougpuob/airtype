@@ -5,7 +5,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useCancelClipRequestMutation, useDeleteClipRequestMutation, type ClipRequest } from "../../api/clipRequests";
 import { useSettingsQuery } from "../../api/settings";
 import { openObsidianDraft } from "../../utils/obsidian";
-import { clipHasNote, loadFullClipRequest, useSaveClipRequestMutation } from "../../api/clipRequests";
+import { clipHasNote, loadFullClipRequest, useSaveAllClipRequestsMutation, useSaveClipRequestMutation } from "../../api/clipRequests";
 import { useClipRequestSelection } from "./ClipRequestContext";
 
 const statusLabel: Record<string, string> = {
@@ -73,6 +73,20 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
   const cancelClip = useCancelClipRequestMutation();
   const deleteClip = useDeleteClipRequestMutation();
   const saveClip = useSaveClipRequestMutation();
+  const saveAll = useSaveAllClipRequestsMutation();
+  const readyCount = requests.filter((item) => item.status === "completed" && clipHasNote(item)).length;
+
+  async function saveAllRequests() {
+    try {
+      const result = await saveAll.mutateAsync();
+      const parts = [`Saved ${result.saved}`];
+      if (result.failed) parts.push(`failed ${result.failed}`);
+      if (result.skipped) parts.push(`skipped ${result.skipped}`);
+      window.alert(`${parts.join(", ")}.${result.errors[0] ? `\n${result.errors[0].error}` : ""}`);
+    } catch (error) {
+      window.alert(`Save all failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   const settingsQuery = useSettingsQuery();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -117,6 +131,17 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
       >
         Not saved to Obsidian
       </Typography>
+      {readyCount > 0 ? (
+        <Button
+          size="small"
+          variant="contained"
+          disabled={saveAll.isPending}
+          onClick={() => void saveAllRequests()}
+          sx={{ mx: 1, mb: 1, textTransform: "none" }}
+        >
+          {saveAll.isPending ? "Saving…" : `Save all to Obsidian (${readyCount})`}
+        </Button>
+      ) : null}
       <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", px: 0.5 }}>
         {requests.length === 0 ? (
           <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 1 }}>
