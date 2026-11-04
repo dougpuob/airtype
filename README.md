@@ -162,7 +162,7 @@ Bilibili URL transcription automatically asks yt-dlp for audio first and applies
 
 ```bash
 ./scripts/build-localapp-macos.sh
-open source/localapp/macos/dist/AirTypeNemotron.app
+open source/localapp/macos/dist/AirTypeLocalInput.app
 ```
 
 This builds and starts the native SwiftUI menu bar app. The frontend starts the local WebUI automatically when `~/.airtype/config.toml` uses `mode = "local"`.
@@ -202,7 +202,7 @@ AIRTYPE_WEBUI_HOST=127.0.0.1 ./scripts/start-webui.sh
 
 ```bash
 ./scripts/build-localapp-macos.sh
-open source/localapp/macos/dist/AirTypeNemotron.app
+open source/localapp/macos/dist/AirTypeLocalInput.app
 ```
 
 Runtime user data is stored outside the app:
@@ -210,7 +210,7 @@ Runtime user data is stored outside the app:
 - config: `~/.airtype/config.toml`
 - Whisper models: `~/.airtype/models`
 
-macOS will ask for Microphone permission when recording. If the global hotkey or paste action does not work, grant Accessibility permission to `AirTypeNemotron.app` in System Settings. The menu bar app keeps its own config at `~/.airtype-experiment/config.toml`.
+macOS will ask for Microphone permission when recording. If the global hotkey or paste action does not work, grant Accessibility permission to `AirTypeLocalInput.app` in System Settings. The menu bar app keeps its own config at `~/.airtype-experiment/config.toml`.
 
 
 ## WebUI API Endpoints

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Builds dist/AirTypeNemotron.app (experiment; separate bundle id from the original AirType.app).
+# Builds dist/AirTypeLocalInput.app (separate bundle id from the original AirType.app).
+# Bundle id kept as com.airtype.nemotron-experiment so existing settings (UserDefaults) carry over.
 set -euo pipefail
 
 APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$APP_ROOT/../../.." && pwd)"
 SHERPA_DIR="${SHERPA_ONNX_DIR:-$HOME/.airtype-experiment/runtime/sherpa-onnx-v2.0.1-osx-arm64-shared}"
-APP_NAME="AirTypeNemotron"
+APP_NAME="AirTypeLocalInput"
 BUNDLE_ID="com.airtype.nemotron-experiment"
 DIST_DIR="$APP_ROOT/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
@@ -37,16 +38,16 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>$APP_NAME</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleName</key><string>$APP_NAME</string>
-  <key>CFBundleDisplayName</key><string>AirType Nemotron</string>
+  <key>CFBundleDisplayName</key><string>AirTypeLocalInput</string>
   <key>CFBundleIconFile</key><string>AirType</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.0.1-experiment</string>
   <key>CFBundleVersion</key><string>0.0.1</string>
   <key>LSUIElement</key><true/>
-  <key>NSMicrophoneUsageDescription</key><string>AirType Nemotron streams microphone audio to a local speech recognizer.</string>
-  <key>NSAccessibilityUsageDescription</key><string>AirType Nemotron listens for the global hotkey and types recognized text into the focused app.</string>
-  <key>NSInputMonitoringUsageDescription</key><string>AirType Nemotron listens for Escape while recording to cancel dictation.</string>
-  <key>NSAppleEventsUsageDescription</key><string>AirType Nemotron activates the previous app so it can paste text.</string>
+  <key>NSMicrophoneUsageDescription</key><string>AirTypeLocalInput streams microphone audio to a local speech recognizer.</string>
+  <key>NSAccessibilityUsageDescription</key><string>AirTypeLocalInput listens for the global hotkey and types recognized text into the focused app.</string>
+  <key>NSInputMonitoringUsageDescription</key><string>AirTypeLocalInput listens for Escape while recording to cancel dictation.</string>
+  <key>NSAppleEventsUsageDescription</key><string>AirTypeLocalInput activates the previous app so it can paste text.</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>

@@ -12,12 +12,12 @@ let sherpaDir = ProcessInfo.processInfo.environment["SHERPA_ONNX_DIR"]
 let sherpaLib = "\(sherpaDir)/lib"
 
 let package = Package(
-    name: "AirTypeNemotron",
+    name: "AirTypeLocalInput",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "AirTypeNemotron", targets: ["AirTypeNemotron"])
+        .executable(name: "AirTypeLocalInput", targets: ["AirTypeLocalInput"])
     ],
     targets: [
         // Vendored copy of sherpa-onnx v2.0.1 c-api.h (header only; library is linked from sherpaLib).
@@ -26,9 +26,9 @@ let package = Package(
             path: "Sources/CSherpaOnnx"
         ),
         .executableTarget(
-            name: "AirTypeNemotron",
+            name: "AirTypeLocalInput",
             dependencies: ["CSherpaOnnx"],
-            path: "Sources/AirTypeNemotron",
+            path: "Sources/AirTypeLocalInput",
             linkerSettings: [
                 .unsafeFlags([
                     "-L\(sherpaLib)",

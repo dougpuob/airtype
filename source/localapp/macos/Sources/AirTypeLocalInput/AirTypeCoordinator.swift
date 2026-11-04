@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Foundation
+import ServiceManagement
 
 @MainActor
 final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
@@ -24,6 +25,8 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     private var liveTypingActive: Bool { liveTypingEnabled && !engine.kind.isRemote }
     private var statusItem: NSStatusItem?
     private weak var microphoneDeviceMenu: NSMenu?
+    private weak var statusMenu: NSMenu?
+    private weak var launchAtLoginItem: NSMenuItem?
     private var hotkeyMonitor: HotkeyMonitor?
     private var floatingPanel: FloatingPanelController?
     private var timedMicrophoneReleaseTimer: Timer?
@@ -691,11 +694,25 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         )
         reloadConfigItem.target = self
         menu.addItem(reloadConfigItem)
+        let loginItem = NSMenuItem(
+            title: "Launch at Login",
+            action: #selector(toggleLaunchAtLogin(_:)),
+            keyEquivalent: ""
+        )
+        loginItem.target = self
+        updateLaunchAtLoginItem(loginItem)
+        menu.addItem(loginItem)
+        launchAtLoginItem = loginItem
         menu.addItem(.separator())
+        let relaunchItem = NSMenuItem(title: "Relaunch", action: #selector(relaunch), keyEquivalent: "")
+        relaunchItem.target = self
+        menu.addItem(relaunchItem)
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
+        menu.delegate = self
+        statusMenu = menu
         statusItem?.menu = menu
     }
 
@@ -747,6 +764,11 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === statusMenu {
+            // Login Item state can change outside the app (System Settings ▸ General ▸ Login Items).
+            if let item = launchAtLoginItem { updateLaunchAtLoginItem(item) }
+            return
+        }
         guard menu === microphoneDeviceMenu else { return }
         let previousCount = max(0, menu.items.filter { !$0.isSeparatorItem }.count - 1)
         let currentCount = rebuildMicrophoneMenu(menu)
@@ -935,6 +957,103 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+
+    // MARK: - Launch at Login (SMAppService.mainApp is the source of truth; no config mirror)
+
+    private static func loginItemStatusName(_ status: SMAppService.Status) -> String {
+        switch status {
+        case .notRegistered: return "notRegistered"
+        case .enabled: return "enabled"
+        case .requiresApproval: return "requiresApproval"
+        case .notFound: return "notFound"
+        @unknown default: return "unknown(\(status.rawValue))"
+        }
+    }
+
+    private func updateLaunchAtLoginItem(_ item: NSMenuItem) {
+        switch SMAppService.mainApp.status {
+        case .enabled: item.state = .on
+        case .requiresApproval: item.state = .mixed
+        default: item.state = .off
+        }
+    }
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        let service = SMAppService.mainApp
+        let before = service.status
+        let enable = before != .enabled && before != .requiresApproval
+        do {
+            if enable {
+                try service.register()
+            } else {
+                try service.unregister()
+            }
+        } catch {
+            Logger.shared.log(
+                "Launch at Login \(enable ? "register" : "unregister") failed: \(error.localizedDescription) "
+                    + "status=\(Self.loginItemStatusName(service.status))"
+            )
+            showLaunchAtLoginAlert(
+                message: "Could not \(enable ? "enable" : "disable") Launch at Login",
+                info: error.localizedDescription,
+                offerSettings: true
+            )
+            updateLaunchAtLoginItem(sender)
+            return
+        }
+        let after = service.status
+        Logger.shared.log(
+            "Launch at Login \(enable ? "register" : "unregister"): "
+                + "\(Self.loginItemStatusName(before)) -> \(Self.loginItemStatusName(after)) app=\(Bundle.main.bundleURL.path)"
+        )
+        updateLaunchAtLoginItem(sender)
+        if after == .requiresApproval {
+            showLaunchAtLoginAlert(
+                message: "Allow AirTypeLocalInput in Login Items",
+                info: "macOS needs your approval. In System Settings ▸ General ▸ Login Items, turn on AirTypeLocalInput.",
+                offerSettings: true
+            )
+        }
+    }
+
+    private func showLaunchAtLoginAlert(message: String, info: String, offerSettings: Bool) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = info
+        if offerSettings {
+            alert.addButton(withTitle: "Open Login Items")
+            alert.addButton(withTitle: "Later")
+        } else {
+            alert.addButton(withTitle: "OK")
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn, offerSettings {
+            SMAppService.openSystemSettingsLoginItems()
+        }
+    }
+
+    /// Quit and start a fresh process so newly granted permissions (Accessibility, Input Monitoring) apply.
+    @objc private func relaunch() {
+        let bundlePath = Bundle.main.bundleURL.path
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let helper = Process()
+        helper.executableURL = URL(fileURLWithPath: "/bin/sh")
+        helper.arguments = [
+            "-c",
+            "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$2\"",
+            "relaunch",
+            String(pid),
+            bundlePath
+        ]
+        do {
+            try helper.run()
+        } catch {
+            Logger.shared.log("Relaunch failed: \(error.localizedDescription)")
+            return
+        }
+        Logger.shared.log("Relaunching \(bundlePath)")
         NSApp.terminate(nil)
     }
 }

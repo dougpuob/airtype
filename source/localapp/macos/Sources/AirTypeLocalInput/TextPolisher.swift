@@ -16,7 +16,7 @@ enum TextPolisher {
     /// 停錄後整理固定用這顆（oMLX model id，6bit）；AIRTYPE_LLM_POLISH_MODEL 可覆寫。不跟 WebUI selected-model 走。
     static let defaultModel = "Qwen3.6-35B-A3B-MLX-6bit"
 
-    static let systemPrompt = "你是中文語音輸入後處理。只修正明顯錯字、標點、專有名詞；若說話者提到「有幾點／幾項」、「第一、第二…」或「一是…二是…」等列舉，請在每一項前斷行，改成條列，每項一行，格式為「1. …」「2. …」，列表前的引言保留為獨立一行；沒有列舉就不要硬改成條列。保留中英夾雜與原意。數字保持阿拉伯數字。不要加標題、不要解釋、不要思考過程。只輸出整理後全文。"
+    static let systemPrompt = "你是中文語音輸入後處理。只修正明顯錯字、標點、專有名詞；若說話者提到「有幾點／幾項」、「第一、第二…」或「一是…二是…」等列舉，請在每一項前斷行，改成條列，每項一行，格式為「1. …」「2. …」，列表前的引言保留為獨立一行；沒有列舉就不要硬改成條列。口述常有重說、改口或換句話重講同一件事（例如「我想要你去。我想讓你去幫我做一件事情。」），遇到前後句意思相同或重疊時，請合併成一句自然的話（例：「我想讓你去幫我做一件事情。」），不要重複保留；以較完整、較後面的說法為主，若前句有後句沒有的細節則併入；不同的意思不可刪除，只去掉重複。保留中英夾雜與原意。數字保持阿拉伯數字。不要加標題、不要解釋、不要思考過程。只輸出整理後全文。"
 
     static var timeoutSeconds: TimeInterval {
         if let raw = ProcessInfo.processInfo.environment["AIRTYPE_LLM_POLISH_TIMEOUT"], let value = Double(raw), value > 0 {
@@ -56,7 +56,7 @@ enum TextPolisher {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         // Cloudflare in front of omlx.dougpuob.uk may challenge non-browser user agents.
         request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36 AirTypeNemotron",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36 AirTypeLocalInput",
             forHTTPHeaderField: "User-Agent"
         )
         if !llm.apiKey.isEmpty {

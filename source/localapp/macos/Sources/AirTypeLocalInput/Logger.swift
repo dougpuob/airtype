@@ -23,13 +23,13 @@ final class Logger {
         let arguments = CommandLine.arguments.joined(separator: " ")
 
         let lines = [
-            "[AirTypeNemotron] Run started at \(now)",
-            "[AirTypeNemotron] Executable: name=\(appName), bundle_id=\(bundleIdentifier), version=\(version), build=\(build)",
-            "[AirTypeNemotron] Executable path: \(executablePath)",
-            "[AirTypeNemotron] Bundle path: \(bundlePath)",
-            "[AirTypeNemotron] Process: pid=\(process.processIdentifier), os=\(process.operatingSystemVersionString)",
-            "[AirTypeNemotron] Working directory: \(workingDirectory)",
-            "[AirTypeNemotron] Arguments: \(arguments)"
+            "[AirTypeLocalInput] Run started at \(now)",
+            "[AirTypeLocalInput] Executable: name=\(appName), bundle_id=\(bundleIdentifier), version=\(version), build=\(build)",
+            "[AirTypeLocalInput] Executable path: \(executablePath)",
+            "[AirTypeLocalInput] Bundle path: \(bundlePath)",
+            "[AirTypeLocalInput] Process: pid=\(process.processIdentifier), os=\(process.operatingSystemVersionString)",
+            "[AirTypeLocalInput] Working directory: \(workingDirectory)",
+            "[AirTypeLocalInput] Arguments: \(arguments)"
         ]
         let text = lines.joined(separator: "\n") + "\n"
         print(text, terminator: "")
@@ -40,12 +40,12 @@ final class Logger {
             )
             try text.write(to: path, atomically: true, encoding: .utf8)
         } catch {
-            print("[AirTypeNemotron] log write failed: \(error)")
+            print("[AirTypeLocalInput] log write failed: \(error)")
         }
     }
 
     func log(_ message: String) {
-        let text = "[AirTypeNemotron] \(message)"
+        let text = "[AirTypeLocalInput] \(message)"
         print(text)
         do {
             try FileManager.default.createDirectory(
@@ -62,7 +62,7 @@ final class Logger {
                 try line.write(to: path, atomically: true, encoding: .utf8)
             }
         } catch {
-            print("[AirTypeNemotron] log write failed: \(error)")
+            print("[AirTypeLocalInput] log write failed: \(error)")
         }
     }
 
@@ -82,7 +82,7 @@ final class Logger {
                 try "\n".write(to: path, atomically: true, encoding: .utf8)
             }
         } catch {
-            print("[AirTypeNemotron] log write failed: \(error)")
+            print("[AirTypeLocalInput] log write failed: \(error)")
         }
     }
 

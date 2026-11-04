@@ -388,4 +388,4 @@ echo
 echo "Setup complete."
 echo "Build & Run AirType with:"
 echo "  ./scripts/build-localapp-macos.sh"
-echo "  open source/localapp/macos/dist/AirTypeNemotron.app"
+echo "  open source/localapp/macos/dist/AirTypeLocalInput.app"

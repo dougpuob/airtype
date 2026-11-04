@@ -1,12 +1,36 @@
 import Foundation
+import ServiceManagement
 
-/// `AirTypeNemotron --selftest-wav <16kHz mono int16 wav> [zh-tw|zh-cn|en|auto-tw|auto-cn]`
+/// `AirTypeLocalInput --selftest-wav <16kHz mono int16 wav> [zh-tw|zh-cn|en|auto-tw|auto-cn]`
 /// Engine: AIRTYPE_ASR_ENGINE=qwen3|funasr-nano|nemotron|remote (default: menu choice, else qwen3).
 /// Remote uses the app config's [localapp.remote-asr] / [localapp.backend-endpoint] / [webui.auth] (AIRTYPE_REMOTE_ENDPOINT overrides).
 /// Streams a WAV through the same engine/formatter the hotkey path uses, printing partials, then exits.
 enum SelfTest {
+    /// `AirTypeLocalInput --selftest-login-item [status|enable|disable]`: exercise SMAppService.mainApp
+    /// (same API as the menu's Launch at Login) for this bundle, print the status, then exit.
+    private static func runLoginItemTest(action: String) -> Never {
+        let service = SMAppService.mainApp
+        print("bundle: \(Bundle.main.bundleURL.path)")
+        print("before: \(service.status.rawValue)")
+        do {
+            switch action {
+            case "enable": try service.register()
+            case "disable": try service.unregister()
+            default: break
+            }
+        } catch {
+            print("error: \(error.localizedDescription)")
+        }
+        let names: [Int: String] = [0: "notRegistered", 1: "enabled", 2: "requiresApproval", 3: "notFound"]
+        print("after: \(service.status.rawValue) \(names[service.status.rawValue] ?? "unknown")")
+        exit(0)
+    }
+
     static func runIfRequested() -> Bool {
         let args = CommandLine.arguments
+        if let index = args.firstIndex(of: "--selftest-login-item") {
+            runLoginItemTest(action: index + 1 < args.count ? args[index + 1] : "status")
+        }
         if args.contains("--selftest-config") {
             runConfigTest()
         }
@@ -64,7 +88,7 @@ enum SelfTest {
         exit(0)
     }
 
-    /// `AirTypeNemotron --selftest-config`: lists models for [localapp.remote-asr] (as Settings ▸ Fetch Models does),
+    /// `AirTypeLocalInput --selftest-config`: lists models for [localapp.remote-asr] (as Settings ▸ Fetch Models does),
     /// then rewrites config.toml through the same save path as the Settings window and exits.
     private static func runConfigTest() -> Never {
         let store = ConfigStore()
