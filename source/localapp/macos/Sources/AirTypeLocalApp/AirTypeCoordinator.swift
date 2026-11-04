@@ -694,6 +694,8 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
+        // AppKit auto-adds a gear for "Settings…"; clear it so labels stay left-aligned.
+        settingsItem.image = nil
         menu.addItem(settingsItem)
         let reloadConfigItem = NSMenuItem(
             title: "Reload Config",
@@ -775,6 +777,10 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         if menu === statusMenu {
             // Login Item state can change outside the app (System Settings ▸ General ▸ Login Items).
             if let item = launchAtLoginItem { updateLaunchAtLoginItem(item) }
+            // AppKit may re-apply the automatic Settings gear each open; strip icons so rows align.
+            for item in menu.items {
+                item.image = nil
+            }
             return
         }
         guard menu === microphoneDeviceMenu else { return }
