@@ -617,42 +617,6 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         engineMenuItem.submenu = engineMenu
         menu.addItem(engineMenuItem)
 
-        let openCCTitle = TranscriptFormatter.openCCPath == nil ? "OpenCC Not Installed" : "OpenCC Taiwan Phrases"
-        let openCCItem = NSMenuItem(title: openCCTitle, action: #selector(toggleOpenCC), keyEquivalent: "")
-        openCCItem.target = self
-        openCCItem.state = TranscriptFormatter.useOpenCC && TranscriptFormatter.openCCPath != nil ? .on : .off
-        openCCItem.isEnabled = TranscriptFormatter.openCCPath != nil
-        menu.addItem(openCCItem)
-        let numeralsItem = NSMenuItem(title: "Arabic Numerals", action: #selector(toggleArabicNumerals), keyEquivalent: "")
-        numeralsItem.target = self
-        numeralsItem.state = ChineseNumerals.enabled ? .on : .off
-        menu.addItem(numeralsItem)
-        let polishItem = NSMenuItem(title: "LLM Polish", action: #selector(toggleLLMPolish), keyEquivalent: "")
-        polishItem.target = self
-        polishItem.state = TextPolisher.enabled ? .on : .off
-        menu.addItem(polishItem)
-        menu.addItem(.separator())
-
-        let liveItem = NSMenuItem(title: "Live Typing", action: #selector(toggleLiveTyping), keyEquivalent: "")
-        liveItem.target = self
-        liveItem.state = liveTypingActive ? .on : .off
-        if isRemote {
-            liveItem.isEnabled = false
-            liveItem.toolTip = "Remote ASR pastes the text after recording stops."
-        }
-        menu.addItem(liveItem)
-        menu.addItem(.separator())
-
-        let moveLockItem = NSMenuItem(
-            title: "Move Lock",
-            action: #selector(toggleMoveLock(_:)),
-            keyEquivalent: ""
-        )
-        moveLockItem.target = self
-        moveLockItem.state = configStore.config.floatingDialog.moveLock ? .on : .off
-        menu.addItem(moveLockItem)
-        menu.addItem(.separator())
-
         let languageMenu = NSMenu()
         addLanguageItem(to: languageMenu, title: "Traditional Chinese", mode: "zh-tw")
         addLanguageItem(to: languageMenu, title: "Simplified Chinese", mode: "zh-cn")
@@ -663,24 +627,48 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         languageItem.submenu = languageMenu
         menu.addItem(languageItem)
 
+        // Microphone ▸ devices, separator, mode (rebuilt on open via menuNeedsUpdate).
         let microphoneMenu = NSMenu()
         microphoneMenu.delegate = self
         microphoneDeviceMenu = microphoneMenu
         rebuildMicrophoneMenu(microphoneMenu)
-        let microphoneItem = NSMenuItem(title: "Microphone Device", action: nil, keyEquivalent: "")
+        let microphoneItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
         microphoneItem.submenu = microphoneMenu
         menu.addItem(microphoneItem)
+        menu.addItem(.separator())
 
-        let microphoneModeMenu = NSMenu()
-        let timeoutMinutes = configStore.config.microphone.alwaysOnTimeoutMinutes
-        let alwaysOnTitle = timeoutMinutes > 0
-            ? "Always On – \(timeoutMinutes) min"
-            : "Always On"
-        addMicrophoneModeItem(to: microphoneModeMenu, title: alwaysOnTitle, mode: "always")
-        addMicrophoneModeItem(to: microphoneModeMenu, title: "On Demand", mode: "on_demand")
-        let microphoneModeItem = NSMenuItem(title: "Microphone Mode", action: nil, keyEquivalent: "")
-        microphoneModeItem.submenu = microphoneModeMenu
-        menu.addItem(microphoneModeItem)
+        let liveItem = NSMenuItem(title: "Live Typing", action: #selector(toggleLiveTyping), keyEquivalent: "")
+        liveItem.target = self
+        liveItem.state = liveTypingActive ? .on : .off
+        if isRemote {
+            liveItem.isEnabled = false
+            liveItem.toolTip = "Remote ASR pastes the text after recording stops."
+        }
+        menu.addItem(liveItem)
+        let polishItem = NSMenuItem(title: "LLM Polish", action: #selector(toggleLLMPolish), keyEquivalent: "")
+        polishItem.target = self
+        polishItem.state = TextPolisher.enabled ? .on : .off
+        menu.addItem(polishItem)
+        let numeralsItem = NSMenuItem(title: "Arabic Numerals", action: #selector(toggleArabicNumerals), keyEquivalent: "")
+        numeralsItem.target = self
+        numeralsItem.state = ChineseNumerals.enabled ? .on : .off
+        menu.addItem(numeralsItem)
+        let openCCItem = NSMenuItem(title: "Taiwan Phrases", action: #selector(toggleOpenCC), keyEquivalent: "")
+        openCCItem.target = self
+        openCCItem.state = TranscriptFormatter.useOpenCC && TranscriptFormatter.openCCPath != nil ? .on : .off
+        openCCItem.isEnabled = TranscriptFormatter.openCCPath != nil
+        if TranscriptFormatter.openCCPath == nil {
+            openCCItem.toolTip = "OpenCC is not installed."
+        }
+        menu.addItem(openCCItem)
+        let moveLockItem = NSMenuItem(
+            title: "Move Lock",
+            action: #selector(toggleMoveLock(_:)),
+            keyEquivalent: ""
+        )
+        moveLockItem.target = self
+        moveLockItem.state = configStore.config.floatingDialog.moveLock ? .on : .off
+        menu.addItem(moveLockItem)
 
 
         menu.addItem(.separator())
@@ -744,6 +732,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             let item = NSMenuItem(title: "No microphones found", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
+            appendMicrophoneModeItems(to: menu)
             return 0
         }
 
@@ -770,7 +759,16 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             item.state = configStore.config.microphone.selectedDeviceName == deviceName ? .on : .off
             menu.addItem(item)
         }
+        appendMicrophoneModeItems(to: menu)
         return devices.count
+    }
+
+    private func appendMicrophoneModeItems(to menu: NSMenu) {
+        menu.addItem(.separator())
+        let timeoutMinutes = configStore.config.microphone.alwaysOnTimeoutMinutes
+        let alwaysOnTitle = timeoutMinutes > 0 ? "Always On – \(timeoutMinutes) min" : "Always On"
+        addMicrophoneModeItem(to: menu, title: alwaysOnTitle, mode: "always")
+        addMicrophoneModeItem(to: menu, title: "On Demand", mode: "on_demand")
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -784,7 +782,9 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             return
         }
         guard menu === microphoneDeviceMenu else { return }
-        let previousCount = max(0, menu.items.filter { !$0.isSeparatorItem }.count - 1)
+        let previousCount = menu.items.filter {
+            $0.action == #selector(selectMicrophone(_:)) && ($0.representedObject as? String).map { !$0.isEmpty } == true
+        }.count
         let currentCount = rebuildMicrophoneMenu(menu)
         Logger.shared.log(
             "Refreshed microphone menu: previous_device_count=\(previousCount), current_device_count=\(currentCount)"
