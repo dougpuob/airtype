@@ -42,7 +42,7 @@ final class PasteController {
         if !accessibilityEnabled {
             Logger.shared.log("Accessibility permission not granted. Opening System Settings...")
             openAccessibilitySettings()
-            Logger.shared.log("Please grant Accessibility permission for AirTypeMac in System Settings")
+            Logger.shared.log("Please grant Accessibility permission for AirTypeLocalApp in System Settings")
             completion?(false)
             return
         }
@@ -62,7 +62,7 @@ final class PasteController {
             if ok {
                 Logger.shared.log("Pasted ASR text at cursor")
             } else {
-                Logger.shared.log("Paste failed. Check Accessibility permission for AirTypeMac.")
+                Logger.shared.log("Paste failed. Check Accessibility permission for AirTypeLocalApp.")
             }
             completion?(ok)
 

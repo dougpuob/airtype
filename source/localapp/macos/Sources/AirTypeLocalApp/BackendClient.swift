@@ -31,7 +31,7 @@ final class BackendClient {
             if let http = response as? HTTPURLResponse {
                 Logger.shared.log("\(logPrefix)ASR request failed: status=\(http.statusCode), detail=\(detail)")
             }
-            throw NSError(domain: "AirTypeMac.Backend", code: 1, userInfo: [NSLocalizedDescriptionKey: detail])
+            throw NSError(domain: "AirTypeLocalApp.Backend", code: 1, userInfo: [NSLocalizedDescriptionKey: detail])
         }
 
         if let http = response as? HTTPURLResponse {
@@ -41,7 +41,7 @@ final class BackendClient {
         let payload = try JSONDecoder().decode(TranscriptionResponse.self, from: data)
         let text = payload.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if text.isEmpty {
-            throw NSError(domain: "AirTypeMac.Backend", code: 2, userInfo: [NSLocalizedDescriptionKey: "ASR completed without text"])
+            throw NSError(domain: "AirTypeLocalApp.Backend", code: 2, userInfo: [NSLocalizedDescriptionKey: "ASR completed without text"])
         }
         Logger.shared.log("\(logPrefix)ASR text received: chars=\(text.count)")
         return text
@@ -87,7 +87,7 @@ final class BackendClient {
     /// OpenAI-compatible `POST {endpoint}/v1/audio/transcriptions` (multipart: file, model, language?, response_format=json).
     func transcribeOpenAI(wavData: Data, target: RemoteASRTarget, language: String?) async throws -> String {
         guard let url = URL(string: target.endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/v1/audio/transcriptions") else {
-            throw NSError(domain: "AirTypeMac.Backend", code: 3, userInfo: [NSLocalizedDescriptionKey: "invalid endpoint \(target.endpoint)"])
+            throw NSError(domain: "AirTypeLocalApp.Backend", code: 3, userInfo: [NSLocalizedDescriptionKey: "invalid endpoint \(target.endpoint)"])
         }
         let startedAt = Date()
         let boundary = "----AirType\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
@@ -105,14 +105,14 @@ final class BackendClient {
         guard (200..<300).contains(status) else {
             let detail = String(data: data, encoding: .utf8) ?? "unknown error"
             Logger.shared.log("ASR request failed (openai): status=\(status), detail=\(detail.prefix(300))")
-            throw NSError(domain: "AirTypeMac.Backend", code: 1, userInfo: [NSLocalizedDescriptionKey: "HTTP \(status): \(detail.prefix(200))"])
+            throw NSError(domain: "AirTypeLocalApp.Backend", code: 1, userInfo: [NSLocalizedDescriptionKey: "HTTP \(status): \(detail.prefix(200))"])
         }
         let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
         Logger.shared.log("ASR response received (openai): status=\(status), bytes=\(data.count), elapsed_ms=\(elapsedMs)")
         let payload = try JSONDecoder().decode(TranscriptionResponse.self, from: data)
         let text = payload.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if text.isEmpty {
-            throw NSError(domain: "AirTypeMac.Backend", code: 2, userInfo: [NSLocalizedDescriptionKey: "ASR completed without text"])
+            throw NSError(domain: "AirTypeLocalApp.Backend", code: 2, userInfo: [NSLocalizedDescriptionKey: "ASR completed without text"])
         }
         return text
     }
@@ -215,7 +215,7 @@ final class BackendClient {
     func listClipRequests(endpoint: String, auth: WebUIAuthConfig) async throws -> [ClipRequestSummary] {
         let base = endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: base + "/api/clip-requests") else {
-            throw NSError(domain: "AirTypeMac.Backend", code: 10, userInfo: [NSLocalizedDescriptionKey: "Invalid backend endpoint"])
+            throw NSError(domain: "AirTypeLocalApp.Backend", code: 10, userInfo: [NSLocalizedDescriptionKey: "Invalid backend endpoint"])
         }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -224,7 +224,7 @@ final class BackendClient {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let detail = String(data: data, encoding: .utf8) ?? "unknown error"
-            throw NSError(domain: "AirTypeMac.Backend", code: status, userInfo: [NSLocalizedDescriptionKey: "list clip-requests failed (\(status)): \(detail)"])
+            throw NSError(domain: "AirTypeLocalApp.Backend", code: status, userInfo: [NSLocalizedDescriptionKey: "list clip-requests failed (\(status)): \(detail)"])
         }
         return try JSONDecoder().decode(ClipRequestsListResponse.self, from: data).requests
     }
@@ -233,7 +233,7 @@ final class BackendClient {
         let base = endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         guard let url = URL(string: base + "/api/clip-requests/\(encoded)") else {
-            throw NSError(domain: "AirTypeMac.Backend", code: 11, userInfo: [NSLocalizedDescriptionKey: "Invalid clip request URL"])
+            throw NSError(domain: "AirTypeLocalApp.Backend", code: 11, userInfo: [NSLocalizedDescriptionKey: "Invalid clip request URL"])
         }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -242,7 +242,7 @@ final class BackendClient {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let detail = String(data: data, encoding: .utf8) ?? "unknown error"
-            throw NSError(domain: "AirTypeMac.Backend", code: status, userInfo: [NSLocalizedDescriptionKey: "fetch clip-request failed (\(status)): \(detail)"])
+            throw NSError(domain: "AirTypeLocalApp.Backend", code: status, userInfo: [NSLocalizedDescriptionKey: "fetch clip-request failed (\(status)): \(detail)"])
         }
         return try JSONDecoder().decode(ClipRequestDetail.self, from: data)
     }
@@ -251,7 +251,7 @@ final class BackendClient {
         let base = endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         guard let url = URL(string: base + "/api/clip-requests/\(encoded)/save") else {
-            throw NSError(domain: "AirTypeMac.Backend", code: 12, userInfo: [NSLocalizedDescriptionKey: "Invalid save URL"])
+            throw NSError(domain: "AirTypeLocalApp.Backend", code: 12, userInfo: [NSLocalizedDescriptionKey: "Invalid save URL"])
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -260,7 +260,7 @@ final class BackendClient {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let detail = String(data: data, encoding: .utf8) ?? "unknown error"
-            throw NSError(domain: "AirTypeMac.Backend", code: status, userInfo: [NSLocalizedDescriptionKey: "mark saved failed (\(status)): \(detail)"])
+            throw NSError(domain: "AirTypeLocalApp.Backend", code: status, userInfo: [NSLocalizedDescriptionKey: "mark saved failed (\(status)): \(detail)"])
         }
     }
 
