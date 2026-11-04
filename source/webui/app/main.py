@@ -2336,12 +2336,12 @@ async def check_watch_now(target_id: str):
 def _obsidian_vault_dir() -> Path:
     """Vault folder on this Mac. ``AIRTYPE_OBSIDIAN_VAULT_PATH`` or
     ``[webui.obsidian] vault_path`` wins; else the iCloud Obsidian vault named
-    ``vault_name`` (default ``dougpuob``)."""
+    ``vault_name`` (default ``airtype``)."""
     obsidian = (_read_app_settings().get("obsidian") or {})
     explicit = os.environ.get("AIRTYPE_OBSIDIAN_VAULT_PATH") or str(obsidian.get("vault_path") or "")
     if explicit.strip():
         return Path(explicit).expanduser()
-    name = str(obsidian.get("vault_name") or "").strip() or "dougpuob"
+    name = str(obsidian.get("vault_name") or "").strip() or "airtype"
     return Path.home() / "Library/Mobile Documents/iCloud~md~obsidian/Documents" / name
 
 
