@@ -52,6 +52,11 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             return
         }
         migrateLegacyMicrophoneSelection()
+        audioRecorder.onHardwareChange = { [weak self] in
+            Task { @MainActor in
+                self?.handleMicrophoneHardwareChange()
+            }
+        }
         configureRemoteSettings()
         if engine.kind.isRemote {
             engine = ASREngineKind.remoteWhisper.makeEngine()
@@ -68,6 +73,8 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         refreshMicrophoneAvailability()
         scheduleTimedMicrophoneRelease(reason: "startup")
         setupHotkey()
+        // Install after first prepare so CoreAudio start-up noise does not immediately re-prepare.
+        audioRecorder.ensureHardwareListeners()
     }
 
     private func showStartupError(_ message: String) {
@@ -173,7 +180,31 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         Logger.shared.log("Migrated microphone selection from order \(selected) to device name: \(deviceName)")
     }
 
+    private var lastHardwareChangeAt: Date?
+    private var microphoneApplyInProgress = false
+
+    private func handleMicrophoneHardwareChange() {
+        let now = Date()
+        if let lastHardwareChangeAt, now.timeIntervalSince(lastHardwareChangeAt) < 2.0 {
+            return
+        }
+        if microphoneApplyInProgress {
+            return
+        }
+        lastHardwareChangeAt = now
+        Logger.shared.log("Microphone hardware change detected; re-evaluating input")
+        refreshMicrophoneAvailability(reason: "hardware_change")
+        guard recordingState == .idle else {
+            Logger.shared.log("Microphone hardware change ignored during active recording")
+            return
+        }
+        applyMicrophoneRuntimeSettings(reason: "hardware_change")
+    }
+
     private func applyMicrophoneRuntimeSettings(reason: String) {
+        if microphoneApplyInProgress { return }
+        microphoneApplyInProgress = true
+        defer { microphoneApplyInProgress = false }
         let config = configStore.config
         cancelTimedMicrophoneRelease()
         Logger.shared.log(
@@ -354,9 +385,15 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                 loadEngine() // re-check the remote server so the next try can work without a menu click
             }
             NSSound.beep()
+            let hint: String
+            if engine.kind.isRemote {
+                hint = "Remote ASR unreachable"
+            } else {
+                hint = "\(engine.kind.shortName) engine not ready"
+            }
             recordingState = .idle
             statusItem?.button?.image = StatusIcon.make(recording: false)
-            floatingPanel?.hide()
+            floatingPanel?.showMicrophoneError(hint)
             audioRecorder.stop()
             finishInput(activeInputID, startedAt: activeInputStartedAt, result: "SKIPPED", details: "reason=engine_not_ready")
             return
@@ -1025,8 +1062,8 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         updateLaunchAtLoginItem(sender)
         if after == .requiresApproval {
             showLaunchAtLoginAlert(
-                message: "Allow AirTypeLocalApp in Login Items",
-                info: "macOS needs your approval. In System Settings ▸ General ▸ Login Items, turn on AirTypeLocalApp.",
+                message: "Allow AirType in Login Items",
+                info: "macOS needs your approval. In System Settings ▸ General ▸ Login Items, turn on AirType.",
                 offerSettings: true
             )
         }

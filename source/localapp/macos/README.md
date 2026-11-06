@@ -17,13 +17,13 @@ No whisper-server, no WebUI backend, no network.
 ```bash
 cd source/localapp/macos
 ./scripts/setup-nemotron.sh     # sherpa-onnx v2.0.1 osx-arm64 runtime + model (~650 MB)
-./scripts/build-app.sh          # -> dist/AirTypeLocalApp.app
+./scripts/build-app.sh          # -> dist/AirType.app
 ```
 
 Quit the original **AirType.app** first (both use the same hotkey), then:
 
 ```bash
-open dist/AirTypeLocalApp.app
+open dist/AirType.app
 ```
 
 New bundle id (`com.airtype.nemotron-experiment`), so macOS asks again for
@@ -52,7 +52,7 @@ zh-tw output: menu ▸ **zh-tw: OpenCC s2twp** (on by default when `opencc` is i
 Simplified → Traditional with Taiwan phrasing (软件→軟體, 信息→資訊); off = macOS Hans-Hant.
 
 Tuning (environment variables; `open` does not pass env, so
-run `dist/AirTypeLocalApp.app/Contents/MacOS/AirTypeLocalApp &` from a shell):
+run `dist/AirType.app/Contents/MacOS/AirType &` from a shell):
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -74,7 +74,7 @@ Hotwords (bias toward your terms): put one per line in `~/.airtype-experiment/qw
 into `~/.airtype-experiment/models/qwen3-asr-1.7B-int8` (override: `AIRTYPE_QWEN3_1_7B_MODEL_DIR`).
 If drafts lag, raise `AIRTYPE_QWEN3_PARTIAL_SECONDS` (e.g. 2.0).
 
-Self-test: `AIRTYPE_ASR_ENGINE=qwen3 dist/AirTypeLocalApp.app/Contents/MacOS/AirTypeLocalApp --selftest-wav x.wav zh-tw`
+Self-test: `AIRTYPE_ASR_ENGINE=qwen3 dist/AirType.app/Contents/MacOS/AirType --selftest-wav x.wav zh-tw`
 
 ## Fun-ASR-Nano engine (added 2026-10-31)
 
@@ -123,7 +123,7 @@ Menu bar:
 | Model | `~/.airtype-experiment/models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11` (`AIRTYPE_NEMOTRON_MODEL_DIR` to override at run time) |
 | Config | `~/.airtype-experiment/config.toml` (copied once from `~/.airtype/config.toml`; the original is never written) |
 | Log | `~/.airtype-experiment/airtype-localapp.log` |
-| App bundle | `source/localapp/macos/dist/AirTypeLocalApp.app` (dylibs copied into `Contents/Frameworks`) |
+| App bundle | `source/localapp/macos/dist/AirType.app` (dylibs copied into `Contents/Frameworks`) |
 
 Other chunk sizes (80/160/1120 ms) exist: lower = snappier, higher = more accurate, e.g.
 `NEMOTRON_MODEL_NAME=sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11 ./scripts/setup-nemotron.sh`
@@ -132,7 +132,7 @@ then launch with `AIRTYPE_NEMOTRON_MODEL_DIR` pointing at it.
 ## Self-test without a microphone
 
 ```bash
-dist/AirTypeLocalApp.app/Contents/MacOS/AirTypeLocalApp --selftest-wav some-16k-mono.wav zh-tw
+dist/AirType.app/Contents/MacOS/AirType --selftest-wav some-16k-mono.wav zh-tw
 ```
 
 Streams the WAV in real time (100 ms chunks) and prints each partial and the final text.
@@ -164,7 +164,7 @@ Language sent to the WebUI: zh-tw/auto-tw → `zh-tw`, zh-cn/auto-cn → `zh-cn`
 
 UserDefaults (`com.airtype.nemotron-experiment`): `asrBackend` (local|remote), `asrLocalModel` (legacy `asrEngine` still read),
 `asrRemoteEndpoint`. Env overrides: `AIRTYPE_ASR_ENGINE=remote|qwen3|...`, `AIRTYPE_REMOTE_ENDPOINT=https://host`.
-Self-test: `AIRTYPE_ASR_ENGINE=remote dist/AirTypeLocalApp.app/Contents/MacOS/AirTypeLocalApp --selftest-wav file.wav zh-tw`.
+Self-test: `AIRTYPE_ASR_ENGINE=remote dist/AirType.app/Contents/MacOS/AirType --selftest-wav file.wav zh-tw`.
 Future: `RemoteASRProtocol.openAITranscriptions` (`/v1/audio/transcriptions`, e.g. oMLX STT) is declared but not implemented.
 
 ## Settings window
@@ -183,4 +183,4 @@ api_key = "..."                         # openai Bearer token; webui-ime uses [w
 
 Fetch Models tries `GET /v1/models`, then the WebUI `/api/health` + `/api/whisper-server/status`.
 Test checks the server and transcribes a short `say -v Meijia` sample.
-CLI check: `AirTypeLocalApp --selftest-config` (lists models, rewrites config).
+CLI check: `AirType --selftest-config` (lists models, rewrites config).

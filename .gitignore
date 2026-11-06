@@ -10,3 +10,4 @@ __pycache__/
 build/
 dist/
 .build/
+source/localapp/macos/scripts/codesign-identity

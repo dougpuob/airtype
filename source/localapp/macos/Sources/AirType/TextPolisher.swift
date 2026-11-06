@@ -56,7 +56,7 @@ enum TextPolisher {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         // Cloudflare in front of omlx.dougpuob.uk may challenge non-browser user agents.
         request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36 AirTypeLocalApp",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36 AirType",
             forHTTPHeaderField: "User-Agent"
         )
         if !llm.apiKey.isEmpty {

@@ -1,12 +1,12 @@
 import Foundation
 import ServiceManagement
 
-/// `AirTypeLocalApp --selftest-wav <16kHz mono int16 wav> [zh-tw|zh-cn|en|auto-tw|auto-cn]`
+/// `AirType --selftest-wav <16kHz mono int16 wav> [zh-tw|zh-cn|en|auto-tw|auto-cn]`
 /// Engine: AIRTYPE_ASR_ENGINE=qwen3|funasr-nano|nemotron|remote (default: menu choice, else qwen3).
 /// Remote uses the app config's [localapp.remote-asr] / [localapp.backend-endpoint] / [webui.auth] (AIRTYPE_REMOTE_ENDPOINT overrides).
 /// Streams a WAV through the same engine/formatter the hotkey path uses, printing partials, then exits.
 enum SelfTest {
-    /// `AirTypeLocalApp --selftest-login-item [status|enable|disable]`: exercise SMAppService.mainApp
+    /// `AirType --selftest-login-item [status|enable|disable]`: exercise SMAppService.mainApp
     /// (same API as the menu's Launch at Login) for this bundle, print the status, then exit.
     private static func runLoginItemTest(action: String) -> Never {
         let service = SMAppService.mainApp
@@ -88,7 +88,7 @@ enum SelfTest {
         exit(0)
     }
 
-    /// `AirTypeLocalApp --selftest-config`: lists models for [localapp.remote-asr] (as Settings ▸ Fetch Models does),
+    /// `AirType --selftest-config`: lists models for [localapp.remote-asr] (as Settings ▸ Fetch Models does),
     /// then rewrites config.toml through the same save path as the Settings window and exits.
     private static func runConfigTest() -> Never {
         let store = ConfigStore()

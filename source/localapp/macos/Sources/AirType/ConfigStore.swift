@@ -3,11 +3,30 @@ import Foundation
 struct AirTypeConfig {
     var chineseMode = ChineseMode()
     var backend = BackendConfig()
+    /// Active Remote ASR profile (the one the engine uses). Mirrors the entry named `selectedRemoteASRName`.
     var remoteASR = RemoteASRConfig()
+    /// All `[[localapp.remote-asr]]` profiles (a legacy single `[localapp.remote-asr]` table loads as one profile).
+    var remoteASRProfiles: [RemoteASRConfig] = []
+    /// `[localapp] default-remote-asr-name`.
+    var selectedRemoteASRName = ""
     var microphone = MicrophoneConfig()
     var floatingDialog = FloatingDialogConfig()
     var obsidian = ObsidianConfig()
+    /// [localapp.local-whisper]: self-hosted whisper-server on this Mac.
+    var localWhisper = LocalWhisperServiceConfig()
     var webui = WebUIConfig()
+}
+
+struct LocalWhisperServiceConfig: Equatable {
+    var enabled = false
+    var launchOnStart = false
+    var serverBin = ""
+    var serverArgs = ""
+    var modelDir = ""
+    var modelFilename = ""
+    var language = "zh-tw"
+    var beam = 5
+    var temperature = 0.0
 }
 
 struct ChineseMode {
@@ -27,9 +46,10 @@ struct BackendConfig {
     }
 }
 
-/// [localapp.remote-asr]: the Remote ASR server edited in Settings ▸ Remote ASR.
+/// [[localapp.remote-asr]]: one named Remote ASR profile edited in Settings ▸ Endpoints ▸ ASR.
 /// protocol: "webui-ime" (AirType WebUI /api/transcribe/ime) or "openai" (POST /v1/audio/transcriptions).
-struct RemoteASRConfig {
+struct RemoteASRConfig: Equatable {
+    var name = "default"
     var endpoint = ""
     var protocolName = "webui-ime"
     var model = ""
@@ -77,7 +97,12 @@ struct ObsidianConfig {
 }
 
 struct WebUIConfig {
+    /// Active whisper-server profile. Mirrors the entry named `selectedWhisperServerName`.
     var whisper = WhisperServerConfig()
+    /// All `[[webui.whisper-server]]` profiles (a legacy single table loads as one profile).
+    var whisperServers: [WhisperServerConfig] = []
+    /// `[webui] default-whisper-server-name`.
+    var selectedWhisperServerName = ""
     var auth = WebUIAuthConfig()
     var llm = LLMServerConfig()
     var llmServers: [LLMServerConfig] = []
@@ -103,18 +128,13 @@ struct WebUIAuthConfig {
     var password = ""
 }
 
-struct WhisperServerConfig {
-    var modelDir = ""
-    var modelFilename = ""
-    var serverBin = ""
+/// [[webui.whisper-server]]: where to reach a whisper server (local or remote). Self-host lives in LocalWhisperServiceConfig.
+struct WhisperServerConfig: Equatable {
+    var name = "default"
     var remoteEndpoint = ""
-    var serverArgs = ""
-    var language = "zh-tw"
-    var beam = 5
-    var temperature = 0.0
 }
 
-struct LLMServerConfig {
+struct LLMServerConfig: Equatable {
     var name: String
     var provider: String
     var endpoint: String
@@ -198,13 +218,18 @@ final class ConfigStore: ObservableObject {
             + "default_folder=\(config.obsidian.defaultFolder.isEmpty ? "(vault root)" : config.obsidian.defaultFolder)"
         )
         Logger.shared.log(
-            "Config webui.whisper-server: model_dir=\(config.webui.whisper.modelDir), "
-            + "model_filename=\(config.webui.whisper.modelFilename), "
-            + "server_bin=\(config.webui.whisper.serverBin), "
-            + "remote_endpoint=\(config.webui.whisper.remoteEndpoint), "
-            + "language=\(config.webui.whisper.language), "
-            + "beam=\(config.webui.whisper.beam), "
-            + "temperature=\(config.webui.whisper.temperature)"
+            "Config localapp.remote-asr: active=\(config.remoteASR.name), profiles=\(config.remoteASRProfiles.map(\.name).joined(separator: ",")), "
+            + "endpoint=\(config.remoteASR.endpoint), protocol=\(config.remoteASR.protocolName), model=\(config.remoteASR.model)"
+        )
+        Logger.shared.log(
+            "Config webui.whisper-server: active=\(config.webui.whisper.name), profiles=\(config.webui.whisperServers.map(\.name).joined(separator: ",")), "
+            + "remote_endpoint=\(config.webui.whisper.remoteEndpoint)"
+        )
+        Logger.shared.log(
+            "Config localapp.local-whisper: enabled=\(config.localWhisper.enabled), launch_on_start=\(config.localWhisper.launchOnStart), "
+            + "server_bin=\(config.localWhisper.serverBin), model_dir=\(config.localWhisper.modelDir), "
+            + "model_filename=\(config.localWhisper.modelFilename), language=\(config.localWhisper.language), "
+            + "beam=\(config.localWhisper.beam), temperature=\(config.localWhisper.temperature)"
         )
         Logger.shared.log(
             "Config webui.auth: enabled=\(config.webui.auth.enabled), "
@@ -455,7 +480,119 @@ final class ConfigStore: ObservableObject {
             }
         }
 
+        // Remote ASR profiles: [[localapp.remote-asr]] (legacy single [localapp.remote-asr] → one profile "default").
+        let asrProfiles = uniquelyNamed(
+            profileTables(in: text, section: "localapp.remote-asr").map { table -> RemoteASRConfig in
+                var scratch = AirTypeConfig()
+                apply(table: table, section: "localapp.remote-asr", to: &scratch)
+                return scratch.remoteASR
+            },
+            name: \.name
+        )
+        parsed.remoteASRProfiles = asrProfiles.isEmpty ? [parsed.remoteASR] : asrProfiles
+        let asrActive = parsed.remoteASRProfiles.first(where: { $0.name == parsed.selectedRemoteASRName }) ?? parsed.remoteASRProfiles[0]
+        parsed.remoteASR = asrActive
+        parsed.selectedRemoteASRName = asrActive.name
+
+        // Whisper profiles: [[webui.whisper-server]] (legacy single [webui.whisper-server] → one profile "default").
+        let whisperTables = profileTables(in: text, section: "webui.whisper-server")
+        let whisperProfiles = uniquelyNamed(
+            whisperTables.map { table -> WhisperServerConfig in
+                var scratch = AirTypeConfig()
+                apply(table: table, section: "webui.whisper-server", to: &scratch)
+                return scratch.webui.whisper
+            },
+            name: \.name
+        )
+        parsed.webui.whisperServers = whisperProfiles.isEmpty ? [parsed.webui.whisper] : whisperProfiles
+        let whisperActive = parsed.webui.whisperServers.first(where: { $0.name == parsed.webui.selectedWhisperServerName })
+            ?? parsed.webui.whisperServers[0]
+        parsed.webui.whisper = whisperActive
+        parsed.webui.selectedWhisperServerName = whisperActive.name
+
+        // Migration: older configs kept self-host keys (server_bin, model_dir, …) on the whisper-server table.
+        if tables["localapp.local-whisper"] == nil {
+            let legacy = whisperTables.first(where: { ($0["name"] ?? "default") == whisperActive.name }) ?? whisperTables.first
+            if let legacy {
+                apply(table: legacy, section: "localapp.local-whisper", to: &parsed)
+                let remote = (legacy["remote_endpoint"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let model = (legacy["model_filename"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                parsed.localWhisper.enabled = remote.isEmpty && !model.isEmpty
+            }
+        }
+
         return parsed
+    }
+
+    /// Every table (`[section]` or `[[section]]`) whose normalized name is `section`, in file order.
+    private static func profileTables(in text: String, section: String) -> [[String: String]] {
+        var tables: [[String: String]] = []
+        var current: [String: String]?
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = stripComment(String(rawLine)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { continue }
+            if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
+                if let current { tables.append(current) }
+                let isArray = trimmed.hasPrefix("[[") && trimmed.hasSuffix("]]")
+                let name = isArray ? String(trimmed.dropFirst(2).dropLast(2)) : String(trimmed.dropFirst().dropLast())
+                current = normalizedSection(name.trimmingCharacters(in: .whitespaces)) == section ? [:] : nil
+            } else if current != nil, let eqIndex = trimmed.firstIndex(of: "=") {
+                let key = String(trimmed[..<eqIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+                current?[key] = parseTomlValue(String(trimmed[trimmed.index(after: eqIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
+        if let current { tables.append(current) }
+        return tables
+    }
+
+    private static func apply(table: [String: String], section: String, to config: inout AirTypeConfig) {
+        guard let schemaSection = schema.first(where: { $0.name == section }) else { return }
+        for field in schemaSection.fields {
+            if let value = table[field.key] { field.apply(&config, value) }
+        }
+    }
+
+    /// Duplicate profile names get "-2", "-3", … so selection by name stays unambiguous.
+    private static func uniquelyNamed<T>(_ items: [T], name: WritableKeyPath<T, String>) -> [T] {
+        var seen = Set<String>()
+        return items.map { item in
+            var item = item
+            var candidate = item[keyPath: name]
+            var suffix = 2
+            while seen.contains(candidate) { candidate = "\(item[keyPath: name])-\(suffix)"; suffix += 1 }
+            item[keyPath: name] = candidate
+            seen.insert(candidate)
+            return item
+        }
+    }
+
+    /// Per-profile copies of `config` for the array sections, with the active profile synced into its slot.
+    private static func profileVariants(for sectionName: String, in config: AirTypeConfig) -> [AirTypeConfig]? {
+        switch sectionName {
+        case "webui.llm-server":
+            let servers = config.webui.llmServers.isEmpty ? [config.webui.llm] : config.webui.llmServers
+            return servers.map { var copy = config; copy.webui.llm = $0; return copy }
+        case "localapp.remote-asr":
+            var profiles = config.remoteASRProfiles
+            let activeName = config.selectedRemoteASRName.isEmpty ? config.remoteASR.name : config.selectedRemoteASRName
+            if let index = profiles.firstIndex(where: { $0.name == activeName }) {
+                profiles[index] = config.remoteASR
+            } else {
+                profiles.append(config.remoteASR)
+            }
+            return profiles.map { var copy = config; copy.remoteASR = $0; return copy }
+        case "webui.whisper-server":
+            var profiles = config.webui.whisperServers
+            let activeName = config.webui.selectedWhisperServerName.isEmpty ? config.webui.whisper.name : config.webui.selectedWhisperServerName
+            if let index = profiles.firstIndex(where: { $0.name == activeName }) {
+                profiles[index] = config.webui.whisper
+            } else {
+                profiles.append(config.webui.whisper)
+            }
+            return profiles.map { var copy = config; copy.webui.whisper = $0; return copy }
+        default:
+            return nil
+        }
     }
 
     private func save() {
@@ -494,14 +631,11 @@ final class ConfigStore: ObservableObject {
                 lines.append("")
             }
 
-            if section.name == "webui.llm-server" {
-                let servers = config.webui.llmServers.isEmpty ? [config.webui.llm] : config.webui.llmServers
-                for (index, server) in servers.enumerated() {
+            if let variants = profileVariants(for: section.name, in: config) {
+                for (index, serverConfig) in variants.enumerated() {
                     if index > 0 {
                         lines.append("")
                     }
-                    var serverConfig = config
-                    serverConfig.webui.llm = server
                     lines.append("[[\(section.name)]]")
                     for field in section.fields {
                         if let comment = field.comment {
@@ -746,6 +880,9 @@ final class ConfigStore: ObservableObject {
             group: "Local App Settings",
             name: "localapp.remote-asr",
             fields: [
+                stringField("localapp.remote-asr", "name", comment: "Unique profile name. [localapp] default-remote-asr-name picks the active one.",
+                            apply: { $0.remoteASR.name = $1.isEmpty ? "default" : $1 },
+                            render: { $0.remoteASR.name }),
                 stringField("localapp.remote-asr", "endpoint",
                             comment: "Remote ASR server URL. Empty uses [localapp.backend-endpoint].remote_endpoint.",
                             apply: { $0.remoteASR.endpoint = $1 },
@@ -813,6 +950,48 @@ final class ConfigStore: ObservableObject {
             ]
         ),
         ConfigSectionSchema(
+            group: "Local App Settings",
+            name: "localapp.local-whisper",
+            fields: [
+                boolField("localapp.local-whisper", "enabled",
+                          apply: { $0.localWhisper.enabled = parseBool($1, defaultValue: false) },
+                          render: { $0.localWhisper.enabled ? "true" : "false" }),
+                boolField("localapp.local-whisper", "launch_on_start",
+                          apply: { $0.localWhisper.launchOnStart = parseBool($1, defaultValue: false) },
+                          render: { $0.localWhisper.launchOnStart ? "true" : "false" }),
+                stringField("localapp.local-whisper", "server_bin",
+                            apply: { $0.localWhisper.serverBin = $1 },
+                            render: { $0.localWhisper.serverBin }),
+                stringField("localapp.local-whisper", "server_args",
+                            apply: { $0.localWhisper.serverArgs = $1 },
+                            render: { $0.localWhisper.serverArgs }),
+                stringField("localapp.local-whisper", "model_dir",
+                            apply: { $0.localWhisper.modelDir = $1 },
+                            render: { $0.localWhisper.modelDir }),
+                stringField("localapp.local-whisper", "model_filename",
+                            apply: { $0.localWhisper.modelFilename = $1 },
+                            render: { $0.localWhisper.modelFilename }),
+                stringField("localapp.local-whisper", "language",
+                            apply: { $0.localWhisper.language = $1.isEmpty ? "zh-tw" : $1 },
+                            render: { $0.localWhisper.language }),
+                intField("localapp.local-whisper", "beam",
+                         apply: { $0.localWhisper.beam = clamp(parseInt($1, defaultValue: 5), minimum: 1, maximum: 16) },
+                         render: { String($0.localWhisper.beam) }),
+                numberField("localapp.local-whisper", "temperature",
+                            apply: { $0.localWhisper.temperature = clamp(parseDouble($1, defaultValue: 0), minimum: 0, maximum: 2) },
+                            render: { format($0.localWhisper.temperature) })
+            ]
+        ),
+        ConfigSectionSchema(
+            group: "Local App Settings",
+            name: "localapp",
+            fields: [
+                stringField("localapp", "default-remote-asr-name", comment: "Active [[localapp.remote-asr]] profile.",
+                            apply: { $0.selectedRemoteASRName = $1 },
+                            render: { $0.selectedRemoteASRName.isEmpty ? $0.remoteASR.name : $0.selectedRemoteASRName })
+            ]
+        ),
+        ConfigSectionSchema(
             group: "Web UI Settings",
             name: "webui.auth",
             fields: [
@@ -831,30 +1010,12 @@ final class ConfigStore: ObservableObject {
             group: "Web UI Settings",
             name: "webui.whisper-server",
             fields: [
-                stringField("webui.whisper-server", "model_dir",
-                            apply: { $0.webui.whisper.modelDir = $1 },
-                            render: { $0.webui.whisper.modelDir }),
-                stringField("webui.whisper-server", "model_filename",
-                            apply: { $0.webui.whisper.modelFilename = $1 },
-                            render: { $0.webui.whisper.modelFilename }),
-                stringField("webui.whisper-server", "server_bin",
-                            apply: { $0.webui.whisper.serverBin = $1 },
-                            render: { $0.webui.whisper.serverBin }),
+                stringField("webui.whisper-server", "name",
+                            apply: { $0.webui.whisper.name = $1.isEmpty ? "default" : $1 },
+                            render: { $0.webui.whisper.name }),
                 stringField("webui.whisper-server", "remote_endpoint",
                             apply: { $0.webui.whisper.remoteEndpoint = $1 },
-                            render: { $0.webui.whisper.remoteEndpoint }),
-                stringField("webui.whisper-server", "server_args",
-                            apply: { $0.webui.whisper.serverArgs = $1 },
-                            render: { $0.webui.whisper.serverArgs }),
-                stringField("webui.whisper-server", "language",
-                            apply: { $0.webui.whisper.language = $1.isEmpty ? "zh-tw" : $1 },
-                            render: { $0.webui.whisper.language }),
-                intField("webui.whisper-server", "beam",
-                         apply: { $0.webui.whisper.beam = clamp(parseInt($1, defaultValue: 5), minimum: 1, maximum: 16) },
-                         render: { String($0.webui.whisper.beam) }),
-                numberField("webui.whisper-server", "temperature",
-                            apply: { $0.webui.whisper.temperature = clamp(parseDouble($1, defaultValue: 0), minimum: 0, maximum: 2) },
-                            render: { format($0.webui.whisper.temperature) })
+                            render: { $0.webui.whisper.remoteEndpoint })
             ]
         ),
         ConfigSectionSchema(
@@ -898,7 +1059,10 @@ final class ConfigStore: ObservableObject {
             fields: [
                 stringField("webui", "default-llm-server-name",
                             apply: { $0.webui.selectedServerName = $1.isEmpty ? "default" : $1 },
-                            render: { $0.webui.selectedServerName })
+                            render: { $0.webui.selectedServerName }),
+                stringField("webui", "default-whisper-server-name",
+                            apply: { $0.webui.selectedWhisperServerName = $1 },
+                            render: { $0.webui.selectedWhisperServerName.isEmpty ? $0.webui.whisper.name : $0.webui.selectedWhisperServerName })
             ]
         )
     ]
