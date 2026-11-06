@@ -341,7 +341,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         targetApp = RunningAppIdentity.frontmost()
         recordingState = .preparing
         statusItem?.button?.image = StatusIcon.make(recording: true)
-        floatingPanel?.showPreparing()
+        floatingPanel?.showPreparing(targetPID: targetApp?.processIdentifier)
 
         let config = configStore.config
         let requiresWarmup = config.microphone.mode == "on_demand"
@@ -418,7 +418,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         let config = configStore.config
         let inputID = activeInputID
         recordingState = .recording
-        floatingPanel?.showRecording()
+        floatingPanel?.showRecording(targetPID: targetApp?.processIdentifier ?? NSWorkspace.shared.frontmostApplication?.processIdentifier)
         liveTyper.reset()
         latestDisplayText = ""
         liveTargetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier

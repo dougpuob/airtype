@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import SwiftUI
 
 @MainActor
@@ -22,30 +23,30 @@ final class FloatingPanelController {
         self.onMove = onMove
     }
 
-    func showPreparing() {
+    func showPreparing(targetPID: pid_t? = nil) {
         panel.setContentSize(normalSize)
         model.reset()
         model.prepare()
-        positionPanelBelowCursor()
+        positionNearInsertionPoint(targetPID: targetPID)
         panel.orderFrontRegardless()
     }
 
-    func showRecording() {
+    func showRecording(targetPID: pid_t? = nil) {
         panel.setContentSize(normalSize)
         model.reset()
         if !panel.isVisible {
-            positionPanelBelowCursor()
+            positionNearInsertionPoint(targetPID: targetPID)
         }
         panel.orderFrontRegardless()
         model.start()
     }
 
-    func showTranscribing() {
+    func showTranscribing(targetPID: pid_t? = nil) {
         panel.setContentSize(normalSize)
         model.reset()
         model.transcribe()
         if !panel.isVisible {
-            positionPanelBelowCursor()
+            positionNearInsertionPoint(targetPID: targetPID)
         }
         panel.orderFrontRegardless()
     }
@@ -161,21 +162,76 @@ final class FloatingPanelController {
 
     private func positionPanel() {
         let desktop = desktopFrame()
-        let x = desktop.minX + desktop.width * configStore.config.floatingDialog.positionXRatio
-        let y = desktop.minY + desktop.height * configStore.config.floatingDialog.positionYRatio
-        let origin = NSPoint(x: x - panel.frame.width / 2, y: y - panel.frame.height / 2)
+        let center = savedRatioCenter()
+        let origin = NSPoint(x: center.x - panel.frame.width / 2, y: center.y - panel.frame.height / 2)
         panel.setFrameOrigin(clamped(origin, desktop: desktop))
     }
 
-    private func positionPanelBelowCursor() {
-        let cursor = NSEvent.mouseLocation
-        let screenFrame = screenFrame(containing: cursor)
-        let gap: CGFloat = 18
-        let origin = NSPoint(
-            x: cursor.x - panel.frame.width / 2,
-            y: cursor.y - panel.frame.height - gap
+    /// Place the pill near the text insertion point of the target app.
+    /// Never uses the mouse location. Manual/fixed ratio placement remains `positionPanel()`
+    /// (mic errors / applyConfig / unlocked drag).
+    private func positionNearInsertionPoint(targetPID: pid_t?) {
+        // Ensure we have a real size before clamping (setContentSize can lag frame.size).
+        if panel.frame.width < 8 || panel.frame.height < 8 {
+            panel.setContentSize(normalSize)
+        }
+        let panelSize = panel.frame.size.width >= 8 ? panel.frame.size : normalSize
+
+        let anchor = InsertionPointLocator.resolve(targetPID: targetPID) { [weak self] in
+            guard let self else { return .zero }
+            return self.savedRatioCenter()
+        }
+        let visible = visibleFrame(containingRect: anchor.rect, fallbackPoint: anchor.point)
+        let origin: NSPoint
+        if anchor.source == .savedRatio {
+            origin = NSPoint(
+                x: anchor.point.x - panelSize.width / 2,
+                y: anchor.point.y - panelSize.height / 2
+            )
+        } else {
+            origin = InsertionPointLocator.panelOrigin(
+                forCaretRect: anchor.rect,
+                panelSize: panelSize,
+                visibleFrame: visible
+            )
+        }
+        let clampedOrigin = clamped(origin, desktop: visible, size: panelSize)
+        panel.setFrame(NSRect(origin: clampedOrigin, size: panelSize), display: true)
+        let a = anchor.rect
+        let v = visible
+        let screensDesc = NSScreen.screens.enumerated().map { idx, s in
+            let f = s.frame
+            return String(format: "[%d:%@ %.0f,%.0f %.0fx%.0f@%.0fx]", idx, s.localizedName as CVarArg, f.origin.x, f.origin.y, f.width, f.height, s.backingScaleFactor)
+        }.joined(separator: " ")
+        Logger.shared.log(
+            "Floating pill positioned: source=\(anchor.source.rawValue), "
+            + "target_pid=\(targetPID.map(String.init) ?? "none"), "
+            + "ax_trusted=\(AXIsProcessTrusted()), "
+            + "move_lock=\(configStore.config.floatingDialog.moveLock), "
+            + String(format: "anchor=(%.1f,%.1f %.1fx%.1f), ", a.origin.x, a.origin.y, a.width, a.height)
+            + String(format: "visible=(%.1f,%.1f %.1fx%.1f), ", v.origin.x, v.origin.y, v.width, v.height)
+            + String(format: "origin=(%.1f,%.1f), ", clampedOrigin.x, clampedOrigin.y)
+            + "screens=\(screensDesc), "
+            + "detail=\(anchor.detail)"
         )
-        panel.setFrameOrigin(clamped(origin, desktop: screenFrame))
+    }
+
+    private func visibleFrame(containingRect rect: NSRect, fallbackPoint: NSPoint) -> NSRect {
+        let center = NSPoint(x: rect.midX, y: rect.midY)
+        if let screen = NSScreen.screens.first(where: { $0.frame.insetBy(dx: -2, dy: -2).contains(center) }) {
+            return screen.visibleFrame
+        }
+        if let screen = NSScreen.screens.first(where: { $0.frame.intersects(rect.insetBy(dx: -2, dy: -2)) }) {
+            return screen.visibleFrame
+        }
+        return screenFrame(containing: fallbackPoint)
+    }
+
+    private func savedRatioCenter() -> NSPoint {
+        let desktop = desktopFrame()
+        let x = desktop.minX + desktop.width * configStore.config.floatingDialog.positionXRatio
+        let y = desktop.minY + desktop.height * configStore.config.floatingDialog.positionYRatio
+        return NSPoint(x: x, y: y)
     }
 
     private func save(frame: NSRect) {
@@ -198,10 +254,11 @@ final class FloatingPanelController {
             ?? desktopFrame()
     }
 
-    private func clamped(_ point: NSPoint, desktop: NSRect) -> NSPoint {
-        NSPoint(
-            x: min(max(point.x, desktop.minX), desktop.maxX - panel.frame.width),
-            y: min(max(point.y, desktop.minY), desktop.maxY - panel.frame.height)
+    private func clamped(_ point: NSPoint, desktop: NSRect, size: NSSize? = nil) -> NSPoint {
+        let sz = size ?? panel.frame.size
+        return NSPoint(
+            x: min(max(point.x, desktop.minX), max(desktop.minX, desktop.maxX - sz.width)),
+            y: min(max(point.y, desktop.minY), max(desktop.minY, desktop.maxY - sz.height))
         )
     }
 }

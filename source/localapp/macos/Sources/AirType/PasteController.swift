@@ -5,12 +5,14 @@ import Foundation
 struct RunningAppIdentity {
     let bundleIdentifier: String?
     let localizedName: String?
+    let processIdentifier: pid_t
 
     static func frontmost() -> RunningAppIdentity? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         return RunningAppIdentity(
             bundleIdentifier: app.bundleIdentifier,
-            localizedName: app.localizedName
+            localizedName: app.localizedName,
+            processIdentifier: app.processIdentifier
         )
     }
 
