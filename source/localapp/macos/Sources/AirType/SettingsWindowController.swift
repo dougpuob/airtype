@@ -342,6 +342,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
         var externalLeaves: [SidebarLeaf] = [
             leaf("Microphone", Self.microphoneTabID, builder: buildMicrophoneTab),
+            leaf("Recording", "localapp.recording", builder: buildSectionTab),
             leaf("Obsidian", "localapp.obsidian", builder: buildObsidianTab)
         ].compactMap { $0 }
 
@@ -514,6 +515,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         case "server_args": return "Server Args"
         case "model_filename": return "Model"
         case "launch_on_start": return "Launch on App Start"
+        case "hotkey_press_count": return "Hotkey Presses"
+        case "play_cues": return "Play Cues"
         default:
             return key.split(whereSeparator: { $0 == "_" || $0 == "-" })
                 .map { $0.prefix(1).uppercased() + $0.dropFirst() }

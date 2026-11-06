@@ -11,6 +11,7 @@ struct AirTypeConfig {
     var selectedRemoteASRName = ""
     var microphone = MicrophoneConfig()
     var floatingDialog = FloatingDialogConfig()
+    var recording = RecordingConfig()
     var obsidian = ObsidianConfig()
     /// [localapp.local-whisper]: self-hosted whisper-server on this Mac.
     var localWhisper = LocalWhisperServiceConfig()
@@ -86,6 +87,14 @@ struct FloatingDialogConfig {
     var positionXRatio = 0.5
     var positionYRatio = 0.62
     var moveLock = true
+}
+
+/// [localapp.recording]: hotkey gesture + optional start/end cues.
+struct RecordingConfig {
+    /// "single" (default) or "double" — how many exclusive Right Ctrl/Option presses start/stop.
+    var hotkeyPressCount = "single"
+    /// Quiet system sounds when capture actually starts / after capture stops.
+    var playCues = true
 }
 
 /// [localapp.obsidian]: where the local app writes captured notes as Markdown files.
@@ -212,6 +221,10 @@ final class ConfigStore: ObservableObject {
             "Config localapp: hotkey_triggers=right_ctrl,right_option; "
             + "chinese_mode=\(config.chineseMode.mode); "
             + "floating_dialog=(x=\(config.floatingDialog.positionXRatio), y=\(config.floatingDialog.positionYRatio), move_lock=\(config.floatingDialog.moveLock))"
+        )
+        Logger.shared.log(
+            "Config localapp.recording: hotkey_press_count=\(config.recording.hotkeyPressCount), "
+            + "play_cues=\(config.recording.playCues)"
         )
         Logger.shared.log(
             "Config localapp.obsidian: vault_path=\(config.obsidian.vaultPath.isEmpty ? "(empty)" : config.obsidian.vaultPath), "
@@ -922,6 +935,21 @@ final class ConfigStore: ObservableObject {
         ),
         ConfigSectionSchema(
             group: "Local App Settings",
+            name: "localapp.recording",
+            fields: [
+                stringField("localapp.recording", "hotkey_press_count",
+                            comment: #"Hotkey presses to start/stop. Options: "single", "double". Default single."#,
+                            options: ["single", "double"],
+                            apply: { $0.recording.hotkeyPressCount = normalizeHotkeyPressCount($1) },
+                            render: { $0.recording.hotkeyPressCount }),
+                boolField("localapp.recording", "play_cues",
+                          comment: "Play quiet system sounds when recording capture starts and after it stops.",
+                          apply: { $0.recording.playCues = parseBool($1, defaultValue: true) },
+                          render: { $0.recording.playCues ? "true" : "false" })
+            ]
+        ),
+        ConfigSectionSchema(
+            group: "Local App Settings",
             name: "localapp.floating-dialog",
             fields: [
                 numberField("localapp.floating-dialog", "position_x_ratio", comment: "Position is stored as the dialog center ratio across the whole desktop.",
@@ -1314,6 +1342,14 @@ final class ConfigStore: ObservableObject {
             return "always"
         }
         return "on_demand"
+    }
+
+    private static func normalizeHotkeyPressCount(_ value: String) -> String {
+        let lowered = value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if ["double", "2", "two", "x2"].contains(lowered) {
+            return "double"
+        }
+        return "single"
     }
 
     private static func parseBool(_ value: String, defaultValue: Bool) -> Bool {

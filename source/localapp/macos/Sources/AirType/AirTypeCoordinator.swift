@@ -40,6 +40,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         case recording
     }
     private var recordingState: RecordingState = .idle
+    private var sessionCueGate = RecordingSessionCueGate()
     private var settingsWindow: SettingsWindowController?
 
     func start() {
@@ -149,8 +150,10 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     private func setupHotkey() {
+        let mode = Self.hotkeyPressMode(from: configStore.config.recording.hotkeyPressCount)
         hotkeyMonitor = HotkeyMonitor(
-            onDoublePress: { [weak self] in
+            pressCount: mode,
+            onGesture: { [weak self] in
                 Task { @MainActor in
                     self?.toggleRecording()
                 }
@@ -162,6 +165,15 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             }
         )
         hotkeyMonitor?.start()
+    }
+
+    private static func hotkeyPressMode(from value: String) -> HotkeyGestureTracker.Mode {
+        value == "double" ? .double : .single
+    }
+
+    private func applyHotkeyPressCountFromConfig() {
+        let mode = Self.hotkeyPressMode(from: configStore.config.recording.hotkeyPressCount)
+        hotkeyMonitor?.setPressCount(mode)
     }
 
     private func migrateLegacyMicrophoneSelection() {
@@ -194,9 +206,14 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         lastHardwareChangeAt = now
         Logger.shared.log("Microphone hardware change detected; re-evaluating input")
         refreshMicrophoneAvailability(reason: "hardware_change")
-        guard recordingState == .idle else {
-            Logger.shared.log("Microphone hardware change ignored during active recording")
-            return
+        if recordingState == .preparing || recordingState == .recording {
+            if !audioRecorder.isCurrentDeviceAvailable() {
+                Logger.shared.log("Microphone removed during active capture; aborting session as failure")
+                abortActiveSession(result: "FAILED", details: "reason=microphone_removed")
+            } else {
+                Logger.shared.log("Microphone hardware change during active recording; device still available, continuing")
+                return
+            }
         }
         applyMicrophoneRuntimeSettings(reason: "hardware_change")
     }
@@ -220,8 +237,8 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
 
         if recordingState == .preparing || recordingState == .recording {
             if !currentDeviceAvailable {
-                Logger.shared.log("Recording is active but microphone was removed; stopping current recording before applying settings")
-                stopRecording()
+                Logger.shared.log("Recording is active but microphone was removed; aborting as failure before applying settings")
+                abortActiveSession(result: "FAILED", details: "reason=microphone_removed")
             } else {
                 Logger.shared.log("Recording is active while microphone settings changed; continuing recording (device still available)")
                 return
@@ -321,10 +338,14 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         if recordingState == .recording || recordingState == .preparing {
             stopRecording()
         } else {
+            let cuesOn = configStore.config.recording.playCues
             guard refreshMicrophoneAvailability(
-                playErrorSound: true,
+                playErrorSound: !cuesOn,
                 reason: "recording_hotkey"
-            ) else { return }
+            ) else {
+                if cuesOn { RecordingCues.playFailure() }
+                return
+            }
             startRecording()
         }
     }
@@ -337,10 +358,11 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         activeInputStartedAt = Date()
         Logger.shared.blankLine()
         Logger.shared.log("========== INPUT #\(inputID) START ==========")
-        Logger.shared.log("Input #\(inputID): first hotkey double-press received; recording flow started")
+        Logger.shared.log("Input #\(inputID): hotkey gesture received; recording flow started")
         targetApp = RunningAppIdentity.frontmost()
         recordingState = .preparing
         statusItem?.button?.image = StatusIcon.make(recording: true)
+        hotkeyMonitor?.armEscapeCancel()
         floatingPanel?.showPreparing(targetPID: targetApp?.processIdentifier)
 
         let config = configStore.config
@@ -384,13 +406,13 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             if engine.kind.isRemote, case .failed = engineState {
                 loadEngine() // re-check the remote server so the next try can work without a menu click
             }
-            NSSound.beep()
             let hint: String
             if engine.kind.isRemote {
                 hint = "Remote ASR unreachable"
             } else {
                 hint = "\(engine.kind.shortName) engine not ready"
             }
+            hotkeyMonitor?.disarmEscapeCancel()
             recordingState = .idle
             statusItem?.button?.image = StatusIcon.make(recording: false)
             floatingPanel?.showMicrophoneError(hint)
@@ -399,11 +421,12 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             return
         }
         guard refreshMicrophoneAvailability(
-            playErrorSound: true,
+            playErrorSound: !configStore.config.recording.playCues,
             reason: "recording_begin"
         ) else {
             let inputID = activeInputID
             let inputStartedAt = activeInputStartedAt
+            hotkeyMonitor?.disarmEscapeCancel()
             recordingState = .idle
             statusItem?.button?.image = StatusIcon.make(recording: false)
             audioRecorder.stop()
@@ -431,19 +454,36 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             }
         }
         let engine: ASREngine = engine
-        audioRecorder.start(
-            microphoneDeviceName: config.microphone.selectedDeviceName,
-            preRollSeconds: config.microphone.preRollSeconds,
-            onLevel: { [weak self] level in
-                Task { @MainActor in self?.floatingPanel?.setLevel(level) }
-            },
-            onPCM: { pcm in engine.feed(pcm) }
-        )
-        Logger.shared.log(
-            "\(inputLogPrefix(inputID))streaming capture active: microphone_mode=\(config.microphone.mode), "
-            + "pre_roll_seconds=\(config.microphone.preRollSeconds), language=\(sessionLanguage), "
-            + "engine=\(engine.kind.rawValue), output=\(liveTypingActive ? "live_typing" : "paste_on_stop")"
-        )
+        let playCues = config.recording.playCues
+        if playCues {
+            RecordingCues.playStart()
+        }
+        // Brief delay so the start cue is mostly finished before capture feeds ASR.
+        let captureDelay: TimeInterval = playCues ? 0.12 : 0
+        let micName = config.microphone.selectedDeviceName
+        let preRoll = config.microphone.preRollSeconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + captureDelay) { [weak self] in
+            guard let self, self.recordingState == .recording, self.activeInputID == inputID else { return }
+            self.audioRecorder.start(
+                microphoneDeviceName: micName,
+                preRollSeconds: preRoll,
+                onLevel: { [weak self] level in
+                    Task { @MainActor in self?.floatingPanel?.setLevel(level) }
+                },
+                onPCM: { pcm in engine.feed(pcm) }
+            )
+            if !self.audioRecorder.isPreparedForInput() {
+                Logger.shared.log("\(self.inputLogPrefix(inputID))capture start failed; microphone not ready")
+                self.abortActiveSession(result: "FAILED", details: "reason=capture_start_failed")
+                return
+            }
+            Logger.shared.log(
+                "\(self.inputLogPrefix(inputID))streaming capture active: microphone_mode=\(self.configStore.config.microphone.mode), "
+                + "pre_roll_seconds=\(preRoll), language=\(sessionLanguage), "
+                + "engine=\(engine.kind.rawValue), output=\(self.liveTypingActive ? "live_typing" : "paste_on_stop"), "
+                + "cues=\(playCues)"
+            )
+        }
     }
 
     private var targetIsFrontmost: Bool {
@@ -464,8 +504,9 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     private func stopRecording() {
         let inputID = activeInputID
         let inputStartedAt = activeInputStartedAt
-        Logger.shared.log("\(inputLogPrefix(inputID))second hotkey double-press received; recording stop requested")
+        Logger.shared.log("\(inputLogPrefix(inputID))hotkey gesture received; recording stop requested")
         let wasRecording = recordingState == .recording
+        hotkeyMonitor?.disarmEscapeCancel()
         recordingState = .idle
         defer {
             scheduleTimedMicrophoneRelease(reason: "recording_stopped")
@@ -494,6 +535,10 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         engine.finish { [weak self] raw in
             DispatchQueue.main.async {
                 guard let self else { return }
+                if let inputID, self.sessionCueGate.isClosed(inputID) {
+                    Logger.shared.log("\(self.inputLogPrefix(inputID))stale ASR finish ignored after session closed")
+                    return
+                }
                 let finalText = TranscriptFormatter.format(raw, mode: mode)
                 guard TextPolisher.enabled, !finalText.isEmpty else {
                     self.deliverFinal(finalText, targetApp: targetApp, inputID: inputID, startedAt: inputStartedAt)
@@ -501,8 +546,13 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                 }
                 // 停錄後 LLM 整理 (local oMLX, thinking off). On any failure paste the original ASR text.
                 Logger.shared.log("\(self.inputLogPrefix(inputID))LLM polish requested chars=\(finalText.count)")
-                TextPolisher.polish(finalText, llm: self.configStore.config.webui.llm) { polished in
+                TextPolisher.polish(finalText, llm: self.configStore.config.webui.llm) { [weak self] polished in
                     DispatchQueue.main.async {
+                        guard let self else { return }
+                        if let inputID, self.sessionCueGate.isClosed(inputID) {
+                            Logger.shared.log("\(self.inputLogPrefix(inputID))stale LLM polish ignored after session closed")
+                            return
+                        }
                         let output = polished.map { TranscriptFormatter.format($0, mode: mode, fixEnglishCase: false) } ?? finalText
                         self.deliverFinal(output.isEmpty ? finalText : output, targetApp: targetApp, inputID: inputID, startedAt: inputStartedAt)
                     }
@@ -512,6 +562,10 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     private func deliverFinal(_ finalText: String, targetApp: RunningAppIdentity?, inputID: Int?, startedAt: Date?) {
+        if let inputID, sessionCueGate.isClosed(inputID) {
+            Logger.shared.log("\(inputLogPrefix(inputID))stale deliverFinal ignored")
+            return
+        }
         Logger.shared.log("\(inputLogPrefix(inputID))final transcript chars=\(finalText.count)")
         if liveTypingActive, targetIsFrontmost, AXIsProcessTrusted() {
             liveTyper.apply(finalText)
@@ -525,13 +579,19 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         let remainder = finalText.hasPrefix(typed) ? String(finalText.dropFirst(typed.count)) : finalText
         guard !remainder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             floatingPanel?.hide()
+            // Empty ASR → not a successful delivery; non-empty already typed live → success.
             let result = finalText.isEmpty ? "SKIPPED" : "COMPLETE"
             finishInput(inputID, startedAt: startedAt, result: result, details: "output=nothing_to_paste, chars=\(finalText.count)")
             return
         }
         pasteController.paste(remainder, to: targetApp) { [weak self] ok in
-            self?.floatingPanel?.hide()
-            self?.finishInput(
+            guard let self else { return }
+            if let inputID, self.sessionCueGate.isClosed(inputID) {
+                Logger.shared.log("\(self.inputLogPrefix(inputID))stale paste result ignored")
+                return
+            }
+            self.floatingPanel?.hide()
+            self.finishInput(
                 inputID,
                 startedAt: startedAt,
                 result: ok ? "COMPLETE" : "FAILED",
@@ -541,9 +601,26 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     private func cancelRecording() {
+        if recordingState != .preparing && recordingState != .recording {
+            Logger.shared.log(
+                "Escape ignored: no active capture session state=\(recordingState)"
+            )
+            return
+        }
+        Logger.shared.log(
+            "Escape cancel requested state=\(recordingState) input=\(activeInputID.map(String.init) ?? "none")"
+        )
+        abortActiveSession(result: "CANCELLED", details: "reason=escape")
+    }
+
+    /// Ends prepare/recording without ASR finalize. Exactly one terminal failure/cancel cue via finishInput.
+    private func abortActiveSession(result: String, details: String) {
         guard recordingState == .preparing || recordingState == .recording else { return }
+        hotkeyMonitor?.disarmEscapeCancel()
 
         let wasRecording = recordingState == .recording
+        let inputID = activeInputID
+        let inputStartedAt = activeInputStartedAt
         recordingState = .idle
         statusItem?.button?.image = StatusIcon.make(recording: false)
         floatingPanel?.hide()
@@ -560,11 +637,13 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             audioRecorder.discardRecording(clearPreRoll: true)
         }
 
-        let inputID = activeInputID
-        let inputStartedAt = activeInputStartedAt
-        Logger.shared.log(wasRecording ? "\(inputLogPrefix(inputID))recording cancelled by Escape; ASR skipped" : "\(inputLogPrefix(inputID))recording warmup cancelled by Escape")
-        finishInput(inputID, startedAt: inputStartedAt, result: "CANCELLED", details: "reason=escape")
-        scheduleTimedMicrophoneRelease(reason: "recording_cancelled")
+        if wasRecording {
+            Logger.shared.log("\(inputLogPrefix(inputID))active capture aborted; ASR skipped \(details)")
+        } else {
+            Logger.shared.log("\(inputLogPrefix(inputID))warmup aborted \(details)")
+        }
+        finishInput(inputID, startedAt: inputStartedAt, result: result, details: details)
+        scheduleTimedMicrophoneRelease(reason: "recording_aborted")
     }
 
     private func inputLogPrefix(_ inputID: Int?) -> String {
@@ -574,8 +653,23 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
 
     private func finishInput(_ inputID: Int?, startedAt: Date?, result: String, details: String) {
         guard let inputID else { return }
+        // First closer wins: suppresses late success/error from cancelled or superseded sessions.
+        let firstClose = sessionCueGate.close(inputID)
         let elapsedMs = startedAt.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
-        Logger.shared.log("========== INPUT #\(inputID) \(result) elapsed_ms=\(elapsedMs) \(details) ==========")
+        if firstClose {
+            Logger.shared.log("========== INPUT #\(inputID) \(result) elapsed_ms=\(elapsedMs) \(details) ==========")
+            let cuesOn = configStore.config.recording.playCues
+            switch result {
+            case "COMPLETE":
+                sessionCueGate.playTerminal(inputID: inputID, success: true, cuesEnabled: cuesOn)
+            case "CANCELLED", "FAILED", "SKIPPED":
+                sessionCueGate.playTerminal(inputID: inputID, success: false, cuesEnabled: cuesOn)
+            default:
+                sessionCueGate.playTerminal(inputID: inputID, success: false, cuesEnabled: cuesOn)
+            }
+        } else {
+            Logger.shared.log("========== INPUT #\(inputID) \(result) ignored_stale elapsed_ms=\(elapsedMs) \(details) ==========")
+        }
         if activeInputID == inputID {
             activeInputID = nil
             activeInputStartedAt = nil
