@@ -23,12 +23,12 @@ let package = Package(
         // Vendored copy of sherpa-onnx v2.0.1 c-api.h (header only; library is linked from sherpaLib).
         .target(
             name: "CSherpaOnnx",
-            path: "Sources/CSherpaOnnx"
+            path: "sources/CSherpaOnnx"
         ),
         .executableTarget(
             name: "AirType",
             dependencies: ["CSherpaOnnx"],
-            path: "Sources/AirType",
+            path: "sources/AirType",
             linkerSettings: [
                 .unsafeFlags([
                     "-L\(sherpaLib)",
