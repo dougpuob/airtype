@@ -64,6 +64,7 @@ from . import linkedin_post
 from . import web_article
 from . import usage_stats
 from . import threads_watch
+from . import telegram_clipper
 from .ai_tags import AI_TAGS_SYSTEM_PROMPT, build_ai_tags_prompt, normalize_ai_tags
 from .note_id import canonical_source_id, note_guid_for_source
 from .post_weaver import collect_threads_chain, posts_to_markdown
@@ -2072,14 +2073,21 @@ async def create_clip_request(request: ClipCreateRequest):
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-def _submit_clip_url(url: str, notes: str = "", origin: str = "manual") -> Dict[str, Any]:
-    """Queue one URL in the Obsidian Clipper (shared by the API and Watching)."""
-    url = str(url or "").strip()
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("URL must start with http:// or https://.")
+def _clip_kind_for_url(url: str) -> str:
     pipeline = known_sources.route_for_url(url)
     if pipeline == "v-to-text":
+        return "voice"
+    if pipeline == "capture-post":
+        return "post"
+    return "article"
+
+
+def _start_clip_work(record: Dict[str, Any], url: str) -> None:
+    """Run the pipeline that matches this request. Voice jobs are created here."""
+    request_id = str(record["id"])
+    kind = str(record.get("kind") or _clip_kind_for_url(url))
+    if kind == "voice":
+        parsed = urllib.parse.urlparse(url)
         options = _settings_transcribe_options(None, None, None, None, None)
         job_id = _create_job(
             url,
@@ -2089,16 +2097,56 @@ def _submit_clip_url(url: str, notes: str = "", origin: str = "manual") -> Dict[
         )
         temp_path = os.path.join(_job_dir(job_id), f"source{os.path.splitext(parsed.path)[1] or '.media'}")
         _update_job_source(job_id, temp_path)
-        clip_request_id = _attach_clip_request(job_id, "voice", url, notes=notes, origin=origin)
+        transcription_jobs[job_id]["clip_request_id"] = request_id
+        clip_requests.update(request_id, job_id=job_id)
         executor.submit(_run_url_transcription_job, job_id, url, temp_path, options)
-        record = clip_requests.get(clip_request_id)
+        return
+    if kind == "post":
+        clip_executor.submit(_run_post_clip, request_id, url)
+        return
+    clip_executor.submit(_run_article_clip, request_id, url)
+
+
+def _reuse_clip_request(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Return an existing request. Restart it only when a process crash interrupted it."""
+    if not clip_requests.was_interrupted(record):
         return record
-    if pipeline == "capture-post":
-        record = clip_requests.create(kind="post", source=url, notes=notes, origin=origin)
-        clip_executor.submit(_run_post_clip, record["id"], url)
-        return record
-    record = clip_requests.create(kind="article", source=url, notes=notes, origin=origin)
-    clip_executor.submit(_run_article_clip, record["id"], url)
+    request_id = str(record["id"])
+    updated = clip_requests.update(
+        request_id,
+        status="queued",
+        progress=0,
+        step=0,
+        message="Queued",
+        error="",
+        published=False,
+    )
+    current = updated or record
+    _start_clip_work(current, str(current.get("source") or ""))
+    return clip_requests.get(request_id) or current
+
+
+def _submit_clip_url(
+    url: str,
+    notes: str = "",
+    origin: str = "manual",
+    idempotency_key: str = "",
+) -> Dict[str, Any]:
+    """Queue one URL in the Obsidian Clipper (shared by the API, Watching, and Telegram)."""
+    url = str(url or "").strip()
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("URL must start with http:// or https://.")
+    record, created = clip_requests.upsert_idempotent(
+        kind=_clip_kind_for_url(url),
+        source=url,
+        notes=notes,
+        origin=origin,
+        idempotency_key=idempotency_key,
+    )
+    if not created:
+        return _reuse_clip_request(record)
+    _start_clip_work(record, url)
     return record
 
 
@@ -2227,6 +2275,85 @@ def startup_watch_scheduler() -> None:
 @app.on_event("shutdown")
 def shutdown_watch_scheduler() -> None:
     _watch_stop.set()
+
+
+# --------------------------------------------------------------------------- #
+# Telegram private-chat intake. Disabled until [webui.telegram] says otherwise.
+# One process holds the poll lock; getUpdates is the only consumer.
+# --------------------------------------------------------------------------- #
+
+_telegram_stop = threading.Event()
+_telegram_thread: Optional[threading.Thread] = None
+
+
+def _recover_telegram_clips() -> None:
+    records = clip_requests.interrupted_with_key_prefix("telegram:")
+    telegram_clipper.recover_interrupted(
+        records,
+        _submit_clip_url,
+        lambda message: append_service_log("webui", message),
+    )
+
+
+def _telegram_poll_loop() -> None:
+    directory = os.path.join(WEBUI_DATA_DIR, "telegram")
+    os.makedirs(directory, exist_ok=True)
+    lock_path = os.path.join(directory, ".poller.lock")
+    lock_handle = telegram_clipper.acquire_poll_lock(Path(lock_path))
+    if lock_handle is None:
+        # Another WebUI process already polls. Retry until it exits or we stop.
+        while not _telegram_stop.is_set():
+            _telegram_stop.wait(30)
+            if _telegram_stop.is_set():
+                return
+            lock_handle = telegram_clipper.acquire_poll_lock(Path(lock_path))
+            if lock_handle is not None:
+                break
+        if lock_handle is None:
+            return
+    append_service_log("webui", f"telegram clipper lock acquired pid={os.getpid()}")
+    try:
+        poller = telegram_clipper.Poller(
+            settings_loader=lambda: telegram_clipper.load_settings(CONFIG_PATH),
+            state_path=Path(directory) / "state.json",
+            pairing_path=Path(directory) / "pairing-candidates.json",
+            submit=_submit_clip_url,
+            log=lambda message: append_service_log("webui", message),
+            recover=_recover_telegram_clips,
+        )
+        poller.serve(_telegram_stop)
+    finally:
+        try:
+            import fcntl
+
+            fcntl.flock(lock_handle, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        lock_handle.close()
+
+
+def _start_telegram_clipper() -> None:
+    global _telegram_thread
+    if _telegram_thread is not None and _telegram_thread.is_alive():
+        return
+    _telegram_stop.clear()
+    _telegram_thread = threading.Thread(target=_telegram_poll_loop, name="telegram-clipper", daemon=True)
+    _telegram_thread.start()
+
+
+@app.on_event("startup")
+def startup_telegram_clipper() -> None:
+    if os.environ.get("AIRTYPE_DISABLE_TELEGRAM_CLIPPER") == "1":
+        return
+    _start_telegram_clipper()
+
+
+@app.on_event("shutdown")
+def shutdown_telegram_clipper() -> None:
+    _telegram_stop.set()
+    thread = _telegram_thread
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=2)
 
 
 @app.get("/api/watches")

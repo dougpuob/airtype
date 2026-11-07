@@ -46,6 +46,16 @@ username = "airtype"
 password = ""
 session_days = 14
 
+[webui.telegram]
+# Private-chat URLs for the Obsidian Clipper. Off until both ids below are set
+# and enabled is true. Do not put the bot token in this file. See
+# docs/telegram-clipper.md.
+enabled = false
+token_file = ""
+allowed_user_id = 0
+allowed_chat_id = 0
+replies_enabled = false
+
 [webui.whisper-server]
 model_dir = "~/.airtype/models"
 model_filename = "ggml-large-v3-turbo-q5_0.bin"

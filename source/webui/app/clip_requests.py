@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import threading
 from typing import Any, Optional
 
@@ -33,6 +34,12 @@ _directory: Optional[Path] = None
 _cancel_events: dict[str, threading.Event] = {}
 
 _PENDING_INDEX_NAME = "clip-requests-pending.json"
+_IDEMPOTENCY_INDEX_NAME = "clip-request-idempotency.json"
+# Queued or running work is marked failed with this exact error when the
+# process restarts. Callers use it to redrive the same request id.
+INTERRUPTED_ERROR = "Interrupted when the server restarted"
+_ORIGINS = {"manual", "watching", "telegram"}
+_IDEMPOTENCY_KEY = re.compile(r"[A-Za-z0-9:._-]{1,200}")
 
 # Large body fields left out of the queue list. Fetch one record with ``get``
 # (``GET /api/clip-requests/{id}``) when the user opens it or saves it.
@@ -69,54 +76,146 @@ def configure(data_dir: str) -> None:
                 record["status"] = "failed"
                 record["progress"] = 100
                 record["message"] = "Failed"
-                record["error"] = record.get("error") or "Interrupted when the server restarted"
+                record["error"] = record.get("error") or INTERRUPTED_ERROR
                 record["updated_at"] = _now()
                 _write(record)
 
 
-def create(*, kind: str, source: str, notes: str = "", origin: str = "manual", now: Optional[datetime] = None) -> dict[str, Any]:
+def was_interrupted(record: dict[str, Any]) -> bool:
+    """True when a restart closed this request before the download finished."""
+    return str(record.get("status") or "") == "failed" and str(record.get("error") or "") == INTERRUPTED_ERROR
+
+
+def create(*, kind: str, source: str, notes: str = "", origin: str = "manual", now: Optional[datetime] = None, idempotency_key: str = "") -> dict[str, Any]:
     """Create a queued request file and return its public record."""
+    record, _created = upsert_idempotent(
+        kind=kind,
+        source=source,
+        notes=notes,
+        origin=origin,
+        now=now,
+        idempotency_key=idempotency_key,
+    )
+    return record
+
+
+def upsert_idempotent(
+    *,
+    kind: str,
+    source: str,
+    notes: str = "",
+    origin: str = "manual",
+    now: Optional[datetime] = None,
+    idempotency_key: str = "",
+) -> tuple[dict[str, Any], bool]:
+    """Return ``(record, created)``.
+
+    A repeated ``idempotency_key`` returns the request already stored for
+    that key and does not create another file. The key is claimed in the
+    same lock as the request write.
+    """
+    key = _clean_idempotency_key(idempotency_key)
+    with _lock:
+        if key:
+            existing = _find_idempotent_locked(key)
+            if existing:
+                return dict(existing), False
+        record = _insert_new_locked(
+            kind=kind,
+            source=source,
+            notes=notes,
+            origin=origin,
+            now=now,
+            idempotency_key=key,
+        )
+        if key:
+            _remember_idempotency_locked(key, str(record["id"]))
+        return dict(record), True
+
+
+def find_by_idempotency_key(idempotency_key: str) -> Optional[dict[str, Any]]:
+    key = _clean_idempotency_key(idempotency_key)
+    if not key:
+        return None
+    with _lock:
+        found = _find_idempotent_locked(key)
+        return dict(found) if found else None
+
+
+def interrupted_with_key_prefix(prefix: str) -> list[dict[str, Any]]:
+    """Interrupted requests whose idempotency key starts with ``prefix``.
+
+    Startup recovery scans the request files so a key that was stored on the
+    request but not yet flushed to the index is still found.
+    """
+    needle = str(prefix or "")
+    if not needle:
+        return []
+    with _lock:
+        matches: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for record in _read_all():
+            key = str(record.get("idempotency_key") or "")
+            request_id = str(record.get("id") or "")
+            if not key.startswith(needle) or not request_id or request_id in seen:
+                continue
+            seen.add(request_id)
+            if was_interrupted(record):
+                matches.append(dict(record))
+        return matches
+
+
+def _insert_new_locked(
+    *,
+    kind: str,
+    source: str,
+    notes: str,
+    origin: str,
+    now: Optional[datetime],
+    idempotency_key: str,
+) -> dict[str, Any]:
     current = now or datetime.now().astimezone()
     stamp = current.strftime("%Y%m%d-%H%M%S")
-    with _lock:
-        request_id = stamp
-        suffix = 2
-        while _path(request_id).exists():
-            request_id = f"{stamp}-{suffix}"
-            suffix += 1
-        record = {
-            "id": request_id,
-            "kind": kind,
-            "source": source,
-            "origin": _clean_origin(origin),
-            "notes": _clean_notes(notes),
-            "external_content": "",
-            "status": "queued",
-            "step": 0,
-            "progress": 0,
-            "message": "Queued",
-            "error": "",
-            "obsidian_save": "pending",
-            "published": False,
-            "job_id": "",
-            "title": "",
-            "content": "",
-            "polished_content": "",
-            "ai_tags": "",
-            "sources": [],
-            "tags": [],
-            "datetime": "",
-            "guid": "",
-            "share_url": "",
-            "note_title": "",
-            "note": "",
-            "created_at": current.isoformat(timespec="seconds"),
-            "updated_at": current.isoformat(timespec="seconds"),
-        }
-        _cancel_events[request_id] = threading.Event()
-        _write(record)
-        _add_pending_id(request_id)
-        return dict(record)
+    request_id = stamp
+    suffix = 2
+    while _path(request_id).exists():
+        request_id = f"{stamp}-{suffix}"
+        suffix += 1
+    record = {
+        "id": request_id,
+        "kind": kind,
+        "source": source,
+        "origin": _clean_origin(origin),
+        "notes": _clean_notes(notes),
+        "external_content": "",
+        "status": "queued",
+        "step": 0,
+        "progress": 0,
+        "message": "Queued",
+        "error": "",
+        "obsidian_save": "pending",
+        "published": False,
+        "job_id": "",
+        "title": "",
+        "content": "",
+        "polished_content": "",
+        "ai_tags": "",
+        "sources": [],
+        "tags": [],
+        "datetime": "",
+        "guid": "",
+        "share_url": "",
+        "note_title": "",
+        "note": "",
+        "created_at": current.isoformat(timespec="seconds"),
+        "updated_at": current.isoformat(timespec="seconds"),
+    }
+    if idempotency_key:
+        record["idempotency_key"] = idempotency_key
+    _cancel_events[request_id] = threading.Event()
+    _write(record, durable=bool(idempotency_key))
+    _add_pending_id(request_id)
+    return record
 
 
 def get(request_id: str) -> Optional[dict[str, Any]]:
@@ -328,6 +427,64 @@ def _pending_index_path() -> Path:
     return _data_root() / _PENDING_INDEX_NAME
 
 
+def _idempotency_index_path() -> Path:
+    return _data_root() / _IDEMPOTENCY_INDEX_NAME
+
+
+def _read_idempotency_index_locked() -> dict[str, str]:
+    path = _idempotency_index_path()
+    if not path.is_file():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    raw = loaded.get("keys") if isinstance(loaded, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    return {str(key): str(value) for key, value in raw.items() if key and value}
+
+
+def _write_idempotency_index_locked(keys: dict[str, str]) -> None:
+    path = _idempotency_index_path()
+    payload = json.dumps({"keys": keys}, ensure_ascii=False, indent=2) + "\n"
+    temporary = path.with_suffix(".json.tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
+def _remember_idempotency_locked(key: str, request_id: str) -> None:
+    keys = _read_idempotency_index_locked()
+    keys[key] = request_id
+    _write_idempotency_index_locked(keys)
+
+
+def _forget_idempotency_locked(key: str) -> None:
+    keys = _read_idempotency_index_locked()
+    if key not in keys:
+        return
+    keys.pop(key, None)
+    _write_idempotency_index_locked(keys)
+
+
+def _find_idempotent_locked(key: str) -> Optional[dict[str, Any]]:
+    request_id = _read_idempotency_index_locked().get(key, "")
+    if request_id:
+        record = _read(request_id)
+        if record:
+            return record
+        _forget_idempotency_locked(key)
+    for record in _read_all():
+        if str(record.get("idempotency_key") or "") != key:
+            continue
+        _remember_idempotency_locked(key, str(record["id"]))
+        return record
+    return None
+
+
 def _path(request_id: str) -> Path:
     if "/" in request_id or "\\" in request_id or request_id in {"", ".", ".."}:
         raise ValueError("Invalid clip request id")
@@ -345,14 +502,27 @@ def _clean_notes(value: str) -> str:
 
 
 def _clean_origin(value: str) -> str:
-    """How the request entered the queue: Clipper click vs Watching sync."""
-    return "watching" if str(value or "").strip().lower() == "watching" else "manual"
+    """How the request entered the queue: Clipper, Watching, or Telegram."""
+    cleaned = str(value or "").strip().lower()
+    return cleaned if cleaned in _ORIGINS else "manual"
 
 
-def _write(record: dict[str, Any]) -> None:
+def _clean_idempotency_key(value: str) -> str:
+    key = str(value or "").strip()
+    if not key:
+        return ""
+    if not _IDEMPOTENCY_KEY.fullmatch(key):
+        raise ValueError("Invalid idempotency key")
+    return key
+
+
+def _write(record: dict[str, Any], *, durable: bool = False) -> None:
     request_id = str(record["id"])
     path = _path(request_id)
     path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    if durable:
+        with path.open("rb") as handle:
+            os.fsync(handle.fileno())
     stamp = _file_stamp(path)
     if stamp is None:
         _record_cache.pop(request_id, None)
