@@ -98,11 +98,45 @@ class ClipRequestStoreTests(unittest.TestCase):
     def test_origin_defaults_to_manual_and_can_be_watching(self) -> None:
         manual = clip_requests.create(kind="article", source="https://example.com/page")
         watching = clip_requests.create(kind="post", source="https://example.com/post", origin="watching")
+        telegram = clip_requests.create(kind="article", source="https://example.com/tg", origin="telegram")
         unknown = clip_requests.create(kind="voice", source="clip.m4a", origin="elsewhere")
         self.assertEqual(manual["origin"], "manual")
         self.assertEqual(watching["origin"], "watching")
+        self.assertEqual(telegram["origin"], "telegram")
         self.assertEqual(unknown["origin"], "manual")
         self.assertEqual(clip_requests.get(watching["id"])["origin"], "watching")
+
+    def test_idempotency_key_reuses_one_request_across_restart(self) -> None:
+        key = "telegram:15:0:abcdefabcdefabcd"
+        first, created = clip_requests.upsert_idempotent(
+            kind="article",
+            source="https://example.com/once",
+            origin="telegram",
+            idempotency_key=key,
+        )
+        self.assertTrue(created)
+        second, created_again = clip_requests.upsert_idempotent(
+            kind="article",
+            source="https://example.com/once",
+            origin="telegram",
+            idempotency_key=key,
+        )
+        self.assertFalse(created_again)
+        self.assertEqual(second["id"], first["id"])
+        self.assertEqual(clip_requests.find_by_idempotency_key(key)["id"], first["id"])
+        clip_requests.configure(self.temporary.name)
+        stored = clip_requests.get(first["id"])
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertTrue(clip_requests.was_interrupted(stored))
+        interrupted = clip_requests.interrupted_with_key_prefix("telegram:")
+        self.assertEqual([item["id"] for item in interrupted], [first["id"]])
+        with self.assertRaises(ValueError):
+            clip_requests.upsert_idempotent(
+                kind="article",
+                source="https://example.com/once",
+                idempotency_key="has spaces",
+            )
 
     def test_notes_are_capped_and_empty_by_default(self) -> None:
         empty = clip_requests.create(kind="post", source="https://example.com/post")

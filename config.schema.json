@@ -91,6 +91,38 @@
             }
           }
         },
+        "telegram": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Private-chat intake for the Obsidian Clipper. Disabled unless enabled is true. The bot token is not stored here.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "When false, the WebUI process does not poll Telegram."
+            },
+            "token_file": {
+              "type": "string",
+              "default": "",
+              "description": "Path to a mode-0600 file whose first line is the bot token. AIRTYPE_TELEGRAM_BOT_TOKEN overrides this and is preferred."
+            },
+            "allowed_user_id": {
+              "type": "integer",
+              "default": 0,
+              "description": "Telegram user id allowed to enqueue clips. 0 means unset. The first sender is never authorized automatically."
+            },
+            "allowed_chat_id": {
+              "type": "integer",
+              "default": 0,
+              "description": "Private chat id allowed to enqueue clips. 0 means unset. Both this and allowed_user_id must be set."
+            },
+            "replies_enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "When true, send a short Queued N acknowledgement. Pairing and URL contents are never replied."
+            }
+          }
+        },
         "whisper-server": {
           "type": "object",
           "additionalProperties": false,

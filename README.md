@@ -192,6 +192,10 @@ session_days = 14
 After signing in, the browser stores an HttpOnly session token rather than the
 password. Passwords saved from the Settings page are stored as PBKDF2 hashes.
 
+Private messages to an existing Telegram bot can queue the same clipper. That
+intake is off until it is configured on the WebUI host. Setup, the allowlist,
+and the pairing file are in [docs/telegram-clipper.md](docs/telegram-clipper.md).
+
 To limit the WebUI to this machine only, bind it to localhost:
 
 ```bash
