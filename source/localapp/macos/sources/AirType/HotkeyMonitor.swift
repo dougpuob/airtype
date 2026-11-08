@@ -2,7 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import Foundation
 
-/// Pure gesture state for Right Ctrl / Right Option (synthetic-time testable).
+/// Pure gesture state for Right Ctrl / Option / Command (synthetic-time testable).
 struct HotkeyGestureTracker {
     enum Mode: String {
         case single
@@ -93,11 +93,12 @@ final class HotkeyMonitor {
     private let stateLock = NSLock()
     private var eventTap: CFMachPort?
     private var globalMonitor: Any?
+    private var localMonitor: Any?
     private var runLoop: CFRunLoop?
     private var thread: Thread?
     private var callback: CGEventTapCallBack?
     private var tracker: HotkeyGestureTracker
-    private let triggers = Set(HotkeyKey.allCases)
+    private var triggers: Set<HotkeyKey>
     private var escapeHotKeyRef: EventHotKeyRef?
     private var escapeHandlerRef: EventHandlerRef?
     private var escapeArmed = false
@@ -105,10 +106,12 @@ final class HotkeyMonitor {
 
     init(
         pressCount: HotkeyGestureTracker.Mode,
+        triggers: Set<HotkeyKey> = Set(HotkeyKey.allCases),
         onGesture: @escaping () -> Void,
         onEscape: @escaping () -> Void
     ) {
         self.tracker = HotkeyGestureTracker(mode: pressCount)
+        self.triggers = triggers.isEmpty ? Set(HotkeyKey.allCases) : triggers
         self.onGesture = onGesture
         self.onEscape = onEscape
     }
@@ -119,6 +122,16 @@ final class HotkeyMonitor {
         tracker.resetTransientState()
         stateLock.unlock()
         Logger.shared.log("Hotkey press count mode=\(mode.rawValue)")
+    }
+
+    func setTriggers(_ triggers: Set<HotkeyKey>) {
+        let next = triggers.isEmpty ? Set(HotkeyKey.allCases) : triggers
+        stateLock.lock()
+        self.triggers = next
+        tracker.resetTransientState()
+        stateLock.unlock()
+        let names = next.map(\.rawValue).sorted().joined(separator: ",")
+        Logger.shared.log("Hotkey triggers=\(names)")
     }
 
     func start() {
@@ -147,6 +160,10 @@ final class HotkeyMonitor {
             NSEvent.removeMonitor(globalMonitor)
             self.globalMonitor = nil
         }
+        if let localMonitor {
+            NSEvent.removeMonitor(localMonitor)
+            self.localMonitor = nil
+        }
     }
 
     private func requestInputMonitoringAccess() {
@@ -160,32 +177,62 @@ final class HotkeyMonitor {
 
     private func startGlobalMonitor() {
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.globalMonitor == nil else { return }
-            self.globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
-                guard let self else { return }
-                if event.type == .keyDown, event.keyCode == 53 {
-                    self.handleEscapePress(source: "nsevent")
-                    return
+            guard let self else { return }
+            // Global: other apps focused. Local: AirType focused. Quartz covers both when Input Monitoring is granted.
+            if self.globalMonitor == nil {
+                self.globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
+                    self?.handleNSEvent(event, source: "nsevent-global")
                 }
-                guard event.type == .flagsChanged else { return }
-                let keycode = Int64(event.keyCode)
-                let flags = event.modifierFlags
-                guard let (key, isDown) = HotkeyKey.nseventEdge(for: keycode, flags: flags),
-                      self.isTrigger(key) else {
-                    if HotkeyKey.monitoredKeycodes.contains(keycode) {
-                        Logger.shared.log("NSEvent modifier flagsChanged keycode=\(keycode) flags=\(flags.rawValue)")
-                    }
-                    return
+                Logger.shared.log("NSEvent global flagsChanged monitor started")
+            }
+            if self.localMonitor == nil {
+                self.localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
+                    self?.handleNSEvent(event, source: "nsevent-local")
+                    return event
                 }
-                self.handleEdge(
-                    key,
-                    isDown: isDown,
-                    hasExtra: HotkeyKey.nseventHasExtraModifiers(flags, besides: key),
-                    source: "nsevent"
+                Logger.shared.log("NSEvent local flagsChanged monitor started")
+            }
+        }
+    }
+
+    private func handleNSEvent(_ event: NSEvent, source: String) {
+        if event.type == .keyDown, event.keyCode == 53 {
+            handleEscapePress(source: source)
+            return
+        }
+        guard event.type == .flagsChanged else { return }
+        let keycode = Int64(event.keyCode)
+        let flags = event.modifierFlags
+        guard let (key, isDown) = HotkeyKey.nseventEdge(for: keycode, flags: flags) else {
+            // Discover remapped Command / Fn / Caps without spamming Shift.
+            let flagsInterest = flags.intersection(.deviceIndependentFlagsMask)
+            if flagsInterest.contains(.command) || keycode == 57 || keycode == 63 {
+                Logger.shared.log(
+                    "\(source) unmapped flagsChanged keycode=\(keycode) flags=\(flags.rawValue)"
                 )
             }
-            Logger.shared.log("NSEvent global flagsChanged monitor started")
+            return
         }
+        guard isTrigger(key) else {
+            let names = triggerNamesLocked()
+            Logger.shared.log(
+                "\(source) ignored keycode=\(keycode) key=\(key.rawValue) flags=\(flags.rawValue) active_triggers=\(names)"
+            )
+            return
+        }
+        handleEdge(
+            key,
+            isDown: isDown,
+            hasExtra: HotkeyKey.nseventHasExtraModifiers(flags, besides: key),
+            source: source
+        )
+    }
+
+    private func triggerNamesLocked() -> String {
+        stateLock.lock()
+        let names = triggers.map(\.rawValue).sorted().joined(separator: ",")
+        stateLock.unlock()
+        return names
     }
 
     private func run() {
@@ -216,7 +263,7 @@ final class HotkeyMonitor {
         runLoop = CFRunLoopGetCurrent()
         CFRunLoopAddSource(runLoop, source, .commonModes)
         CGEvent.tapEnable(tap: eventTap, enable: true)
-        Logger.shared.log("Quartz hotkey listener started: Right Ctrl / Right Option")
+        Logger.shared.log("Quartz hotkey listener started: Right Ctrl / Option / Command")
         CFRunLoopRun()
     }
 
@@ -240,10 +287,19 @@ final class HotkeyMonitor {
         let keycode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
 
-        guard let (key, isDown) = HotkeyKey.quartzEdge(for: keycode, flags: flags), isTrigger(key) else {
-            if HotkeyKey.monitoredKeycodes.contains(keycode) {
-                Logger.shared.log("Modifier flagsChanged keycode=\(keycode) flags=\(flags.rawValue)")
+        guard let (key, isDown) = HotkeyKey.quartzEdge(for: keycode, flags: flags) else {
+            if flags.contains(.maskCommand) || keycode == 57 || keycode == 63 {
+                Logger.shared.log(
+                    "quartz unmapped flagsChanged keycode=\(keycode) flags=\(flags.rawValue)"
+                )
             }
+            return
+        }
+        guard isTrigger(key) else {
+            let names = triggerNamesLocked()
+            Logger.shared.log(
+                "quartz ignored keycode=\(keycode) key=\(key.rawValue) flags=\(flags.rawValue) active_triggers=\(names)"
+            )
             return
         }
         handleEdge(
@@ -412,29 +468,55 @@ final class HotkeyMonitor {
     private static let escapeHotKeyID: UInt32 = 1
 
     private func isTrigger(_ hotkeyKey: HotkeyKey) -> Bool {
-        triggers.contains(hotkeyKey)
+        stateLock.lock()
+        let enabled = triggers.contains(hotkeyKey)
+        stateLock.unlock()
+        return enabled
     }
 }
 
 enum HotkeyKey: String, CaseIterable, Hashable {
     case rightControl = "right_ctrl"
     case rightOption = "right_option"
+    case rightCommand = "right_command"
 
-    static let monitoredKeycodes: Set<Int64> = [58, 59, 61, 62]
+    /// Both sides: 54/55 ⌘, 58/61 ⌥/Alt, 59/62 ⌃. PC keyboards often only send the left keycode.
+    static let monitoredKeycodes: Set<Int64> = [54, 55, 58, 59, 61, 62]
+
+    /// Map config `hotkey_trigger` to physical keys.
+    /// On macOS, Right Option and Right Alt are the same key (keycode 61).
+    static func triggers(fromConfig value: String) -> Set<HotkeyKey> {
+        switch value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "right_ctrl", "right-ctrl", "rightcontrol", "right_control", "ctrl":
+            return [.rightControl]
+        case "right_option", "right-option", "rightoption", "option",
+             "right_alt", "right-alt", "rightalt", "alt":
+            return [.rightOption]
+        case "right_command", "right-command", "rightcommand", "right_cmd", "right-cmd",
+             "command", "cmd", "win", "windows":
+            return [.rightCommand]
+        default:
+            // "auto", legacy "both", and unknowns → all right-side triggers.
+            return Set(HotkeyKey.allCases)
+        }
+    }
 
     var displayName: String {
         switch self {
         case .rightControl: return "Right Ctrl"
         case .rightOption: return "Right Option"
+        case .rightCommand: return "Right Command"
         }
     }
 
     static func nseventEdge(for keycode: Int64, flags: NSEvent.ModifierFlags) -> (HotkeyKey, Bool)? {
         switch keycode {
-        case 62:
+        case 59, 62: // Left / Right Control
             return (.rightControl, flags.contains(.control))
-        case 61:
+        case 58, 61: // Left / Right Option (Right Alt / AltGr)
             return (.rightOption, flags.contains(.option))
+        case 54, 55: // Right / Left Command (PC Windows key → usually Left ⌘)
+            return (.rightCommand, flags.contains(.command))
         default:
             return nil
         }
@@ -442,10 +524,12 @@ enum HotkeyKey: String, CaseIterable, Hashable {
 
     static func quartzEdge(for keycode: Int64, flags: CGEventFlags) -> (HotkeyKey, Bool)? {
         switch keycode {
-        case 62:
+        case 59, 62: // Left / Right Control
             return (.rightControl, flags.contains(.maskControl))
-        case 61:
+        case 58, 61: // Left / Right Option (Right Alt / AltGr)
             return (.rightOption, flags.contains(.maskAlternate))
+        case 54, 55: // Right / Left Command (PC Windows key → usually Left ⌘)
+            return (.rightCommand, flags.contains(.maskCommand))
         default:
             return nil
         }
@@ -459,7 +543,9 @@ enum HotkeyKey: String, CaseIterable, Hashable {
         let opt = device.contains(.option)
         switch key {
         case .rightControl: return cmd || shift || opt
-        case .rightOption: return cmd || shift || ctrl
+        // PC Right Alt (AltGr) often arrives as Option+Control together — still count as Option.
+        case .rightOption: return cmd || shift
+        case .rightCommand: return shift || ctrl || opt
         }
     }
 
@@ -470,7 +556,9 @@ enum HotkeyKey: String, CaseIterable, Hashable {
         let opt = flags.contains(.maskAlternate)
         switch key {
         case .rightControl: return cmd || shift || opt
-        case .rightOption: return cmd || shift || ctrl
+        // PC Right Alt (AltGr) often arrives as Option+Control together — still count as Option.
+        case .rightOption: return cmd || shift
+        case .rightCommand: return shift || ctrl || opt
         }
     }
 }

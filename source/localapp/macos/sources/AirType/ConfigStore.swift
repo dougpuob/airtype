@@ -100,6 +100,9 @@ struct FloatingDialogConfig {
 struct RecordingConfig {
     /// "single" (default) or "double" — how many exclusive Right Ctrl/Option presses start/stop.
     var hotkeyPressCount = "single"
+    /// Which physical key(s) fire the gesture: right_ctrl / right_option / right_alt / right_command / auto.
+    /// On macOS, right_option and right_alt are the same physical key; right_command is ⌘.
+    var hotkeyTrigger = "auto"
     /// Quiet system sounds when capture actually starts / after capture stops.
     var playCues = true
 }
@@ -261,12 +264,13 @@ final class ConfigStore: ObservableObject {
             + "pre_roll_seconds=\(config.microphone.preRollSeconds)"
         )
         Logger.shared.log(
-            "Config localapp: hotkey_triggers=right_ctrl,right_option; "
+            "Config localapp: hotkey_trigger=\(config.recording.hotkeyTrigger); "
             + "chinese_mode=\(config.chineseMode.mode); "
             + "floating_dialog=(x=\(config.floatingDialog.positionXRatio), y=\(config.floatingDialog.positionYRatio))"
         )
         Logger.shared.log(
             "Config localapp.recording: hotkey_press_count=\(config.recording.hotkeyPressCount), "
+            + "hotkey_trigger=\(config.recording.hotkeyTrigger), "
             + "play_cues=\(config.recording.playCues)"
         )
         Logger.shared.log(
@@ -541,6 +545,11 @@ final class ConfigStore: ObservableObject {
                             options: ["single", "double"],
                             apply: { $0.recording.hotkeyPressCount = normalizeHotkeyPressCount($1) },
                             render: { $0.recording.hotkeyPressCount }),
+                stringField("localapp.recording", "hotkey_trigger",
+                            comment: #"Physical hotkey. Options: "right_ctrl", "right_option", "right_command", "auto". Default auto. Legacy "right_alt" normalizes to right_option."#,
+                            options: ["right_ctrl", "right_option", "right_command", "auto"],
+                            apply: { $0.recording.hotkeyTrigger = normalizeHotkeyTrigger($1) },
+                            render: { $0.recording.hotkeyTrigger }),
                 boolField("localapp.recording", "play_cues",
                           comment: "Play quiet system sounds when recording capture starts and after it stops.",
                           apply: { $0.recording.playCues = parseBool($1, defaultValue: true) },
@@ -810,6 +819,24 @@ final class ConfigStore: ObservableObject {
             return "double"
         }
         return "single"
+    }
+
+    private static func normalizeHotkeyTrigger(_ value: String) -> String {
+        let lowered = value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        switch lowered {
+        case "right_ctrl", "right-ctrl", "rightcontrol", "right_control", "ctrl":
+            return "right_ctrl"
+        case "right_option", "right-option", "rightoption", "option",
+             "right_alt", "right-alt", "rightalt", "alt":
+            // Alt and Option are the same key on macOS.
+            return "right_option"
+        case "right_command", "right-command", "rightcommand", "right_cmd", "right-cmd",
+             "command", "cmd", "win", "windows":
+            return "right_command"
+        default:
+            // "auto", legacy "both", and unknowns → all right-side triggers.
+            return "auto"
+        }
     }
 
     private static func parseBool(_ value: String, defaultValue: Bool) -> Bool {

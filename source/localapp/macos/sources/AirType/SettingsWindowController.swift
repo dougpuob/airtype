@@ -139,7 +139,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     private var micObservers: [NSObjectProtocol] = []
     private var micTimer: Timer?
 
-    // Input Behavior (Voice Input ▸ Input Behavior) — mirrors Menu Bar voice prefs
+    // Behavior (Voice Input ▸ Behavior) — voice prefs; remote polish toggles are Settings-only
     private let recordingBackendPopup = NSPopUpButton()
     private let recordingLocalModelPopup = NSPopUpButton()
     private let recordingRemoteEndpointPopup = NSPopUpButton()
@@ -152,6 +152,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     private let recordingRemoteEndpointNote = NSTextField(wrappingLabelWithString: "")
     private let recordingDetailLabel = NSTextField(labelWithString: "Local Model")
     private let recordingDetailHost = NSView()
+    /// Local-only / Remote-only preference rows; toggled in `updateRecordingBackendUI`.
+    private var recordingLiveTypingRow: NSView?
+    private var recordingLLMPolishRow: NSView?
+    private var recordingArabicNumeralsRow: NSView?
+    private var recordingTaiwanPhrasesRow: NSView?
     private static let liveTypingDefaultsKey = "liveTypingEnabled"
 
     // Obsidian
@@ -411,7 +416,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
         var voiceLeaves: [SidebarLeaf] = [
             leaf(
-                "Input Behavior",
+                "Behavior",
                 Self.recordingTabID,
                 configPath: "[localapp.recording]",
                 builder: buildRecordingTab
@@ -588,6 +593,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         case "server_args": return "Advanced Args"
         case "model_filename": return "Model File"
         case "hotkey_press_count": return "Hotkey Presses"
+        case "hotkey_trigger": return "Hotkey"
         case "play_cues": return "Play Cues"
         case "max_threads": return "Max Thread Number"
         case "max_gpu": return "Max GPU Number"
@@ -818,7 +824,20 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         }
     }
 
+    /// Replaces the path field with the Browse result (full overwrite, never append).
+    /// Syncs any active field editor first, then resigns focus so sheet dismissal
+    /// cannot restore the pre-browse text.
+    private func applyBrowsedPath(_ path: String, to field: NSTextField) {
+        if let editor = field.currentEditor() {
+            editor.string = path
+            editor.selectedRange = NSRange(location: (path as NSString).length, length: 0)
+        }
+        field.stringValue = path
+        window?.makeFirstResponder(nil)
+    }
+
     private func chooseDirectory(startingAt path: String, message: String, completion: @escaping (String) -> Void) {
+        window?.endEditing(for: nil)
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -1428,6 +1447,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     }
 
     @objc private func browseLocalServerBin() {
+        window?.endEditing(for: nil)
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -1439,7 +1459,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
             panel.directoryURL = URL(fileURLWithPath: (current as NSString).deletingLastPathComponent, isDirectory: true)
         }
         let handler: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-            if response == .OK, let url = panel.url { self?.localServerBinField.stringValue = url.path }
+            guard let self, response == .OK, let url = panel.url else { return }
+            self.applyBrowsedPath(url.path, to: self.localServerBinField)
         }
         if let window {
             panel.beginSheetModal(for: window, completionHandler: handler)
@@ -1451,7 +1472,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     @objc private func browseWhisperModelDir() {
         chooseDirectory(startingAt: whisperModelDirField.stringValue, message: "Choose the folder that holds whisper.cpp ggml models") { [weak self] path in
             guard let self else { return }
-            self.whisperModelDirField.stringValue = (path as NSString).abbreviatingWithTildeInPath
+            self.applyBrowsedPath((path as NSString).abbreviatingWithTildeInPath, to: self.whisperModelDirField)
             self.refreshWhisperModels()
         }
     }
@@ -1774,7 +1795,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         }
     }
 
-    // MARK: - Input Behavior pane (hotkey/cues + Menu Bar voice prefs)
+    // MARK: - Behavior pane (hotkey/cues + voice prefs)
 
     private static let recordingLanguageOptions: [(title: String, mode: String)] = [
         ("Traditional Chinese", "zh-tw"),
@@ -1843,32 +1864,119 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         detailRow.spacing = 8
 
         let liveTypingControl = vstack([recordingLiveTypingCheckbox, recordingLiveTypingNote])
+        let liveTypingRow = row(label: "Live Typing", key: "live_typing", control: liveTypingControl, comment: nil)
+        let llmPolishRow = row(label: "LLM Polish", key: "llm_polish", control: recordingLLMPolishCheckbox, comment: nil)
+        let arabicNumeralsRow = row(
+            label: "Arabic Numerals",
+            key: "arabic_numerals",
+            control: recordingArabicNumeralsCheckbox,
+            comment: nil
+        )
+        let taiwanPhrasesRow = row(
+            label: "Taiwan Phrases",
+            key: "taiwan_phrases",
+            control: recordingTaiwanPhrasesCheckbox,
+            comment: nil
+        )
+        recordingLiveTypingRow = liveTypingRow
+        recordingLLMPolishRow = llmPolishRow
+        recordingArabicNumeralsRow = arabicNumeralsRow
+        recordingTaiwanPhrasesRow = taiwanPhrasesRow
 
-        return buildCustomSectionTab(
+        let tab = buildCustomSectionTab(
             section,
-            overrides: [:],
+            overrides: [
+                "hotkey_press_count": { [unowned self] field in
+                    let pressPopup = NSPopUpButton()
+                    pressPopup.font = Self.fieldFont
+                    pressPopup.addItems(withTitles: field.options.isEmpty ? ["single", "double"] : field.options)
+
+                    let triggerPopup = NSPopUpButton()
+                    triggerPopup.font = Self.fieldFont
+                    // Auto first so a failed/uninitialized selection does not stick on a single key.
+                    // Option and Alt are the same physical key on macOS (keycode 61).
+                    let triggerChoices: [(title: String, value: String)] = [
+                        ("Auto", "auto"),
+                        ("Ctrl", "right_ctrl"),
+                        ("Option / Alt", "right_option"),
+                        ("Command", "right_command")
+                    ]
+                    for choice in triggerChoices {
+                        triggerPopup.addItem(withTitle: choice.title)
+                        triggerPopup.lastItem?.representedObject = choice.value
+                    }
+
+                    let cues = NSButton(checkboxWithTitle: "Play Cues", target: nil, action: nil)
+                    cues.font = Self.fieldFont
+
+                    if let triggerField = section.fields.first(where: { $0.key == "hotkey_trigger" }) {
+                        self.sectionBindings.append(FieldBinding(
+                            descriptor: triggerField,
+                            get: { (triggerPopup.selectedItem?.representedObject as? String) ?? "auto" },
+                            set: { value in
+                                let normalized: String
+                                switch value.lowercased() {
+                                case "right_ctrl", "right-ctrl", "rightcontrol", "right_control", "ctrl":
+                                    normalized = "right_ctrl"
+                                case "right_option", "right-option", "rightoption", "option",
+                                     "right_alt", "right-alt", "rightalt", "alt":
+                                    // Legacy right_alt configs map onto the same Option / Alt choice.
+                                    normalized = "right_option"
+                                case "right_command", "right-command", "rightcommand", "right_cmd",
+                                     "right-cmd", "command", "cmd", "win", "windows":
+                                    normalized = "right_command"
+                                default:
+                                    // "auto", legacy "both", and unknowns.
+                                    normalized = "auto"
+                                }
+                                if let index = triggerPopup.itemArray.firstIndex(where: {
+                                    ($0.representedObject as? String) == normalized
+                                }) {
+                                    triggerPopup.selectItem(at: index)
+                                }
+                            }
+                        ))
+                    }
+                    if let cuesField = section.fields.first(where: { $0.key == "play_cues" }) {
+                        self.sectionBindings.append(FieldBinding(
+                            descriptor: cuesField,
+                            get: { cues.state == .on ? "true" : "false" },
+                            set: {
+                                cues.state = ["true", "1", "yes", "on"].contains($0.lowercased()) ? .on : .off
+                            }
+                        ))
+                    }
+
+                    let combined = self.hstack([pressPopup, triggerPopup, cues], spacing: 8)
+                    let binding = FieldBinding(
+                        descriptor: field,
+                        get: { pressPopup.titleOfSelectedItem ?? "single" },
+                        set: { value in
+                            if pressPopup.item(withTitle: value) == nil, !value.isEmpty {
+                                pressPopup.addItem(withTitle: value)
+                            }
+                            pressPopup.selectItem(withTitle: value)
+                        }
+                    )
+                    return (combined, binding)
+                }
+            ],
             extraRows: [
                 row(label: "ASR Engine", key: "asr_backend", control: recordingBackendPopup, comment: nil),
                 detailRow,
                 row(label: "Language", key: "chinese_mode", control: recordingLanguagePopup, comment: nil),
-                row(label: "Live Typing", key: "live_typing", control: liveTypingControl, comment: nil),
-                row(label: "LLM Polish", key: "llm_polish", control: recordingLLMPolishCheckbox, comment: nil),
-                row(
-                    label: "Arabic Numerals",
-                    key: "arabic_numerals",
-                    control: recordingArabicNumeralsCheckbox,
-                    comment: nil
-                ),
-                row(
-                    label: "Taiwan Phrases",
-                    key: "taiwan_phrases",
-                    control: recordingTaiwanPhrasesCheckbox,
-                    comment: nil
-                )
+                liveTypingRow,
+                llmPolishRow,
+                arabicNumeralsRow,
+                taiwanPhrasesRow
             ],
+            skipKeys: ["hotkey_trigger", "play_cues"],
             // Title already shows `[localapp.recording]` via leaf.configPath.
             showSectionHeader: false
         )
+        // Rows exist only after this builder runs; sync Local/Remote visibility now.
+        updateRecordingBackendUI()
+        return tab
     }
 
     private func loadRecordingPrefs(config: AirTypeConfig, remoteActive: Bool) {
@@ -1936,8 +2044,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         // Keep note slot stable: hide when Local, or when Remote has nothing to say.
         let note = recordingRemoteEndpointNote.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         recordingRemoteEndpointNote.isHidden = !remote || note.isEmpty
-        recordingLiveTypingCheckbox.isEnabled = !remote
-        recordingLiveTypingNote.stringValue = remote ? "Remote ASR pastes the text after recording stops." : ""
+        // Local-only vs Remote-only preference rows (NSStackView detaches hidden views).
+        recordingLiveTypingRow?.isHidden = remote
+        recordingLiveTypingNote.stringValue = ""
+        recordingLLMPolishRow?.isHidden = !remote
+        recordingArabicNumeralsRow?.isHidden = !remote
+        recordingTaiwanPhrasesRow?.isHidden = !remote
     }
 
     private func persistRecordingRuntimePrefs() {
@@ -2088,7 +2200,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
     @objc private func browseObsidianVault() {
         chooseDirectory(startingAt: obsidianVaultField.stringValue, message: "Choose the Obsidian vault folder AirType writes notes into") { [weak self] path in
-            self?.obsidianVaultField.stringValue = path
+            guard let self else { return }
+            self.applyBrowsedPath(path, to: self.obsidianVaultField)
         }
     }
 
@@ -2197,7 +2310,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         persistRecordingRuntimePrefs()
         onSave?(config, remoteEngineActive)
         reloadSessions(from: config, keepSelection: true)
-        // Endpoint list may change after ASR profile Apply; keep Input Behavior in sync.
+        // Endpoint list may change after ASR profile Apply; keep Behavior in sync.
         refreshRecordingRemoteEndpoints(selected: RemoteWhisperSettings.selectedEndpoint)
         updateRecordingBackendUI()
         let formatter = DateFormatter()

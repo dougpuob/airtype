@@ -66,9 +66,11 @@ enum ConfigJSON {
         }
         struct Recording: Codable {
             var hotkeyPressCount: String?
+            var hotkeyTrigger: String?
             var playCues: Bool?
             enum CodingKeys: String, CodingKey {
                 case hotkeyPressCount = "hotkey_press_count"
+                case hotkeyTrigger = "hotkey_trigger"
                 case playCues = "play_cues"
             }
         }
@@ -287,6 +289,7 @@ enum ConfigJSON {
             ),
             recording: .init(
                 hotkeyPressCount: config.recording.hotkeyPressCount,
+                hotkeyTrigger: config.recording.hotkeyTrigger,
                 playCues: config.recording.playCues
             ),
             obsidian: .init(
@@ -385,6 +388,22 @@ enum ConfigJSON {
             }
             if let r = la.recording {
                 if let v = r.hotkeyPressCount { config.recording.hotkeyPressCount = v }
+                if let v = r.hotkeyTrigger {
+                    // Keep in sync with ConfigStore.normalizeHotkeyTrigger / HotkeyKey.triggers(fromConfig:).
+                    switch v.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+                    case "right_ctrl", "right-ctrl", "rightcontrol", "right_control", "ctrl":
+                        config.recording.hotkeyTrigger = "right_ctrl"
+                    case "right_option", "right-option", "rightoption", "option",
+                         "right_alt", "right-alt", "rightalt", "alt":
+                        config.recording.hotkeyTrigger = "right_option"
+                    case "right_command", "right-command", "rightcommand", "right_cmd", "right-cmd",
+                         "command", "cmd", "win", "windows":
+                        config.recording.hotkeyTrigger = "right_command"
+                    default:
+                        // "auto", legacy "both", and unknowns → all right-side triggers.
+                        config.recording.hotkeyTrigger = "auto"
+                    }
+                }
                 if let v = r.playCues { config.recording.playCues = v }
             }
             if let o = la.obsidian {

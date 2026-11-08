@@ -18,6 +18,7 @@
     },
     "recording": {
       "hotkey_press_count": "single",
+      "hotkey_trigger": "auto",
       "play_cues": true
     },
     "obsidian": {

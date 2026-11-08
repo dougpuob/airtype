@@ -163,9 +163,12 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     private func setupHotkey() {
-        let mode = Self.hotkeyPressMode(from: configStore.config.recording.hotkeyPressCount)
+        let recording = configStore.config.recording
+        let mode = Self.hotkeyPressMode(from: recording.hotkeyPressCount)
+        let triggers = HotkeyKey.triggers(fromConfig: recording.hotkeyTrigger)
         hotkeyMonitor = HotkeyMonitor(
             pressCount: mode,
+            triggers: triggers,
             onGesture: { [weak self] in
                 Task { @MainActor in
                     self?.toggleRecording()
@@ -184,9 +187,10 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         value == "double" ? .double : .single
     }
 
-    private func applyHotkeyPressCountFromConfig() {
-        let mode = Self.hotkeyPressMode(from: configStore.config.recording.hotkeyPressCount)
-        hotkeyMonitor?.setPressCount(mode)
+    private func applyHotkeySettingsFromConfig() {
+        let recording = configStore.config.recording
+        hotkeyMonitor?.setPressCount(Self.hotkeyPressMode(from: recording.hotkeyPressCount))
+        hotkeyMonitor?.setTriggers(HotkeyKey.triggers(fromConfig: recording.hotkeyTrigger))
     }
 
     private func migrateLegacyMicrophoneSelection() {
@@ -853,31 +857,14 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         menu.addItem(microphoneItem)
         menu.addItem(.separator())
 
-        let liveItem = NSMenuItem(title: "Live Typing", action: #selector(toggleLiveTyping), keyEquivalent: "")
-        liveItem.target = self
-        liveItem.state = liveTypingActive ? .on : .off
-        if isRemote {
-            liveItem.isEnabled = false
-            liveItem.toolTip = "Remote ASR pastes the text after recording stops."
+        // Remote-only prefs (LLM Polish / Arabic Numerals / Taiwan Phrases) live in Settings only.
+        if !isRemote {
+            let liveItem = NSMenuItem(title: "Live Typing", action: #selector(toggleLiveTyping), keyEquivalent: "")
+            liveItem.target = self
+            liveItem.state = liveTypingActive ? .on : .off
+            menu.addItem(liveItem)
+            menu.addItem(.separator())
         }
-        menu.addItem(liveItem)
-        let polishItem = NSMenuItem(title: "LLM Polish", action: #selector(toggleLLMPolish), keyEquivalent: "")
-        polishItem.target = self
-        polishItem.state = TextPolisher.enabled ? .on : .off
-        menu.addItem(polishItem)
-        let numeralsItem = NSMenuItem(title: "Arabic Numerals", action: #selector(toggleArabicNumerals), keyEquivalent: "")
-        numeralsItem.target = self
-        numeralsItem.state = ChineseNumerals.enabled ? .on : .off
-        menu.addItem(numeralsItem)
-        let openCCItem = NSMenuItem(title: "Taiwan Phrases", action: #selector(toggleOpenCC), keyEquivalent: "")
-        openCCItem.target = self
-        openCCItem.state = TranscriptFormatter.useOpenCC && TranscriptFormatter.openCCPath != nil ? .on : .off
-        openCCItem.isEnabled = TranscriptFormatter.openCCPath != nil
-        if TranscriptFormatter.openCCPath == nil {
-            openCCItem.toolTip = "OpenCC is not installed."
-        }
-        menu.addItem(openCCItem)
-        menu.addItem(.separator())
         let saveAllItem = NSMenuItem(
             title: "Save All to Obsidian",
             action: #selector(saveAllToObsidian),
@@ -1058,23 +1045,6 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         rebuildMenu()
     }
 
-    @objc private func toggleOpenCC() {
-        UserDefaults.standard.set(!TranscriptFormatter.useOpenCC, forKey: TranscriptFormatter.openCCDefaultsKey)
-        rebuildMenu()
-    }
-
-    @objc private func toggleArabicNumerals() {
-        UserDefaults.standard.set(!ChineseNumerals.enabled, forKey: ChineseNumerals.defaultsKey)
-        Logger.shared.log("Arabic numerals \(ChineseNumerals.enabled ? "on" : "off")")
-        rebuildMenu()
-    }
-
-    @objc private func toggleLLMPolish() {
-        UserDefaults.standard.set(!TextPolisher.enabled, forKey: TextPolisher.defaultsKey)
-        Logger.shared.log("LLM polish \(TextPolisher.enabled ? "on" : "off")")
-        rebuildMenu()
-    }
-
     @objc private func toggleLiveTyping() {
         liveTypingEnabled.toggle()
         rebuildMenu()
@@ -1161,7 +1131,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     /// ASR Local/Remote, model, endpoint, and output toggles are persisted by Settings before this runs.
     private func applySettings(_ newConfig: AirTypeConfig, useRemote: Bool) {
         let previousMic = configStore.config.microphone
-        let previousHotkey = configStore.config.recording.hotkeyPressCount
+        let previousRecording = configStore.config.recording
         let previousKind = engine.kind
         let previousRemote = engine as? RemoteWhisperEngine
 
@@ -1171,8 +1141,9 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         settingsWindow?.refreshLocalWhisperServerControls()
         floatingPanel?.applyConfig()
 
-        if previousHotkey != newConfig.recording.hotkeyPressCount {
-            applyHotkeyPressCountFromConfig()
+        if previousRecording.hotkeyPressCount != newConfig.recording.hotkeyPressCount
+            || previousRecording.hotkeyTrigger != newConfig.recording.hotkeyTrigger {
+            applyHotkeySettingsFromConfig()
         }
         if previousMic != newConfig.microphone {
             applyMicrophoneRuntimeSettings(reason: "settings_apply")
