@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   obsidianExportWatchActive,
+  obsidianSaveStatusText,
   settleObsidianExportWatch,
   startObsidianExportWatch
 } from "./obsidianExportWatch.ts";
@@ -33,4 +34,26 @@ test("a second handoff unions ids and extends the deadline", () => {
   const second = startObsidianExportWatch(first, ["b", "a"], 500, 1_000);
   assert.deepEqual(second.ids, ["a", "b"]);
   assert.equal(second.untilMs, 1_500);
+});
+
+test("save status follows the pending queue", () => {
+  const watch = startObsidianExportWatch(null, ["a", "b"], 0, 1_000);
+  assert.equal(obsidianSaveStatusText(null, ["a"], 10), null);
+  assert.deepEqual(obsidianSaveStatusText(watch, ["b"], 10), {
+    tone: "info",
+    text: "Waiting for AirType · 1 note still unsaved"
+  });
+  assert.deepEqual(obsidianSaveStatusText(watch, ["a", "b"], 10), {
+    tone: "info",
+    text: "Waiting for AirType · 2 notes still unsaved"
+  });
+  assert.deepEqual(obsidianSaveStatusText(watch, ["other"], 10), {
+    tone: "success",
+    text: "Saved to Obsidian"
+  });
+  assert.equal(obsidianSaveStatusText(watch, ["a"], 1_000)?.tone, "error");
+  assert.deepEqual(obsidianSaveStatusText(startObsidianExportWatch(null, [], 0, 1_000), [], 10), {
+    tone: "info",
+    text: "Waiting for AirType"
+  });
 });

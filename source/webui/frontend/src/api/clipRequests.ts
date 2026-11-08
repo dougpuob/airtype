@@ -106,6 +106,19 @@ export type ClipRequest = {
   updated_at: string;
 };
 
+/** The handoff currently being confirmed, including one restored after a reload. */
+export function useObsidianExportWatch() {
+  const [watch, setWatch] = useState<ObsidianExportWatch | null>(obsidianWatch);
+  useEffect(() => {
+    const listener = () => setWatch(obsidianWatch);
+    obsidianWaitListeners.add(listener);
+    return () => {
+      obsidianWaitListeners.delete(listener);
+    };
+  }, []);
+  return watch;
+}
+
 export function useClipRequestsQuery() {
   const [, bump] = useState(0);
   useEffect(() => {

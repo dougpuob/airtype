@@ -33,6 +33,33 @@ export function obsidianExportWatchActive(watch: ObsidianExportWatch | null, now
   return Boolean(watch && nowMs < watch.untilMs);
 }
 
+export type ObsidianSaveStatus = {
+  tone: "info" | "success" | "error";
+  text: string;
+};
+
+/** Current handoff status for the in-page queue notice. */
+export function obsidianSaveStatusText(
+  watch: ObsidianExportWatch | null,
+  pendingIds: readonly string[],
+  nowMs: number
+): ObsidianSaveStatus | null {
+  if (!watch) return null;
+  const pending = new Set(pendingIds);
+  const remaining = watch.ids.filter((id) => pending.has(id));
+  if (watch.ids.length > 0 && remaining.length === 0) {
+    return { tone: "success", text: "Saved to Obsidian" };
+  }
+  if (nowMs >= watch.untilMs) {
+    return { tone: "error", text: "AirType has not confirmed this save yet" };
+  }
+  if (remaining.length === 0) {
+    return { tone: "info", text: "Waiting for AirType" };
+  }
+  const noun = remaining.length === 1 ? "note" : "notes";
+  return { tone: "info", text: `Waiting for AirType · ${remaining.length} ${noun} still unsaved` };
+}
+
 /**
  * Stop watching once every exported id has left the pending queue.
  * An empty id list stays active until the deadline so a handoff with no ids
