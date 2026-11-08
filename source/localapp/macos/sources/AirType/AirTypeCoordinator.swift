@@ -1381,92 +1381,127 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
 
         let auth = configStore.config.webui.auth
         let backendEndpoint = configStore.config.backend.selectedEndpoint
+        let engine = makeObsidianImportEngine(obsidian: obsidian)
+        let secrets = ObsidianCompletion.secrets(downloadURL: manifestURL, callbackURL: nil, password: auth.password)
         Task {
-            var saved = 0
-            var failed = 0
-            var savedIDs: [String] = []
-            var failedIDs: [String] = []
-            var historyItems: [(String, String, String, String, String?)] = []
-            var firstError: String?
-            var batchComplete: ObsidianImportManifest.Callback?
             do {
                 var downloadRequest = URLRequest(url: manifestURL)
+                downloadRequest.timeoutInterval = 30
                 Self.applyBackendAuthIfMatching(auth, endpoint: backendEndpoint, to: &downloadRequest)
                 let (data, response) = try await URLSession.shared.data(for: downloadRequest)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 guard (200..<300).contains(status) else {
-                    throw NSError(domain: "AirType.ObsidianImport", code: status, userInfo: [NSLocalizedDescriptionKey: "HTTP \(status)"])
+                    throw NSError(
+                        domain: "AirType.ObsidianImport",
+                        code: status,
+                        userInfo: [NSLocalizedDescriptionKey: "The WebUI returned HTTP \(status) for the export download."]
+                    )
                 }
                 let manifest = try JSONDecoder().decode(ObsidianImportManifest.self, from: data)
                 guard manifest.kind == "airtype.obsidian_import" else {
-                    throw NSError(domain: "AirType.ObsidianImport", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unexpected kind \(manifest.kind)"])
+                    throw NSError(
+                        domain: "AirType.ObsidianImport",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Unexpected manifest kind."]
+                    )
                 }
-                batchComplete = manifest.complete
-                var writeConfig = obsidian
-                if let folder = manifest.vaultFolder, !folder.isEmpty {
-                    writeConfig.defaultFolder = folder
+                var report = await engine.importManifest(
+                    manifest: manifest,
+                    downloadURL: manifestURL,
+                    finalDownloadURL: response.url,
+                    configuredEndpoint: backendEndpoint,
+                    authEnabled: auth.enabled,
+                    username: auth.username,
+                    password: auth.password
+                )
+                var retry = await MainActor.run { self.presentObsidianImport(report) }
+                while retry && report.canRetryAcknowledgement {
+                    report = await engine.retryAcknowledgement(
+                        exportID: report.exportID,
+                        configuredEndpoint: backendEndpoint,
+                        authEnabled: auth.enabled,
+                        username: auth.username,
+                        password: auth.password
+                    )
+                    retry = await MainActor.run { self.presentObsidianImport(report) }
                 }
-                let useBatchComplete = batchComplete != nil
-                for note in manifest.notes {
-                    do {
-                        var noteConfig = writeConfig
-                        if let folder = note.folder, !folder.isEmpty {
-                            noteConfig.defaultFolder = folder
-                        }
-                        let path = try ObsidianVault.writeNote(title: note.title, note: note.markdown, config: noteConfig)
-                        if !useBatchComplete, let mark = note.markSaved, let markURL = URL(string: mark.url) {
-                            var request = URLRequest(url: markURL)
-                            request.httpMethod = mark.method ?? "POST"
-                            Self.applyBackendAuthIfMatching(auth, endpoint: backendEndpoint, to: &request)
-                            _ = try? await URLSession.shared.data(for: request)
-                        }
-                        saved += 1
-                        savedIDs.append(note.id)
-                        historyItems.append((note.id, note.title, path.path, "saved", nil))
-                    } catch {
-                        failed += 1
-                        failedIDs.append(note.id)
-                        if firstError == nil { firstError = error.localizedDescription }
-                        historyItems.append((note.id, note.title, "", "failed", error.localizedDescription))
-                    }
-                }
-                if let complete = batchComplete, let completeURL = URL(string: complete.url) {
-                    var request = URLRequest(url: completeURL)
-                    request.httpMethod = complete.method ?? "POST"
-                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    Self.applyBackendAuthIfMatching(auth, endpoint: backendEndpoint, to: &request)
-                    let payload: [String: [String]] = [
-                        "saved_ids": savedIDs,
-                        "failed_ids": failedIDs
-                    ]
-                    request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-                    _ = try? await URLSession.shared.data(for: request)
-                }
+                self.recordObsidianManifestHistory(report)
+                Logger.shared.log("Obsidian import \(report.diagnosticText)")
             } catch {
-                failed += 1
-                firstError = error.localizedDescription
-                Logger.shared.log("Obsidian manifest import failed: \(error.localizedDescription)")
-            }
-
-            HistoryStore.shared.recordObsidianImportAsync(
-                sourceURL: manifestURL.absoluteString,
-                sourceKind: "manifest_url",
-                savedCount: saved,
-                failedCount: failed,
-                skippedCount: 0,
-                items: historyItems
-            )
-
-            await MainActor.run {
-                NSApp.activate(ignoringOtherApps: true)
-                let alert = NSAlert()
-                alert.messageText = failed == 0 ? "Imported to Obsidian" : "Obsidian Import Finished with Errors"
-                var info = "Saved \(saved), failed \(failed)."
-                if let firstError, !firstError.isEmpty { info += "\n\nFirst error: \(firstError)" }
-                alert.informativeText = info
-                alert.runModal()
+                let message = ObsidianCompletion.redactSecrets(error.localizedDescription, extraSecrets: secrets)
+                Logger.shared.log("Obsidian manifest import failed: \(message)")
+                HistoryStore.shared.recordObsidianImportAsync(
+                    sourceURL: ObsidianCompletion.redactedURL(manifestURL),
+                    sourceKind: "manifest_url",
+                    savedCount: 0,
+                    failedCount: 1,
+                    skippedCount: 0,
+                    items: [("download", "manifest", "", "failed", message)]
+                )
+                await MainActor.run {
+                    self.presentObsidianDownloadFailure(message)
+                }
             }
         }
+    }
+
+    private func makeObsidianImportEngine(obsidian: ObsidianConfig) -> ObsidianImportEngine {
+        ObsidianImportEngine(
+            receipts: ObsidianImportReceiptStore(
+                directory: AirTypeHome.root.appendingPathComponent("obsidian-import-receipts", isDirectory: true)
+            ),
+            send: { request in
+                try await URLSessionObsidianCompletionSender.shared.send(request)
+            },
+            writeNote: { title, markdown, folder in
+                var config = obsidian
+                if let folder, !folder.isEmpty {
+                    config.defaultFolder = folder
+                }
+                return try ObsidianVault.writeNote(title: title, note: markdown, config: config, reuseIdentical: true)
+            },
+            readFile: { path in
+                FileManager.default.contents(atPath: path)
+            }
+        )
+    }
+
+    /// Returns true when the user asks to retry the WebUI acknowledgment.
+    private func presentObsidianImport(_ report: ObsidianImportReport) -> Bool {
+        let dialog = ObsidianImportDialog.make(report)
+        let alert = NSAlert()
+        alert.messageText = dialog.title
+        alert.informativeText = dialog.message
+        if dialog.offerRetry {
+            alert.addButton(withTitle: "Retry acknowledgment")
+            alert.addButton(withTitle: "Close")
+        } else {
+            alert.addButton(withTitle: "OK")
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        return dialog.offerRetry && response == .alertFirstButtonReturn
+    }
+
+    private func presentObsidianDownloadFailure(_ message: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Obsidian export could not be downloaded"
+        alert.informativeText = "\(message)\n\nNothing was written to the vault."
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func recordObsidianManifestHistory(_ report: ObsidianImportReport) {
+        let unconfirmed = report.writtenIDs.filter { !report.confirmedIDs.contains($0) }.count
+        HistoryStore.shared.recordObsidianImportAsync(
+            sourceURL: report.historySourceURL,
+            sourceKind: "manifest_url",
+            savedCount: report.confirmedIDs.count,
+            failedCount: report.writeFailures.count + unconfirmed,
+            skippedCount: 0,
+            items: report.items.map { ($0.id, $0.title, $0.path, $0.status, $0.message) }
+        )
     }
 
     /// Attach Basic auth when the URL host matches the configured WebUI backend.

@@ -1,21 +1,71 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { apiRequest } from "./client";
+import {
+  OBSIDIAN_EXPORT_WATCH_MS,
+  obsidianExportWatchActive,
+  settleObsidianExportWatch,
+  startObsidianExportWatch,
+  type ObsidianExportWatch
+} from "./obsidianExportWatch";
 
 export type ClipRequestStatus = "queued" | "running" | "completed" | "failed";
 
-/** Until this timestamp, the pending queue refetches every 2s (Local App save handoff). */
-let obsidianWaitUntilMs = 0;
+const OBSIDIAN_WATCH_STORAGE_KEY = "airtype:obsidian-export-watch";
 const obsidianWaitListeners = new Set<() => void>();
 
-/** Poll the pending queue while the Local App finishes an Obsidian import. */
-export function watchObsidianExport(durationMs = 60_000) {
-  obsidianWaitUntilMs = Date.now() + durationMs;
-  obsidianWaitListeners.forEach((listener) => listener());
-  window.setTimeout(() => {
-    if (Date.now() >= obsidianWaitUntilMs) {
-      obsidianWaitListeners.forEach((listener) => listener());
+function readStoredObsidianWatch(): ObsidianExportWatch | null {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(OBSIDIAN_WATCH_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ObsidianExportWatch>;
+    if (!parsed || typeof parsed.untilMs !== "number" || !Array.isArray(parsed.ids)) return null;
+    if (Date.now() >= parsed.untilMs) return null;
+    return {
+      ids: parsed.ids.filter((id): id is string => typeof id === "string" && id.length > 0),
+      untilMs: parsed.untilMs
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredObsidianWatch(watch: ObsidianExportWatch | null) {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    if (!watch) {
+      sessionStorage.removeItem(OBSIDIAN_WATCH_STORAGE_KEY);
+      return;
     }
+    sessionStorage.setItem(OBSIDIAN_WATCH_STORAGE_KEY, JSON.stringify({ ids: watch.ids, untilMs: watch.untilMs }));
+  } catch {
+    // Ignore private-mode and quota failures. The in-memory watch still polls.
+  }
+}
+
+let obsidianWatch: ObsidianExportWatch | null = readStoredObsidianWatch();
+
+function publishObsidianWatch(next: ObsidianExportWatch | null) {
+  obsidianWatch = next;
+  writeStoredObsidianWatch(next);
+  obsidianWaitListeners.forEach((listener) => listener());
+}
+
+function obsidianWatchIsActive() {
+  return obsidianExportWatchActive(obsidianWatch, Date.now());
+}
+
+/**
+ * Poll the pending queue until these export ids leave it or the deadline passes.
+ * The WebUI does not mark notes saved locally; it only refetches the server list.
+ * The watch is stored in sessionStorage so a reload during the handoff keeps polling.
+ */
+export function watchObsidianExport(ids?: string[], durationMs = OBSIDIAN_EXPORT_WATCH_MS) {
+  const next = startObsidianExportWatch(obsidianWatch, ids, Date.now(), durationMs);
+  publishObsidianWatch(next);
+  window.setTimeout(() => {
+    if (obsidianWatch && Date.now() >= obsidianWatch.untilMs) publishObsidianWatch(null);
   }, durationMs + 50);
 }
 
@@ -69,14 +119,24 @@ export function useClipRequestsQuery() {
     queryKey: ["clip-requests"],
     queryFn: async () => {
       const payload = await apiRequest<{ requests: ClipRequest[] }>("/api/clip-requests");
+      const settled = settleObsidianExportWatch(
+        obsidianWatch,
+        payload.requests.map((item) => item.id),
+        Date.now()
+      );
+      if (settled !== obsidianWatch) {
+        queueMicrotask(() => publishObsidianWatch(settled));
+      }
       return payload.requests;
     },
     refetchInterval: (query) => {
-      if (Date.now() < obsidianWaitUntilMs) return 2000;
+      if (obsidianWatchIsActive()) return 2000;
       const requests = query.state.data;
       if (!requests?.some((item) => item.status === "queued" || item.status === "running")) return false;
       return 2000;
-    }
+    },
+    // Focus refetch applies only while an Obsidian handoff is still unconfirmed.
+    refetchOnWindowFocus: () => (obsidianWatchIsActive() ? "always" : false)
   });
 }
 

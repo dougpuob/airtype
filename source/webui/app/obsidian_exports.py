@@ -51,6 +51,7 @@ def create(
     manifest = {
         "schema_version": 1,
         "kind": "airtype.obsidian_import",
+        "export_id": export_id,
         "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source": {"app": "airtype-webui", "base_url": base},
         "vault_folder": vault_folder or None,
@@ -61,6 +62,7 @@ def create(
         "id": export_id,
         "token": token,
         "note_ids": note_ids,
+        "revisions": _revisions_for(notes),
         "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "completed_at": None,
         "saved_ids": [],
@@ -99,30 +101,72 @@ def get_manifest(export_id: str, token: str) -> dict[str, Any]:
 
 
 def complete(export_id: str, token: str, *, saved_ids: list[str], failed_ids: list[str] | None = None) -> dict[str, Any]:
-    """Mark successfully written notes as saved in AirType."""
+    """Confirm notes the Local App actually wrote.
+
+    Only ids in this export are eligible. A note whose ``updated_at`` or exported
+    fields (markdown, titles, tags) changed after the manifest was built stays pending. Notes that were not in
+    the export are left alone. Calling complete again with the same ids is
+    idempotent: an already-saved note stays saved and is reported again.
+    Ids listed in ``failed_ids`` are not marked saved. The token is checked
+    and then omitted from the response.
+    """
     with _lock:
         meta = _load_meta(export_id)
         if not meta or not _token_ok(meta, token):
             raise KeyError("export not found")
-        allowed = set(str(item) for item in (meta.get("note_ids") or []))
+        allowed_order = [str(item) for item in (meta.get("note_ids") or []) if str(item or "").strip()]
+        allowed = set(allowed_order)
+        revisions = meta.get("revisions") if isinstance(meta.get("revisions"), dict) else {}
+
+        failed_seen: set[str] = set()
+        failed: list[str] = []
+        for raw in failed_ids or []:
+            request_id = str(raw or "").strip()
+            if not request_id or request_id not in allowed or request_id in failed_seen:
+                continue
+            failed_seen.add(request_id)
+            failed.append(request_id)
+
         saved: list[str] = []
+        rejected: list[dict[str, str]] = []
+        seen: set[str] = set()
+        eligible: list[str] = []
         for raw in saved_ids:
             request_id = str(raw or "").strip()
-            if not request_id or request_id not in allowed:
+            if not request_id or request_id in seen:
                 continue
-            if clip_requests.mark_saved(request_id):
+            seen.add(request_id)
+            if request_id not in allowed:
+                rejected.append({"id": request_id, "reason": "not_in_export"})
+                continue
+            if request_id in failed_seen:
+                continue
+            eligible.append(request_id)
+            reason = _confirm_exported_note(request_id, revisions.get(request_id))
+            if reason == "saved":
                 saved.append(request_id)
-        failed = [str(item) for item in (failed_ids or []) if str(item or "").strip() in allowed]
-        meta["saved_ids"] = saved
+            else:
+                rejected.append({"id": request_id, "reason": reason})
+
+        saved_set = set(saved)
+        previous = [str(item) for item in (meta.get("saved_ids") or []) if str(item or "") in allowed]
+        for request_id in previous:
+            saved_set.add(request_id)
+        failed = [request_id for request_id in failed if request_id not in saved_set]
+        meta["saved_ids"] = [request_id for request_id in allowed_order if request_id in saved_set]
         meta["failed_ids"] = failed
         meta["completed_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
         _write_meta(export_id, meta)
+        saved_set_response = set(saved)
+        ok = all(request_id in saved_set_response for request_id in eligible)
         return {
+            "ok": ok,
             "export_id": export_id,
             "saved": len(saved),
             "failed": len(failed),
             "saved_ids": saved,
             "failed_ids": failed,
+            "rejected": rejected,
         }
 
 
@@ -163,10 +207,41 @@ def _collect_notes(ids: Optional[list[str]]) -> tuple[list[dict[str, Any]], list
                 "tags": record.get("tags") if isinstance(record.get("tags"), list) else None,
                 "folder": None,
                 "source_url": record.get("source") or None,
+                "revision": {
+                    "updated_at": str(record.get("updated_at") or ""),
+                    "content_sha256": clip_requests.export_fingerprint(record),
+                },
             }
         )
         note_ids.append(request_id)
     return notes, note_ids
+
+
+def _revisions_for(notes: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    revisions: dict[str, dict[str, str]] = {}
+    for note in notes:
+        request_id = str(note.get("id") or "")
+        revision = note.get("revision") if isinstance(note.get("revision"), dict) else {}
+        if not request_id:
+            continue
+        revisions[request_id] = {
+            "updated_at": str(revision.get("updated_at") or ""),
+            "content_sha256": str(revision.get("content_sha256") or ""),
+        }
+    return revisions
+
+
+def _confirm_exported_note(request_id: str, revision: Any) -> str:
+    updated_at: Optional[str] = None
+    content_sha256: Optional[str] = None
+    if isinstance(revision, dict):
+        updated_at = str(revision.get("updated_at") or "")
+        content_sha256 = str(revision.get("content_sha256") or "")
+    return clip_requests.mark_exported_note(
+        request_id,
+        updated_at=updated_at,
+        content_sha256=content_sha256,
+    )
 
 
 def _directory_path() -> Path:

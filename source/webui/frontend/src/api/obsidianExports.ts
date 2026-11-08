@@ -21,7 +21,7 @@ export function createObsidianExport(ids?: string[]) {
 /** Create the export and open `airtype://obsidian-import?url=…`. */
 export async function handoffObsidianExport(ids?: string[]) {
   const result = await createObsidianExport(ids);
-  watchObsidianExport();
+  watchObsidianExport(result.note_ids);
   if (typeof window !== "undefined") {
     window.location.href = result.open_url;
   }

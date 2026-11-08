@@ -3,15 +3,32 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 import sys
 import threading
 from pathlib import Path
 
 WEBUI_LOG_PATH = Path("~/.airtype/airtype-webui.log").expanduser()
 _LOG_LOCK = threading.Lock()
+# Query tokens and Authorization headers are credentials. `token=` is matched
+# only as its own parameter so unrelated keys such as `max_tokens` stay intact.
+_TOKEN_QUERY = re.compile(r"(?i)(^|[&?\s\"'])(token=)[^&\s\"']+")
+_BASIC_AUTH = re.compile(r"(?i)(authorization:\s*basic\s+)[A-Za-z0-9+/=]+")
+_BEARER_AUTH = re.compile(r"(?i)(authorization:\s*bearer\s+)\S+")
+
+
+def redact_log_text(text: str) -> str:
+    """Remove export tokens and Authorization header values from a log line."""
+    if not text:
+        return text
+    redacted = _TOKEN_QUERY.sub(r"\1\2[redacted]", text)
+    redacted = _BASIC_AUTH.sub(r"\1[redacted]", redacted)
+    redacted = _BEARER_AUTH.sub(r"\1[redacted]", redacted)
+    return redacted
 
 
 def append_service_log(service: str, message: str) -> None:
+    message = redact_log_text(message)
     try:
         WEBUI_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with _LOG_LOCK:
