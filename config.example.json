@@ -14,8 +14,7 @@
     },
     "floating-dialog": {
       "position_x_ratio": 0.5,
-      "position_y_ratio": 0.62,
-      "move_lock": true
+      "position_y_ratio": 0.62
     },
     "recording": {
       "hotkey_press_count": "single",

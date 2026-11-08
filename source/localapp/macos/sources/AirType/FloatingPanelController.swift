@@ -149,14 +149,11 @@ final class FloatingPanelController {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.contentView = NSHostingView(rootView: rootView)
+        // Pill is always movable; drag updates saved position ratios used as insertion-point fallback.
         panel.onDrag = { [weak self] frame in
-            guard let self else { return }
-            if self.configStore.config.floatingDialog.moveLock { return }
-            self.save(frame: frame)
+            self?.save(frame: frame)
         }
-        panel.canDrag = { [weak self] in
-            !(self?.configStore.config.floatingDialog.moveLock ?? true)
-        }
+        panel.canDrag = { true }
         return panel
     }
 
@@ -207,7 +204,6 @@ final class FloatingPanelController {
             "Floating pill positioned: source=\(anchor.source.rawValue), "
             + "target_pid=\(targetPID.map(String.init) ?? "none"), "
             + "ax_trusted=\(AXIsProcessTrusted()), "
-            + "move_lock=\(configStore.config.floatingDialog.moveLock), "
             + String(format: "anchor=(%.1f,%.1f %.1fx%.1f), ", a.origin.x, a.origin.y, a.width, a.height)
             + String(format: "visible=(%.1f,%.1f %.1fx%.1f), ", v.origin.x, v.origin.y, v.width, v.height)
             + String(format: "origin=(%.1f,%.1f), ", clampedOrigin.x, clampedOrigin.y)

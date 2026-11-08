@@ -82,17 +82,18 @@ struct ConfigSectionDescriptor {
     let fields: [ConfigFieldDescriptor]
 }
 
-struct MicrophoneConfig {
+struct MicrophoneConfig: Equatable {
     var selectedDeviceName = ""
     var mode = "on_demand"
     var alwaysOnTimeoutMinutes = 10
     var preRollSeconds = 2.0
 }
 
+/// Internal floating-pill placement (not shown in Settings). Dragging updates the ratios;
+/// they are the fallback when the text insertion point cannot be resolved.
 struct FloatingDialogConfig {
     var positionXRatio = 0.5
     var positionYRatio = 0.62
-    var moveLock = true
 }
 
 /// [localapp.recording]: hotkey gesture + optional start/end cues.
@@ -262,7 +263,7 @@ final class ConfigStore: ObservableObject {
         Logger.shared.log(
             "Config localapp: hotkey_triggers=right_ctrl,right_option; "
             + "chinese_mode=\(config.chineseMode.mode); "
-            + "floating_dialog=(x=\(config.floatingDialog.positionXRatio), y=\(config.floatingDialog.positionYRatio), move_lock=\(config.floatingDialog.moveLock))"
+            + "floating_dialog=(x=\(config.floatingDialog.positionXRatio), y=\(config.floatingDialog.positionYRatio))"
         )
         Logger.shared.log(
             "Config localapp.recording: hotkey_press_count=\(config.recording.hotkeyPressCount), "
@@ -347,11 +348,6 @@ final class ConfigStore: ObservableObject {
 
     func updatePreRollSeconds(_ seconds: Double) {
         config.microphone.preRollSeconds = Self.clamp(seconds, minimum: 0.0, maximum: 5.0)
-        save()
-    }
-
-    func updateMoveLock(_ locked: Bool) {
-        config.floatingDialog.moveLock = locked
         save()
     }
 
@@ -496,7 +492,7 @@ final class ConfigStore: ObservableObject {
             group: "Local App Settings",
             name: "localapp.remote-asr",
             fields: [
-                stringField("localapp.remote-asr", "name", comment: "Unique profile name. [localapp] default-remote-asr-name picks the active one.",
+                stringField("localapp.remote-asr", "name", comment: "Unique profile name. Apply/Save of the selected row writes [localapp] default-remote-asr-name.",
                             apply: { $0.remoteASR.name = $1.isEmpty ? "default" : $1 },
                             render: { $0.remoteASR.name }),
                 stringField("localapp.remote-asr", "endpoint",
@@ -549,21 +545,6 @@ final class ConfigStore: ObservableObject {
                           comment: "Play quiet system sounds when recording capture starts and after it stops.",
                           apply: { $0.recording.playCues = parseBool($1, defaultValue: true) },
                           render: { $0.recording.playCues ? "true" : "false" })
-            ]
-        ),
-        ConfigSectionSchema(
-            group: "Local App Settings",
-            name: "localapp.floating-dialog",
-            fields: [
-                numberField("localapp.floating-dialog", "position_x_ratio", comment: "Position is stored as the dialog center ratio across the whole desktop.",
-                            apply: { $0.floatingDialog.positionXRatio = clamp(parseDouble($1, defaultValue: 0.5), minimum: 0.0, maximum: 1.0) },
-                            render: { format($0.floatingDialog.positionXRatio) }),
-                numberField("localapp.floating-dialog", "position_y_ratio",
-                            apply: { $0.floatingDialog.positionYRatio = clamp(parseDouble($1, defaultValue: 0.62), minimum: 0.0, maximum: 1.0) },
-                            render: { format($0.floatingDialog.positionYRatio) }),
-                boolField("localapp.floating-dialog", "move_lock",
-                          apply: { $0.floatingDialog.moveLock = parseBool($1, defaultValue: true) },
-                          render: { $0.floatingDialog.moveLock ? "true" : "false" })
             ]
         ),
         ConfigSectionSchema(
@@ -693,9 +674,6 @@ final class ConfigStore: ObservableObject {
                 stringField("webui.llm-server", "api_key", kind: .secret,
                             apply: { $0.webui.llm.apiKey = $1 },
                             render: { $0.webui.llm.apiKey }),
-                arrayField("webui.llm-server", "models",
-                           apply: { $0.webui.llm.models = $1 },
-                           render: { $0.webui.llm.models }),
                 stringField("webui.llm-server", "selected-model",
                             apply: {
                                 $0.webui.llm.selectedModel = $1

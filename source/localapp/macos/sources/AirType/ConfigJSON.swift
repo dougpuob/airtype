@@ -56,6 +56,7 @@ enum ConfigJSON {
         struct Floating: Codable {
             var positionXRatio: Double?
             var positionYRatio: Double?
+            /// Legacy; ignored. Pill is always movable.
             var moveLock: Bool?
             enum CodingKeys: String, CodingKey {
                 case positionXRatio = "position_x_ratio"
@@ -282,7 +283,7 @@ enum ConfigJSON {
             floatingDialog: .init(
                 positionXRatio: config.floatingDialog.positionXRatio,
                 positionYRatio: config.floatingDialog.positionYRatio,
-                moveLock: config.floatingDialog.moveLock
+                moveLock: nil
             ),
             recording: .init(
                 hotkeyPressCount: config.recording.hotkeyPressCount,
@@ -340,7 +341,8 @@ enum ConfigJSON {
                     provider: $0.provider,
                     endpoint: $0.endpoint,
                     apiKey: $0.apiKey,
-                    models: $0.models,
+                    // Supported-model catalogs are Fetch-time UI state; only selected-model is persisted.
+                    models: [],
                     selectedModel: $0.selectedModel,
                     contextLength: $0.contextLength,
                     temperature: $0.temperature,
@@ -379,7 +381,7 @@ enum ConfigJSON {
             if let f = la.floatingDialog {
                 if let v = f.positionXRatio { config.floatingDialog.positionXRatio = v }
                 if let v = f.positionYRatio { config.floatingDialog.positionYRatio = v }
-                if let v = f.moveLock { config.floatingDialog.moveLock = v }
+                // move_lock is legacy and ignored; pill is always movable.
             }
             if let r = la.recording {
                 if let v = r.hotkeyPressCount { config.recording.hotkeyPressCount = v }

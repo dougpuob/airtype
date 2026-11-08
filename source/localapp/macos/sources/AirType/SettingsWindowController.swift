@@ -6,8 +6,8 @@ import Foundation
 /// with a detail pane on the right. Leaves map to sections of ~/.airtype/config.json; Apply / Save writes
 /// JSON through ConfigStore and the coordinator reloads it in-app.
 ///
-/// Endpoints (ASR, Whisper, LLM) are profile lists: [[localapp.remote-asr]], [[webui.whisper-server]] and
-/// [[webui.llm-server]], each with a `name` and an active-profile key
+/// Endpoints (ASR, Whisper, LLM) are named profile lists: [[localapp.remote-asr]], [[webui.whisper-server]] and
+/// [[webui.llm-server]]. Apply / Save writes the currently selected profile into the matching default key
 /// ([localapp] default-remote-asr-name, [webui] default-whisper-server-name, [webui] default-llm-server-name).
 /// Local Service ([localapp.local-whisper]) holds the self-hosted whisper-server settings, separate from endpoint profiles.
 @MainActor
@@ -17,6 +17,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     static let llmTabID = "webui.llm-server"
     static let microphoneTabID = "localapp.microphone"
     static let localWhisperTabID = "localapp.local-whisper"
+    static let recordingTabID = "localapp.recording"
 
     /// (new config, use Remote ASR as the active engine)
     var onSave: ((AirTypeConfig, Bool) -> Void)?
@@ -123,7 +124,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
     // LLM form
     private var llmBindings: [FieldBinding] = []
-    private let llmModelsField = NSTextField()
     private let llmModelCombo = NSComboBox()
     private let llmFetchButton = NSButton()
     private let llmFetchNote = NSTextField(wrappingLabelWithString: "")
@@ -138,6 +138,21 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     private var micDeviceSignature: [String] = []
     private var micObservers: [NSObjectProtocol] = []
     private var micTimer: Timer?
+
+    // Input Behavior (Voice Input ▸ Input Behavior) — mirrors Menu Bar voice prefs
+    private let recordingBackendPopup = NSPopUpButton()
+    private let recordingLocalModelPopup = NSPopUpButton()
+    private let recordingRemoteEndpointPopup = NSPopUpButton()
+    private let recordingLanguagePopup = NSPopUpButton()
+    private let recordingLiveTypingCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let recordingLLMPolishCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let recordingArabicNumeralsCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let recordingTaiwanPhrasesCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let recordingLiveTypingNote = NSTextField(wrappingLabelWithString: "")
+    private let recordingRemoteEndpointNote = NSTextField(wrappingLabelWithString: "")
+    private let recordingDetailLabel = NSTextField(labelWithString: "Local Model")
+    private let recordingDetailHost = NSView()
+    private static let liveTypingDefaultsKey = "liveTypingEnabled"
 
     // Obsidian
     private let obsidianVaultField = NSTextField()
@@ -172,8 +187,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
             selectFirstLeaf()
         }
         startMicTimer()
-        // Show a Dock icon while Settings is open so the window is easy to find.
-        NSApp.setActivationPolicy(.regular)
+        // Stay .accessory (menu-bar app). Toggling .regular ↔ .accessory on open/close
+        // makes macOS tear down and restore the status item — feels like an app restart.
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
@@ -191,22 +206,29 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         remoteEngineActive = remoteActive
         footerStatus.stringValue = ""
         refreshMicDevices(force: true)
+        loadRecordingPrefs(config: config, remoteActive: remoteActive)
     }
 
     private func reloadSessions(from config: AirTypeConfig, keepSelection: Bool) {
         asrSession.load(
             config.remoteASRProfiles.isEmpty ? [config.remoteASR] : config.remoteASRProfiles,
-            activeName: config.selectedRemoteASRName.isEmpty ? config.remoteASR.name : config.selectedRemoteASRName,
+            preferredName: config.selectedRemoteASRName.isEmpty ? config.remoteASR.name : config.selectedRemoteASRName,
             selecting: keepSelection ? asrSession.index : nil
         )
         whisperSession.load(
             config.webui.whisperServers.isEmpty ? [config.webui.whisper] : config.webui.whisperServers,
-            activeName: config.webui.selectedWhisperServerName.isEmpty ? config.webui.whisper.name : config.webui.selectedWhisperServerName,
+            preferredName: config.webui.selectedWhisperServerName.isEmpty ? config.webui.whisper.name : config.webui.selectedWhisperServerName,
             selecting: keepSelection ? whisperSession.index : nil
         )
+        // Drop any legacy persisted `models` catalogs — config only keeps selected-model.
+        let llmProfiles = (config.webui.llmServers.isEmpty ? [config.webui.llm] : config.webui.llmServers).map { profile -> LLMServerConfig in
+            var profile = profile
+            profile.models = []
+            return profile
+        }
         llmSession.load(
-            config.webui.llmServers.isEmpty ? [config.webui.llm] : config.webui.llmServers,
-            activeName: config.webui.selectedServerName.isEmpty ? config.webui.llm.name : config.webui.selectedServerName,
+            llmProfiles,
+            preferredName: config.webui.selectedServerName.isEmpty ? config.webui.llm.name : config.webui.selectedServerName,
             selecting: keepSelection ? llmSession.index : nil
         )
     }
@@ -220,8 +242,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     func windowWillClose(_ notification: Notification) {
         micTimer?.invalidate()
         micTimer = nil
-        // Return to menu-bar agent mode (no Dock icon) once Settings is gone.
-        NSApp.setActivationPolicy(.accessory)
     }
 
     // MARK: - Window
@@ -379,13 +399,23 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
         let endpointLeaves: [SidebarLeaf] = [
             leaf("ASR Endpoints", Self.remoteTabID, extraSections: ["localapp"], builder: buildRemoteTab),
-            leaf("LLM Endpoints", Self.llmTabID, extraSections: ["webui"], builder: buildLLMTab),
+            leaf(
+                "LLM Endpoints",
+                Self.llmTabID,
+                extraSections: ["webui"],
+                configPath: "[webui.llm-server]",
+                builder: buildLLMTab
+            ),
             leaf("Whisper Endpoints", Self.whisperTabID, builder: buildWhisperTab)
         ].compactMap { $0 }
 
         var voiceLeaves: [SidebarLeaf] = [
-            leaf("Floating Pill", "localapp.floating-dialog", builder: buildSectionTab),
-            leaf("Recording", "localapp.recording", builder: buildSectionTab)
+            leaf(
+                "Input Behavior",
+                Self.recordingTabID,
+                configPath: "[localapp.recording]",
+                builder: buildRecordingTab
+            )
         ].compactMap { $0 }
         voiceLeaves.append(SidebarLeaf(title: "History", sections: ["voice.history"], view: buildVoiceHistoryTab()))
 
@@ -839,7 +869,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         let testStack = setupTestControls(button: remoteTestButton, spinner: remoteSpinner, result: remoteTestResult, action: #selector(testRemote))
 
                 let rows: [NSView] = [
-            sectionHeader("[[\(section.name)]]  ·  active = [localapp] default-remote-asr-name"),
+            sectionHeader("[[\(section.name)]]"),
             row(label: "Profiles", key: nil, control: asrSession.panel.view, comment: nil),
             row(label: "Name", key: "name", control: remoteNameField, comment: nil),
             row(label: "Endpoint", key: "endpoint", control: remoteEndpointField, comment: nil),
@@ -985,7 +1015,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
     private func buildWhisperTab(_ section: ConfigSectionDescriptor) -> NSView {
         var rows: [NSView] = [
-            sectionHeader("[[\(section.name)]]  ·  active = [webui] default-whisper-server-name"),
+            sectionHeader("[[\(section.name)]]"),
             row(label: "Profiles", key: nil, control: whisperSession.panel.view, comment: nil)
         ]
         for field in section.fields {
@@ -1448,42 +1478,166 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     // MARK: - LLM pane ([[webui.llm-server]])
 
     private func buildLLMTab(_ section: ConfigSectionDescriptor) -> NSView {
+        // Match Whisper Server Preferences density: shared 480 control column, 88 action buttons.
+        let fieldWidth: CGFloat = 480
+        let actionButtonWidth: CGFloat = 88
+        llmBindings.removeAll()
+
         var rows: [NSView] = [
-            sectionHeader("[[\(section.name)]]  ·  active = [webui] default-llm-server-name"),
             row(label: "Profiles", key: nil, control: llmSession.panel.view, comment: nil)
         ]
-        for field in section.fields {
-            let control: NSView
-            let binding: FieldBinding
-            switch field.key {
-            case "models":
-                let text = llmModelsField
-                styleEditableField(text)
-                text.widthAnchor.constraint(equalToConstant: 480).isActive = true
-                text.placeholderString = ""
-                control = text
-                binding = FieldBinding(descriptor: field, get: { text.stringValue }, set: { text.stringValue = $0 })
-            case "selected-model":
-                let combo = llmModelCombo
-                styleEditableCombo(combo)
-                combo.completes = true
-                combo.numberOfVisibleItems = 14
-                combo.widthAnchor.constraint(equalToConstant: 360).isActive = true
-                llmFetchButton.title = "Fetch Models"
-                llmFetchButton.bezelStyle = .rounded
-                llmFetchButton.target = self
-                llmFetchButton.action = #selector(fetchLLMModels)
-                noteStyle(llmFetchNote)
-                control = vstack([hstack([combo, llmFetchButton]), llmFetchNote])
-                binding = FieldBinding(descriptor: field, get: { combo.stringValue }, set: { combo.stringValue = $0 })
-            default:
-                (control, binding) = makeControl(field)
-            }
+
+        func appendBinding(_ binding: FieldBinding) {
             llmBindings.append(binding)
-            rows.append(row(label: Self.fieldLabel(field.key), key: field.key, control: control, comment: nil))
         }
-        let testStack = setupTestControls(button: llmTestButton, spinner: llmSpinner, result: llmTestResult, action: #selector(testLLM))
+
+        // Name + Provider
+        if let nameField = section.fields.first(where: { $0.key == "name" }) {
+            let name = NSTextField()
+            let provider = NSTextField()
+            styleEditableField(name)
+            styleEditableField(provider)
+            name.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            provider.widthAnchor.constraint(equalToConstant: 140).isActive = true
+            if let providerField = section.fields.first(where: { $0.key == "provider" }) {
+                appendBinding(FieldBinding(descriptor: providerField, get: { provider.stringValue }, set: { provider.stringValue = $0 }))
+            }
+            let providerLabel = NSTextField(labelWithString: "Provider")
+            providerLabel.font = Self.fieldFont
+            providerLabel.textColor = .secondaryLabelColor
+            let combined = hstack([name, providerLabel, provider], spacing: 8)
+            combined.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+            appendBinding(FieldBinding(descriptor: nameField, get: { name.stringValue }, set: { name.stringValue = $0 }))
+            rows.append(row(label: "Name", key: "name", control: combined, comment: nil))
+        }
+
+        // Endpoint
+        if let endpointField = section.fields.first(where: { $0.key == "endpoint" }) {
+            let text = NSTextField()
+            styleEditableField(text)
+            text.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+            appendBinding(FieldBinding(descriptor: endpointField, get: { text.stringValue }, set: { text.stringValue = $0 }))
+            rows.append(row(label: "Endpoint", key: "endpoint", control: text, comment: nil))
+        }
+
+        // API Key
+        if let apiKeyField = section.fields.first(where: { $0.key == "api_key" }) {
+            let text = NSSecureTextField()
+            styleEditableField(text)
+            text.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+            appendBinding(FieldBinding(descriptor: apiKeyField, get: { text.stringValue }, set: { text.stringValue = $0 }))
+            rows.append(row(label: "API Key", key: "api_key", control: text, comment: nil))
+        }
+
+        // Selected model + Fetch
+        if let modelField = section.fields.first(where: { $0.key == "selected-model" }) {
+            let combo = llmModelCombo
+            styleEditableCombo(combo)
+            combo.completes = true
+            combo.numberOfVisibleItems = 14
+            combo.widthAnchor.constraint(equalToConstant: fieldWidth - actionButtonWidth - 8).isActive = true
+            llmFetchButton.title = "Fetch"
+            llmFetchButton.bezelStyle = .rounded
+            llmFetchButton.controlSize = .regular
+            llmFetchButton.target = self
+            llmFetchButton.action = #selector(fetchLLMModels)
+            llmFetchButton.toolTip = "Fetch Models from /v1/models"
+            llmFetchButton.widthAnchor.constraint(equalToConstant: actionButtonWidth).isActive = true
+            noteStyle(llmFetchNote)
+            let combined = hstack([combo, llmFetchButton], spacing: 8)
+            combined.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+            appendBinding(FieldBinding(descriptor: modelField, get: { combo.stringValue }, set: { combo.stringValue = $0 }))
+            rows.append(row(label: "Model", key: "selected-model", control: vstack([combined, llmFetchNote]), comment: nil))
+        }
+
+        // Context Length + Temperature + Thinking
+        if let contextField = section.fields.first(where: { $0.key == "contextLength" }) {
+            let context = NSTextField()
+            let temperature = NSTextField()
+            let thinking = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+            styleEditableField(context)
+            styleEditableField(temperature)
+            context.widthAnchor.constraint(equalToConstant: 88).isActive = true
+            temperature.widthAnchor.constraint(equalToConstant: 56).isActive = true
+            if let temperatureField = section.fields.first(where: { $0.key == "temperature" }) {
+                appendBinding(FieldBinding(
+                    descriptor: temperatureField,
+                    get: { temperature.stringValue },
+                    set: { temperature.stringValue = $0 }
+                ))
+            }
+            if let thinkingField = section.fields.first(where: { $0.key == "thinking" }) {
+                appendBinding(FieldBinding(
+                    descriptor: thinkingField,
+                    get: { thinking.state == .on ? "true" : "false" },
+                    set: {
+                        thinking.state = ["true", "1", "yes", "on"].contains($0.lowercased()) ? .on : .off
+                    }
+                ))
+            }
+            let temperatureLabel = NSTextField(labelWithString: "Temperature")
+            temperatureLabel.font = Self.fieldFont
+            temperatureLabel.textColor = .secondaryLabelColor
+            let thinkingLabel = NSTextField(labelWithString: "Thinking")
+            thinkingLabel.font = Self.fieldFont
+            thinkingLabel.textColor = .secondaryLabelColor
+            let spacer = NSView()
+            spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let combined = hstack([
+                context,
+                spacer,
+                temperatureLabel,
+                temperature,
+                thinkingLabel,
+                thinking
+            ], spacing: 8)
+            combined.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+            appendBinding(FieldBinding(descriptor: contextField, get: { context.stringValue }, set: { context.stringValue = $0 }))
+            rows.append(row(label: "Context Length", key: "contextLength", control: combined, comment: nil))
+        }
+
+        // System prompt
+        if let systemField = section.fields.first(where: { $0.key == "system" }) {
+            let text = NSTextField()
+            text.usesSingleLineMode = false
+            text.cell?.wraps = true
+            text.cell?.isScrollable = false
+            styleEditableField(text)
+            text.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+            text.heightAnchor.constraint(equalToConstant: 64).isActive = true
+            appendBinding(FieldBinding(descriptor: systemField, get: { text.stringValue }, set: { text.stringValue = $0 }))
+            rows.append(row(label: "System Prompt", key: "system", control: text, comment: nil))
+        }
+
+        // Test + Status-style result
+        llmTestButton.title = "Test"
+        llmTestButton.bezelStyle = .rounded
+        llmTestButton.controlSize = .regular
+        llmTestButton.target = self
+        llmTestButton.action = #selector(testLLM)
+        llmTestButton.widthAnchor.constraint(equalToConstant: actionButtonWidth).isActive = true
+        llmSpinner.style = .spinning
+        llmSpinner.controlSize = .small
+        llmSpinner.isDisplayedWhenStopped = false
+        llmTestResult.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        llmTestResult.textColor = .secondaryLabelColor
+        llmTestResult.isSelectable = true
+        llmTestResult.alignment = .left
+        llmTestResult.maximumNumberOfLines = 2
+        llmTestResult.usesSingleLineMode = false
+        llmTestResult.lineBreakMode = .byWordWrapping
+        llmTestResult.cell?.wraps = true
+        llmTestResult.preferredMaxLayoutWidth = fieldWidth
+        llmTestResult.heightAnchor.constraint(greaterThanOrEqualToConstant: 28).isActive = true
+        let testStack = vstack([
+            hstack([llmTestButton, llmSpinner], spacing: 8),
+            llmTestResult
+        ], spacing: 6)
+        testStack.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
         rows.append(row(label: "Test", key: nil, control: testStack, comment: nil))
+
         return scrollWrap(rows)
     }
 
@@ -1502,11 +1656,26 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         for binding in llmBindings {
             binding.set(ConfigStore.displayValue(section: binding.descriptor.section, key: binding.descriptor.key, in: scratch))
         }
-        llmModelCombo.removeAllItems()
-        llmModelCombo.addItems(withObjectValues: profile.models)
-        llmModelCombo.stringValue = profile.selectedModel
+        // Config only stores selected-model. Until Fetch, the dropdown shows that one name.
+        applyLLMModelList([], selected: profile.selectedModel)
         llmFetchNote.stringValue = ""
         llmTestResult.stringValue = ""
+        llmTestResult.textColor = .secondaryLabelColor
+    }
+
+    /// Replace the Model combo items and keep `selected` as the visible choice.
+    /// Empty `models` → dropdown only contains the active selected-model (if any).
+    private func applyLLMModelList(_ models: [String], selected: String) {
+        let chosen = Self.trim(selected)
+        var items = models
+        if items.isEmpty {
+            if !chosen.isEmpty { items = [chosen] }
+        } else if !chosen.isEmpty, !items.contains(chosen) {
+            items.insert(chosen, at: 0)
+        }
+        llmModelCombo.removeAllItems()
+        llmModelCombo.addItems(withObjectValues: items)
+        llmModelCombo.stringValue = chosen
     }
 
     /// Base URL without a trailing /v1 (callers append /v1/...).
@@ -1519,6 +1688,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
     @objc private func fetchLLMModels() {
         let profile = readLLMEditor()
+        // Capture before the async fetch / combo rebuild so removeAllItems cannot wipe it.
+        let selectedBeforeFetch = Self.trim(profile.selectedModel)
         guard let base = Self.llmBase(profile.endpoint) else {
             llmFetchNote.stringValue = "Enter an endpoint first."
             return
@@ -1531,18 +1702,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
             let list = await BackendClient().listRemoteModels(target: target)
             llmFetchButton.isEnabled = true
             guard list.detectedProtocol == .openAITranscriptions, !list.models.isEmpty else {
+                // Nothing usable → clear the ephemeral dropdown (and selection). Config still only stores selected-model on Save.
+                applyLLMModelList([], selected: "")
                 llmFetchNote.stringValue = "No /v1/models list. " + list.note
+                Logger.shared.log("Settings: LLM fetch cleared models profile=\(profile.name), endpoint=\(base)")
                 return
             }
-            llmModelsField.stringValue = list.models.joined(separator: ", ")
-            llmModelCombo.removeAllItems()
-            llmModelCombo.addItems(withObjectValues: list.models)
-            let current = Self.trim(llmModelCombo.stringValue)
-            if current.isEmpty || !list.models.contains(current) {
-                llmModelCombo.stringValue = list.models[0]
-            }
+            // Ephemeral dropdown only — not written to config.json. Keep the model selected when Fetch started.
+            applyLLMModelList(list.models, selected: selectedBeforeFetch)
             llmFetchNote.stringValue = "\(list.models.count) models from \(base)/v1/models."
-            Logger.shared.log("Settings: fetched LLM models profile=\(profile.name), endpoint=\(base), count=\(list.models.count)")
+            Logger.shared.log("Settings: fetched LLM models profile=\(profile.name), endpoint=\(base), count=\(list.models.count), kept=\(selectedBeforeFetch)")
         }
     }
 
@@ -1603,6 +1772,198 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
             llmTestButton.isEnabled = true
             Self.show(line, ok: ok, in: llmTestResult)
         }
+    }
+
+    // MARK: - Input Behavior pane (hotkey/cues + Menu Bar voice prefs)
+
+    private static let recordingLanguageOptions: [(title: String, mode: String)] = [
+        ("Traditional Chinese", "zh-tw"),
+        ("Simplified Chinese", "zh-cn"),
+        ("English", "en"),
+        ("Auto Detect – Traditional", "auto-tw"),
+        ("Auto Detect – Simplified", "auto-cn")
+    ]
+
+    private func buildRecordingTab(_ section: ConfigSectionDescriptor) -> NSView {
+        recordingBackendPopup.removeAllItems()
+        recordingBackendPopup.font = Self.fieldFont
+        recordingBackendPopup.target = self
+        recordingBackendPopup.action = #selector(recordingBackendChanged)
+        for (title, value) in [("Local", "local"), ("Remote", "remote")] {
+            recordingBackendPopup.addItem(withTitle: title)
+            recordingBackendPopup.lastItem?.representedObject = value
+        }
+        recordingBackendPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
+
+        recordingLocalModelPopup.removeAllItems()
+        recordingLocalModelPopup.font = Self.fieldFont
+        for kind in ASREngineKind.localCases {
+            recordingLocalModelPopup.addItem(withTitle: kind.title)
+            recordingLocalModelPopup.lastItem?.representedObject = kind.rawValue
+        }
+        recordingLocalModelPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
+
+        recordingRemoteEndpointPopup.removeAllItems()
+        recordingRemoteEndpointPopup.font = Self.fieldFont
+        recordingRemoteEndpointPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 360).isActive = true
+        noteStyle(recordingRemoteEndpointNote)
+
+        recordingLanguagePopup.removeAllItems()
+        recordingLanguagePopup.font = Self.fieldFont
+        for option in Self.recordingLanguageOptions {
+            recordingLanguagePopup.addItem(withTitle: option.title)
+            recordingLanguagePopup.lastItem?.representedObject = option.mode
+        }
+        recordingLanguagePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
+
+        noteStyle(recordingLiveTypingNote)
+
+        // One fixed-height detail row swaps Local Model ↔ Remote Endpoint so Language does not jump.
+        recordingDetailLabel.alignment = .right
+        recordingDetailLabel.font = Self.fieldFont
+        recordingDetailLabel.widthAnchor.constraint(equalToConstant: 128).isActive = true
+        recordingDetailHost.translatesAutoresizingMaskIntoConstraints = false
+        recordingLocalModelPopup.translatesAutoresizingMaskIntoConstraints = false
+        recordingRemoteEndpointPopup.translatesAutoresizingMaskIntoConstraints = false
+        recordingDetailHost.subviews.forEach { $0.removeFromSuperview() }
+        recordingDetailHost.addSubview(recordingLocalModelPopup)
+        recordingDetailHost.addSubview(recordingRemoteEndpointPopup)
+        NSLayoutConstraint.activate([
+            recordingDetailHost.heightAnchor.constraint(equalToConstant: 26),
+            recordingDetailHost.widthAnchor.constraint(greaterThanOrEqualToConstant: 360),
+            recordingLocalModelPopup.leadingAnchor.constraint(equalTo: recordingDetailHost.leadingAnchor),
+            recordingLocalModelPopup.centerYAnchor.constraint(equalTo: recordingDetailHost.centerYAnchor),
+            recordingRemoteEndpointPopup.leadingAnchor.constraint(equalTo: recordingDetailHost.leadingAnchor),
+            recordingRemoteEndpointPopup.centerYAnchor.constraint(equalTo: recordingDetailHost.centerYAnchor)
+        ])
+        let detailControl = vstack([recordingDetailHost, recordingRemoteEndpointNote], spacing: 2)
+        let detailRow = NSStackView(views: [recordingDetailLabel, detailControl])
+        detailRow.orientation = .horizontal
+        detailRow.alignment = .firstBaseline
+        detailRow.spacing = 8
+
+        let liveTypingControl = vstack([recordingLiveTypingCheckbox, recordingLiveTypingNote])
+
+        return buildCustomSectionTab(
+            section,
+            overrides: [:],
+            extraRows: [
+                row(label: "ASR Engine", key: "asr_backend", control: recordingBackendPopup, comment: nil),
+                detailRow,
+                row(label: "Language", key: "chinese_mode", control: recordingLanguagePopup, comment: nil),
+                row(label: "Live Typing", key: "live_typing", control: liveTypingControl, comment: nil),
+                row(label: "LLM Polish", key: "llm_polish", control: recordingLLMPolishCheckbox, comment: nil),
+                row(
+                    label: "Arabic Numerals",
+                    key: "arabic_numerals",
+                    control: recordingArabicNumeralsCheckbox,
+                    comment: nil
+                ),
+                row(
+                    label: "Taiwan Phrases",
+                    key: "taiwan_phrases",
+                    control: recordingTaiwanPhrasesCheckbox,
+                    comment: nil
+                )
+            ],
+            // Title already shows `[localapp.recording]` via leaf.configPath.
+            showSectionHeader: false
+        )
+    }
+
+    private func loadRecordingPrefs(config: AirTypeConfig, remoteActive: Bool) {
+        selectPopup(recordingBackendPopup, represented: remoteActive ? "remote" : "local")
+        selectPopup(recordingLocalModelPopup, represented: ASREngineKind.storedLocalModel.rawValue)
+        refreshRecordingRemoteEndpoints(selected: RemoteWhisperSettings.selectedEndpoint)
+        let language = config.chineseMode.mode
+        if recordingLanguagePopup.itemArray.contains(where: { ($0.representedObject as? String) == language }) {
+            selectPopup(recordingLanguagePopup, represented: language)
+        } else {
+            selectPopup(recordingLanguagePopup, represented: "zh-tw")
+        }
+        recordingLiveTypingCheckbox.state = (UserDefaults.standard.object(forKey: Self.liveTypingDefaultsKey) as? Bool ?? true) ? .on : .off
+        recordingLLMPolishCheckbox.state = TextPolisher.enabled ? .on : .off
+        recordingArabicNumeralsCheckbox.state = ChineseNumerals.enabled ? .on : .off
+        let openCCAvailable = TranscriptFormatter.openCCPath != nil
+        recordingTaiwanPhrasesCheckbox.isEnabled = openCCAvailable
+        recordingTaiwanPhrasesCheckbox.state = (TranscriptFormatter.useOpenCC && openCCAvailable) ? .on : .off
+        recordingTaiwanPhrasesCheckbox.toolTip = openCCAvailable ? nil : "OpenCC is not installed."
+        updateRecordingBackendUI()
+    }
+
+    private func refreshRecordingRemoteEndpoints(selected: String) {
+        recordingRemoteEndpointPopup.removeAllItems()
+        let endpoints = RemoteWhisperSettings.endpoints
+        if endpoints.isEmpty {
+            let empty = NSMenuItem(title: "No Server Configured", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            recordingRemoteEndpointPopup.menu?.addItem(empty)
+            recordingRemoteEndpointNote.stringValue = "Add an endpoint under Endpoint Profiles ▸ ASR Endpoints."
+        } else {
+            for endpoint in endpoints {
+                recordingRemoteEndpointPopup.addItem(withTitle: endpoint)
+                recordingRemoteEndpointPopup.lastItem?.representedObject = endpoint
+            }
+            if !selected.isEmpty {
+                selectPopup(recordingRemoteEndpointPopup, represented: selected)
+            } else if let first = endpoints.first {
+                selectPopup(recordingRemoteEndpointPopup, represented: first)
+            }
+            recordingRemoteEndpointNote.stringValue = ""
+        }
+    }
+
+    private func selectPopup(_ popup: NSPopUpButton, represented: String) {
+        if let index = popup.itemArray.firstIndex(where: { ($0.representedObject as? String) == represented }) {
+            popup.selectItem(at: index)
+        }
+    }
+
+    private var recordingBackendIsRemote: Bool {
+        (recordingBackendPopup.selectedItem?.representedObject as? String) == "remote"
+    }
+
+    @objc private func recordingBackendChanged() {
+        updateRecordingBackendUI()
+    }
+
+    private func updateRecordingBackendUI() {
+        let remote = recordingBackendIsRemote
+        remoteEngineActive = remote
+        recordingDetailLabel.stringValue = remote ? "Remote Endpoint" : "Local Model"
+        recordingLocalModelPopup.isHidden = remote
+        recordingRemoteEndpointPopup.isHidden = !remote
+        // Keep note slot stable: hide when Local, or when Remote has nothing to say.
+        let note = recordingRemoteEndpointNote.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        recordingRemoteEndpointNote.isHidden = !remote || note.isEmpty
+        recordingLiveTypingCheckbox.isEnabled = !remote
+        recordingLiveTypingNote.stringValue = remote ? "Remote ASR pastes the text after recording stops." : ""
+    }
+
+    private func persistRecordingRuntimePrefs() {
+        let remote = recordingBackendIsRemote
+        remoteEngineActive = remote
+        ASREngineKind.persistBackend(remote: remote)
+        if remote {
+            if let endpoint = recordingRemoteEndpointPopup.selectedItem?.representedObject as? String,
+               !endpoint.isEmpty {
+                RemoteWhisperSettings.select(endpoint)
+            }
+        } else if let raw = recordingLocalModelPopup.selectedItem?.representedObject as? String,
+                  let kind = ASREngineKind(rawValue: raw) {
+            ASREngineKind.persistLocalModel(kind)
+        }
+        UserDefaults.standard.set(recordingLiveTypingCheckbox.state == .on, forKey: Self.liveTypingDefaultsKey)
+        UserDefaults.standard.set(recordingLLMPolishCheckbox.state == .on, forKey: TextPolisher.defaultsKey)
+        UserDefaults.standard.set(recordingArabicNumeralsCheckbox.state == .on, forKey: ChineseNumerals.defaultsKey)
+        if TranscriptFormatter.openCCPath != nil {
+            UserDefaults.standard.set(recordingTaiwanPhrasesCheckbox.state == .on, forKey: TranscriptFormatter.openCCDefaultsKey)
+        }
+    }
+
+    private func recordingLanguageMode() -> String {
+        (recordingLanguagePopup.selectedItem?.representedObject as? String)
+            ?? baseConfig.chineseMode.mode
     }
 
     // MARK: - Microphone pane (live device list)
@@ -1778,13 +2139,22 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         for binding in sectionBindings {
             ConfigStore.apply(section: binding.descriptor.section, key: binding.descriptor.key, value: binding.get(), to: &config)
         }
+        config.chineseMode.mode = recordingLanguageMode()
         // Profiles: saved lists with pending form edits folded into the selected profile.
         let llm = llmSession.committed()
-        if let active = llm.active {
-            config.webui.llmServers = llm.profiles
-            config.webui.selectedServerName = active.name
-            config.webui.llm = active
-            config.webui.selectedModelName = active.selectedModel
+        if let selected = llm.selected {
+            // Persist only selected-model per profile; supported-model catalogs are Fetch-time UI state.
+            // The highlighted profile becomes the one the app uses (default-llm-server-name).
+            config.webui.llmServers = llm.profiles.map { profile in
+                var profile = profile
+                profile.models = []
+                return profile
+            }
+            var selectedProfile = selected
+            selectedProfile.models = []
+            config.webui.selectedServerName = selectedProfile.name
+            config.webui.llm = selectedProfile
+            config.webui.selectedModelName = selectedProfile.selectedModel
         }
         let asr = asrSession.committed()
         let asrProfiles = asr.profiles.map { profile -> RemoteASRConfig in
@@ -1792,16 +2162,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
             profile.endpoint = RemoteWhisperSettings.normalize(profile.endpoint) ?? ""
             return profile
         }
-        if let active = asrProfiles.first(where: { $0.name == asr.activeName }) ?? asrProfiles.first {
+        if let selected = asrProfiles.first(where: { $0.name == asr.selectedName }) ?? asrProfiles.first {
             config.remoteASRProfiles = asrProfiles
-            config.remoteASR = active
-            config.selectedRemoteASRName = active.name
+            config.remoteASR = selected
+            config.selectedRemoteASRName = selected.name
         }
         let whisper = whisperSession.committed()
-        if let active = whisper.active {
+        if let selected = whisper.selected {
             config.webui.whisperServers = whisper.profiles
-            config.webui.whisper = active
-            config.webui.selectedWhisperServerName = active.name
+            config.webui.whisper = selected
+            config.webui.selectedWhisperServerName = selected.name
         }
         return config
     }
@@ -1824,8 +2194,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
             return false
         }
         baseConfig = config
+        persistRecordingRuntimePrefs()
         onSave?(config, remoteEngineActive)
         reloadSessions(from: config, keepSelection: true)
+        // Endpoint list may change after ASR profile Apply; keep Input Behavior in sync.
+        refreshRecordingRemoteEndpoints(selected: RemoteWhisperSettings.selectedEndpoint)
+        updateRecordingBackendUI()
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         footerStatus.stringValue = "Saved \(formatter.string(from: Date()))"
@@ -1837,9 +2211,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     }
 
     @objc private func save() {
-        if commit() {
-            window?.close()
-        }
+        // Persist only — keep Settings open (close via Cancel / window chrome).
+        commit()
     }
 
     @objc private func cancel() {

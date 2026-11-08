@@ -1,9 +1,10 @@
 import AppKit
 import Foundation
 
-/// Settings ▸ Endpoints profile list: a table of named profiles (✓ = active) with
-/// Add / Modify / Delete / Set Active. The panel only renders and forwards actions;
-/// `ProfileSession` owns the data.
+/// Settings ▸ Endpoints profile list: a table of named profiles with
+/// Add / Modify / Delete. The panel only renders and forwards actions;
+/// `ProfileSession` owns the data. A profile name is just a label — there is no
+/// separate “active” / Set Active concept in the UI.
 @MainActor
 final class ProfileListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     let view: NSView
@@ -15,14 +16,11 @@ final class ProfileListPanel: NSObject, NSTableViewDataSource, NSTableViewDelega
     var onAdd: (() -> Void)?
     var onModify: (() -> Void)?
     var onDelete: (() -> Void)?
-    var onSetActive: (() -> Void)?
 
     private var names: [String] = []
-    private var activeName = ""
     private(set) var selectedIndex = 0
     private var suppress = false
     private let table = NSTableView()
-    private let activeColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("active"))
     private let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
 
     override init() {
@@ -30,22 +28,15 @@ final class ProfileListPanel: NSObject, NSTableViewDataSource, NSTableViewDelega
         view = container
         super.init()
 
-        activeColumn.title = "Active"
-        activeColumn.width = 48
-        activeColumn.minWidth = 48
-        activeColumn.maxWidth = 48
         nameColumn.title = "Profile"
-        nameColumn.width = 220
-        table.addTableColumn(activeColumn)
+        nameColumn.width = 320
         table.addTableColumn(nameColumn)
         table.usesAlternatingRowBackgroundColors = true
         table.allowsEmptySelection = false
         table.allowsMultipleSelection = false
-        table.rowHeight = 22
+        table.rowHeight = 20
         table.dataSource = self
         table.delegate = self
-        table.target = self
-        table.doubleAction = #selector(setActiveClicked)
 
         let scroll = NSScrollView()
         scroll.documentView = table
@@ -56,30 +47,31 @@ final class ProfileListPanel: NSObject, NSTableViewDataSource, NSTableViewDelega
         scroll.layer?.borderWidth = 1
         scroll.layer?.borderColor = NSColor(calibratedWhite: 0.52, alpha: 1).cgColor
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.widthAnchor.constraint(equalToConstant: 300).isActive = true
-        scroll.heightAnchor.constraint(equalToConstant: 132).isActive = true
+        // Align roughly with the 480 control column used by endpoint forms.
+        scroll.widthAnchor.constraint(equalToConstant: 372).isActive = true
+        scroll.heightAnchor.constraint(equalToConstant: 112).isActive = true
 
         func button(_ title: String, _ action: Selector, _ tip: String) -> NSButton {
             let b = NSButton(title: title, target: self, action: action)
             b.bezelStyle = .rounded
+            b.controlSize = .regular
             b.toolTip = tip
-            b.widthAnchor.constraint(equalToConstant: 110).isActive = true
+            b.widthAnchor.constraint(equalToConstant: 100).isActive = true
             return b
         }
         let buttons = NSStackView(views: [
             button("Add", #selector(addClicked), "Save the form below as a new profile."),
             button("Modify", #selector(modifyClicked), "Save the form below into the selected profile."),
-            button("Delete", #selector(deleteClicked), "Remove the selected profile."),
-            button("Set Active", #selector(setActiveClicked), "Use the selected profile (double-click a row does the same).")
+            button("Delete", #selector(deleteClicked), "Remove the selected profile.")
         ])
         buttons.orientation = .vertical
         buttons.alignment = .leading
-        buttons.spacing = 6
+        buttons.spacing = 4
 
         let top = NSStackView(views: [scroll, buttons])
         top.orientation = .horizontal
         top.alignment = .top
-        top.spacing = 10
+        top.spacing = 8
 
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
@@ -87,14 +79,13 @@ final class ProfileListPanel: NSObject, NSTableViewDataSource, NSTableViewDelega
 
         container.orientation = .vertical
         container.alignment = .leading
-        container.spacing = 6
+        container.spacing = 4
         container.addArrangedSubview(top)
         container.addArrangedSubview(statusLabel)
     }
 
-    func reload(names: [String], activeName: String, selected: Int) {
+    func reload(names: [String], selected: Int) {
         self.names = names
-        self.activeName = activeName
         selectedIndex = names.isEmpty ? 0 : min(max(0, selected), names.count - 1)
         suppress = true
         table.reloadData()
@@ -119,7 +110,7 @@ final class ProfileListPanel: NSObject, NSTableViewDataSource, NSTableViewDelega
     func numberOfRows(in tableView: NSTableView) -> Int { names.count }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let id = NSUserInterfaceItemIdentifier("ProfileCell-\(tableColumn?.identifier.rawValue ?? "")")
+        let id = NSUserInterfaceItemIdentifier("ProfileCell-name")
         let cell: NSTableCellView
         if let reused = tableView.makeView(withIdentifier: id, owner: self) as? NSTableCellView {
             cell = reused
@@ -137,14 +128,8 @@ final class ProfileListPanel: NSObject, NSTableViewDataSource, NSTableViewDelega
                 text.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
             ])
         }
-        let isActive = names[row] == activeName
-        if tableColumn === activeColumn {
-            cell.textField?.stringValue = isActive ? "✓" : ""
-            cell.textField?.alignment = .center
-        } else {
-            cell.textField?.stringValue = names[row]
-            cell.textField?.font = isActive ? .boldSystemFont(ofSize: NSFont.systemFontSize) : .systemFont(ofSize: NSFont.systemFontSize)
-        }
+        cell.textField?.stringValue = names[row]
+        cell.textField?.font = .systemFont(ofSize: NSFont.systemFontSize)
         return cell
     }
 
@@ -164,20 +149,18 @@ final class ProfileListPanel: NSObject, NSTableViewDataSource, NSTableViewDelega
     @objc private func addClicked() { onAdd?() }
     @objc private func modifyClicked() { onModify?() }
     @objc private func deleteClicked() { onDelete?() }
-    @objc private func setActiveClicked() { onSetActive?() }
 }
 
 /// Data + editor glue for one kind of endpoint profile (Remote ASR, Whisper, LLM).
 /// Model: the list holds saved profiles; the form below edits a copy of the selected one.
-/// Add = form → new profile, Modify = form → selected profile, Delete = remove selected,
-/// Set Active = selected profile becomes the one the app uses. Nothing is written to
-/// config.json until the window's Apply / Save (which also folds in pending form edits).
+/// Add = form → new profile, Modify = form → selected profile, Delete = remove selected.
+/// Apply / Save folds the selected profile into config as the one the app uses
+/// (`default-*-name`). Nothing is written to config.json until Apply / Save.
 @MainActor
 final class ProfileSession<Profile: Equatable> {
     let kind: String
     let panel = ProfileListPanel()
     private(set) var profiles: [Profile] = []
-    private(set) var activeName = ""
     private(set) var index = 0
     private let nameKey: WritableKeyPath<Profile, String>
     private let readEditor: () -> Profile
@@ -193,29 +176,27 @@ final class ProfileSession<Profile: Equatable> {
         panel.onAdd = { [unowned self] in self.add() }
         panel.onModify = { [unowned self] in _ = self.modify() }
         panel.onDelete = { [unowned self] in self.delete() }
-        panel.onSetActive = { [unowned self] in self.setActive() }
     }
 
     var selectedProfile: Profile? { profiles.indices.contains(index) ? profiles[index] : nil }
 
-    /// `selecting` keeps a row selected (e.g. after Apply); nil selects the active profile.
-    func load(_ list: [Profile], activeName: String, selecting: Int? = nil) {
+    /// `selecting` keeps a row selected (e.g. after Apply); nil prefers `preferredName`, else first.
+    func load(_ list: [Profile], preferredName: String = "", selecting: Int? = nil) {
         profiles = list
-        self.activeName = list.contains(where: { $0[keyPath: nameKey] == activeName }) ? activeName : (list.first?[keyPath: nameKey] ?? "")
         if let selecting, !list.isEmpty {
             index = min(max(0, selecting), list.count - 1)
         } else {
-            index = max(0, list.firstIndex(where: { $0[keyPath: nameKey] == self.activeName }) ?? 0)
+            index = max(0, list.firstIndex(where: { $0[keyPath: nameKey] == preferredName }) ?? 0)
         }
         refresh()
         if let selectedProfile { writeEditor(selectedProfile) }
         panel.setStatus("")
     }
 
-    /// Saved profiles with pending form edits folded into the selected one, plus the active profile.
-    func committed() -> (profiles: [Profile], active: Profile?, activeName: String) {
+    /// Saved profiles with pending form edits folded into the selected one.
+    /// `selected` is the profile currently highlighted — Apply / Save treats it as the one in use.
+    func committed() -> (profiles: [Profile], selected: Profile?, selectedName: String) {
         var list = profiles
-        var active = activeName
         if list.indices.contains(index) {
             var edited = readEditor()
             let oldName = list[index][keyPath: nameKey]
@@ -224,10 +205,9 @@ final class ProfileSession<Profile: Equatable> {
                 edited[keyPath: nameKey] = oldName
             }
             list[index] = edited
-            if active == oldName { active = edited[keyPath: nameKey] }
         }
-        let activeProfile = list.first(where: { $0[keyPath: nameKey] == active }) ?? list.first
-        return (list, activeProfile, activeProfile?[keyPath: nameKey] ?? "")
+        let selected = list.indices.contains(index) ? list[index] : list.first
+        return (list, selected, selected?[keyPath: nameKey] ?? "")
     }
 
     var isEditorDirty: Bool {
@@ -236,11 +216,7 @@ final class ProfileSession<Profile: Equatable> {
     }
 
     private func refresh() {
-        panel.reload(names: profiles.map { $0[keyPath: nameKey] }, activeName: activeName, selected: index)
-    }
-
-    private func statusSummary() -> String {
-        "\(profiles.count) profile\(profiles.count == 1 ? "" : "s") · active: \(activeName.isEmpty ? "–" : activeName)"
+        panel.reload(names: profiles.map { $0[keyPath: nameKey] }, selected: index)
     }
 
     private func confirmLeavingEditor() -> Bool {
@@ -298,9 +274,7 @@ final class ProfileSession<Profile: Equatable> {
             panel.setStatus("Another profile is already named “\(name)”.", ok: false)
             return false
         }
-        let oldName = profiles[index][keyPath: nameKey]
         profiles[index] = profile
-        if activeName == oldName { activeName = name }
         refresh()
         panel.setStatus("Updated “\(name)”.", ok: true)
         return true
@@ -313,19 +287,9 @@ final class ProfileSession<Profile: Equatable> {
             return
         }
         let removed = profiles.remove(at: index)[keyPath: nameKey]
-        if activeName == removed { activeName = profiles[0][keyPath: nameKey] }
         index = max(0, index - 1)
         refresh()
         writeEditor(profiles[index])
         panel.setStatus("Deleted “\(removed)”.", ok: nil)
-    }
-
-    private func setActive() {
-        guard selectedProfile != nil else { return }
-        if isEditorDirty, !modify() { return }
-        guard let current = selectedProfile else { return }
-        activeName = current[keyPath: nameKey]
-        refresh()
-        panel.setStatus("Active \(kind) profile: “\(activeName)”.", ok: true)
     }
 }

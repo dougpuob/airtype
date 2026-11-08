@@ -877,16 +877,6 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             openCCItem.toolTip = "OpenCC is not installed."
         }
         menu.addItem(openCCItem)
-        let moveLockItem = NSMenuItem(
-            title: "Move Lock",
-            action: #selector(toggleMoveLock(_:)),
-            keyEquivalent: ""
-        )
-        moveLockItem.target = self
-        moveLockItem.state = configStore.config.floatingDialog.moveLock ? .on : .off
-        menu.addItem(moveLockItem)
-
-
         menu.addItem(.separator())
         let saveAllItem = NSMenuItem(
             title: "Save All to Obsidian",
@@ -1090,11 +1080,6 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         rebuildMenu()
     }
 
-    @objc private func toggleMoveLock(_ sender: NSMenuItem) {
-        configStore.updateMoveLock(!configStore.config.floatingDialog.moveLock)
-        rebuildMenu()
-    }
-
     @objc private func selectLanguage(_ sender: NSMenuItem) {
         guard let mode = sender.representedObject as? String else { return }
         configStore.updateChineseMode(mode)
@@ -1171,22 +1156,59 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         )
     }
 
-    /// Settings window → write config.json, reload it, and reapply runtime settings without a restart.
+    /// Settings window → write config.json and apply only what changed.
+    /// Avoids `reloadConfig()` which always restarts the microphone and feels like an app relaunch.
+    /// ASR Local/Remote, model, endpoint, and output toggles are persisted by Settings before this runs.
     private func applySettings(_ newConfig: AirTypeConfig, useRemote: Bool) {
+        let previousMic = configStore.config.microphone
+        let previousHotkey = configStore.config.recording.hotkeyPressCount
+        let previousKind = engine.kind
+        let previousRemote = engine as? RemoteWhisperEngine
+
         configStore.replaceAndSave(newConfig)
-        if let endpoint = RemoteWhisperSettings.normalize(newConfig.remoteASR.endpoint) {
-            RemoteWhisperSettings.select(endpoint)
-        }
-        reloadConfig()
+        configureRemoteSettings()
         // Enabled is launch preference only; do not start/stop whisper-server on Apply.
         settingsWindow?.refreshLocalWhisperServerControls()
-        guard recordingState == .idle else { return }
-        if useRemote, !engine.kind.isRemote {
+        floatingPanel?.applyConfig()
+
+        if previousHotkey != newConfig.recording.hotkeyPressCount {
+            applyHotkeyPressCountFromConfig()
+        }
+        if previousMic != newConfig.microphone {
+            applyMicrophoneRuntimeSettings(reason: "settings_apply")
+        }
+
+        guard recordingState == .idle else {
+            rebuildMenu()
+            return
+        }
+
+        if useRemote {
+            if RemoteWhisperSettings.selectedEndpoint.isEmpty,
+               let endpoint = RemoteWhisperSettings.normalize(newConfig.remoteASR.endpoint) {
+                RemoteWhisperSettings.select(endpoint)
+            }
             ASREngineKind.persistBackend(remote: true)
-            switchEngine(to: .remoteWhisper, force: true)
-        } else if !useRemote, engine.kind.isRemote {
+            let selected = RemoteWhisperSettings.selectedEndpoint
+            let target = RemoteWhisperSettings.target(for: selected)
+            let needsSwitch = !previousKind.isRemote
+                || previousRemote?.endpoint != selected
+                || previousRemote?.target.protocolKind != target.protocolKind
+                || previousRemote?.target.model != target.model
+                || previousRemote?.target.apiKey != target.apiKey
+            if needsSwitch {
+                switchEngine(to: .remoteWhisper, force: true)
+            } else {
+                rebuildMenu()
+            }
+        } else {
             ASREngineKind.persistBackend(remote: false)
-            switchEngine(to: ASREngineKind.storedLocalModel, force: true)
+            let model = ASREngineKind.storedLocalModel
+            if previousKind != model {
+                switchEngine(to: model, force: true)
+            } else {
+                rebuildMenu()
+            }
         }
     }
 
