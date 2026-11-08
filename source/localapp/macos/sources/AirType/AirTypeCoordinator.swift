@@ -1366,13 +1366,33 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
 
     private func importObsidianManifest(from manifestURL: URL) {
         let obsidian = configStore.config.obsidian
+        if obsidian.vaultPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = "Obsidian Vault Path Missing"
+            alert.informativeText = "Set Settings ▸ Obsidian ▸ Vault Path first (your vault folder on this Mac)."
+            alert.addButton(withTitle: "Open Settings")
+            alert.addButton(withTitle: "Cancel")
+            if alert.runModal() == .alertFirstButtonReturn {
+                openSettings()
+            }
+            return
+        }
+
+        let auth = configStore.config.webui.auth
+        let backendEndpoint = configStore.config.backend.selectedEndpoint
         Task {
             var saved = 0
             var failed = 0
+            var savedIDs: [String] = []
+            var failedIDs: [String] = []
             var historyItems: [(String, String, String, String, String?)] = []
             var firstError: String?
+            var batchComplete: ObsidianImportManifest.Callback?
             do {
-                let (data, response) = try await URLSession.shared.data(from: manifestURL)
+                var downloadRequest = URLRequest(url: manifestURL)
+                Self.applyBackendAuthIfMatching(auth, endpoint: backendEndpoint, to: &downloadRequest)
+                let (data, response) = try await URLSession.shared.data(for: downloadRequest)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 guard (200..<300).contains(status) else {
                     throw NSError(domain: "AirType.ObsidianImport", code: status, userInfo: [NSLocalizedDescriptionKey: "HTTP \(status)"])
@@ -1381,10 +1401,12 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                 guard manifest.kind == "airtype.obsidian_import" else {
                     throw NSError(domain: "AirType.ObsidianImport", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unexpected kind \(manifest.kind)"])
                 }
+                batchComplete = manifest.complete
                 var writeConfig = obsidian
                 if let folder = manifest.vaultFolder, !folder.isEmpty {
                     writeConfig.defaultFolder = folder
                 }
+                let useBatchComplete = batchComplete != nil
                 for note in manifest.notes {
                     do {
                         var noteConfig = writeConfig
@@ -1392,18 +1414,33 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                             noteConfig.defaultFolder = folder
                         }
                         let path = try ObsidianVault.writeNote(title: note.title, note: note.markdown, config: noteConfig)
-                        if let mark = note.markSaved, let markURL = URL(string: mark.url) {
+                        if !useBatchComplete, let mark = note.markSaved, let markURL = URL(string: mark.url) {
                             var request = URLRequest(url: markURL)
                             request.httpMethod = mark.method ?? "POST"
+                            Self.applyBackendAuthIfMatching(auth, endpoint: backendEndpoint, to: &request)
                             _ = try? await URLSession.shared.data(for: request)
                         }
                         saved += 1
+                        savedIDs.append(note.id)
                         historyItems.append((note.id, note.title, path.path, "saved", nil))
                     } catch {
                         failed += 1
+                        failedIDs.append(note.id)
                         if firstError == nil { firstError = error.localizedDescription }
                         historyItems.append((note.id, note.title, "", "failed", error.localizedDescription))
                     }
+                }
+                if let complete = batchComplete, let completeURL = URL(string: complete.url) {
+                    var request = URLRequest(url: completeURL)
+                    request.httpMethod = complete.method ?? "POST"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    Self.applyBackendAuthIfMatching(auth, endpoint: backendEndpoint, to: &request)
+                    let payload: [String: [String]] = [
+                        "saved_ids": savedIDs,
+                        "failed_ids": failedIDs
+                    ]
+                    request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+                    _ = try? await URLSession.shared.data(for: request)
                 }
             } catch {
                 failed += 1
@@ -1430,6 +1467,18 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                 alert.runModal()
             }
         }
+    }
+
+    /// Attach Basic auth when the URL host matches the configured WebUI backend.
+    private static func applyBackendAuthIfMatching(_ auth: WebUIAuthConfig, endpoint: String, to request: inout URLRequest) {
+        guard auth.enabled, !auth.username.isEmpty, !auth.password.isEmpty else { return }
+        guard let requestHost = request.url?.host?.lowercased(), !requestHost.isEmpty else { return }
+        guard let endpointURL = URL(string: endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/"))),
+              let endpointHost = endpointURL.host?.lowercased(),
+              endpointHost == requestHost else { return }
+        let token = "\(auth.username):\(auth.password)"
+        guard let data = token.data(using: .utf8) else { return }
+        request.setValue("Basic \(data.base64EncodedString())", forHTTPHeaderField: "Authorization")
     }
 
     /// Quit and start a fresh process so newly granted permissions (Accessibility, Input Monitoring) apply.

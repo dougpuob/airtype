@@ -8,6 +8,8 @@ struct ObsidianImportManifest: Decodable {
     var source: Source?
     var vaultFolder: String?
     var notes: [Note]
+    /// Preferred batch callback after all notes are written (WebUI export flow).
+    var complete: Callback?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -16,6 +18,7 @@ struct ObsidianImportManifest: Decodable {
         case source
         case vaultFolder = "vault_folder"
         case notes
+        case complete
     }
 
     struct Source: Decodable {
@@ -35,7 +38,7 @@ struct ObsidianImportManifest: Decodable {
         var tags: [String]?
         var folder: String?
         var sourceURL: String?
-        var markSaved: MarkSaved?
+        var markSaved: Callback?
 
         enum CodingKeys: String, CodingKey {
             case id, title, markdown, tags, folder
@@ -45,7 +48,7 @@ struct ObsidianImportManifest: Decodable {
         }
     }
 
-    struct MarkSaved: Decodable {
+    struct Callback: Decodable {
         var method: String?
         var url: String
     }

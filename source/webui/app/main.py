@@ -53,6 +53,7 @@ from .whisper import WhisperCppNotConfigured, transcriber
 from . import apple_podcast
 from . import clip_pipeline
 from . import clip_requests
+from . import obsidian_exports
 from . import ai_routes
 from . import cli_routes
 from . import grok_cli
@@ -305,6 +306,8 @@ def _public_auth_path(path: str) -> bool:
         path in {"/", "/api/health", "/api/auth/status", "/api/auth/login", "/favicon.svg"}
         or path == "/app"
         or path.startswith("/app/")
+        # Token-gated download / complete for Local App (POST create still requires auth).
+        or path.startswith("/api/obsidian-exports/")
     )
 
 
@@ -401,6 +404,7 @@ def startup_managed_processes() -> None:
     llm = settings.get("llm", {})
     llm_servers = settings.get("llm_servers", [])
     clip_requests.configure(WEBUI_DATA_DIR)
+    obsidian_exports.configure(WEBUI_DATA_DIR)
     threading.Thread(target=clip_requests.warm_cache, name="clip-requests-warm", daemon=True).start()
     append_service_log(
         "webui",
@@ -2239,70 +2243,64 @@ async def check_watch_now(target_id: str):
         raise HTTPException(status_code=404, detail="Watch not found") from error
 
 
-def _obsidian_vault_dir() -> Path:
-    """Vault folder on this Mac. ``AIRTYPE_OBSIDIAN_VAULT_PATH`` or
-    ``[webui.obsidian] vault_path`` wins; else the iCloud Obsidian vault named
-    ``vault_name`` (default ``airtype``)."""
+class ObsidianExportBody(BaseModel):
+    ids: Optional[list[str]] = None
+
+
+class ObsidianExportCompleteBody(BaseModel):
+    saved_ids: list[str] = []
+    failed_ids: list[str] = []
+
+
+def _obsidian_export_base_url(request: Request) -> str:
+    forwarded = str(request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    scheme = forwarded or request.url.scheme or "http"
+    host = str(request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc)
+    return f"{scheme}://{host}".rstrip("/")
+
+
+def _obsidian_default_folder() -> str:
     obsidian = (_read_app_settings().get("obsidian") or {})
-    explicit = os.environ.get("AIRTYPE_OBSIDIAN_VAULT_PATH") or str(obsidian.get("vault_path") or "")
-    if explicit.strip():
-        return Path(explicit).expanduser()
-    name = str(obsidian.get("vault_name") or "").strip() or "airtype"
-    return Path.home() / "Library/Mobile Documents/iCloud~md~obsidian/Documents" / name
+    return str(obsidian.get("default_folder") or "").strip()
 
 
-def _obsidian_safe_name(text: str) -> str:
-    cleaned = re.sub(r'[\\/:*?"<>|;；：\x00-\x1f]', " ", str(text or ""))
-    return re.sub(r"\s+", " ", cleaned).strip()
+@app.post("/api/obsidian-exports")
+async def create_obsidian_export(request: Request, body: ObsidianExportBody):
+    """Build a Local App import manifest for one or many completed notes."""
+    try:
+        return await asyncio.to_thread(
+            obsidian_exports.create,
+            base_url=_obsidian_export_base_url(request),
+            vault_folder=_obsidian_default_folder(),
+            ids=body.ids,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-def _write_note_to_vault(record: Dict[str, Any]) -> Path:
-    vault = _obsidian_vault_dir()
-    if not vault.is_dir():
-        raise FileNotFoundError(f"Obsidian vault not found: {vault}")
-    folder = str((_read_app_settings().get("obsidian") or {}).get("default_folder") or "")
-    target = vault
-    for part in folder.replace("\\", "/").split("/"):
-        part = _obsidian_safe_name(part)
-        if part:
-            target = target / part
-    target.mkdir(parents=True, exist_ok=True)
-    title = _obsidian_safe_name(record.get("note_title") or record.get("title") or "") or "Untitled"
-    path = target / f"{title}.md"
-    counter = 2
-    while path.exists():
-        path = target / f"{title} {counter}.md"
-        counter += 1
-    path.write_text(str(record.get("note") or ""), encoding="utf-8")
-    return path
+@app.get("/api/obsidian-exports/{export_id}")
+async def download_obsidian_export(export_id: str, token: str = ""):
+    """Token-gated manifest download for ``airtype://obsidian-import``."""
+    try:
+        manifest = await asyncio.to_thread(obsidian_exports.get_manifest, export_id, token)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Obsidian export not found") from error
+    return JSONResponse(manifest)
 
 
-@app.post("/api/clip-requests/save-all")
-async def save_all_clip_requests():
-    """Write every completed, unsaved note into the Obsidian vault folder."""
-    saved: list[Dict[str, Any]] = []
-    failed: list[Dict[str, Any]] = []
-    skipped = 0
-    for summary in clip_requests.list_pending():
-        request_id = str(summary.get("id") or "")
-        record = clip_requests.get(request_id) or {}
-        if record.get("status") != "completed" or not str(record.get("note") or "").strip():
-            skipped += 1
-            continue
-        try:
-            path = await asyncio.to_thread(_write_note_to_vault, record)
-            clip_requests.mark_saved(request_id)
-            saved.append({"id": request_id, "path": str(path)})
-        except Exception as error:  # keep going; report per item
-            failed.append({"id": request_id, "error": str(error)})
-    return {
-        "saved": len(saved),
-        "failed": len(failed),
-        "skipped": skipped,
-        "vault": str(_obsidian_vault_dir()),
-        "items": saved,
-        "errors": failed,
-    }
+@app.post("/api/obsidian-exports/{export_id}/complete")
+async def complete_obsidian_export(export_id: str, body: ObsidianExportCompleteBody, token: str = ""):
+    """Local App reports which notes were written; mark them saved in AirType."""
+    try:
+        return await asyncio.to_thread(
+            obsidian_exports.complete,
+            export_id,
+            token,
+            saved_ids=body.saved_ids,
+            failed_ids=body.failed_ids,
+        )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Obsidian export not found") from error
 
 
 @app.post("/api/clip-requests/{request_id}/save")

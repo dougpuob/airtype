@@ -1,11 +1,12 @@
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
-import { Box, Button, Chip, IconButton, LinearProgress, Typography } from "@mui/material";
+import { Box, Button, Chip, IconButton, LinearProgress, Typography, useMediaQuery, useTheme } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useCancelClipRequestMutation, useDeleteClipRequestMutation, type ClipRequest } from "../../api/clipRequests";
 import { useSettingsQuery } from "../../api/settings";
+import { useObsidianExportMutation } from "../../api/obsidianExports";
 import { openObsidianDraft } from "../../utils/obsidian";
-import { clipHasNote, loadFullClipRequest, useSaveAllClipRequestsMutation, useSaveClipRequestMutation } from "../../api/clipRequests";
+import { clipHasNote, loadFullClipRequest, useSaveClipRequestMutation } from "../../api/clipRequests";
 import { useClipRequestSelection } from "./ClipRequestContext";
 
 const statusLabel: Record<string, string> = {
@@ -69,20 +70,20 @@ export function clipAccount(source: string) {
 }
 
 export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}) {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const { requests, selectedId, select } = useClipRequestSelection();
   const cancelClip = useCancelClipRequestMutation();
   const deleteClip = useDeleteClipRequestMutation();
   const saveClip = useSaveClipRequestMutation();
-  const saveAll = useSaveAllClipRequestsMutation();
+  const exportObsidian = useObsidianExportMutation();
   const readyCount = requests.filter((item) => item.status === "completed" && clipHasNote(item)).length;
+  const saving = saveClip.isPending || exportObsidian.isPending;
 
   async function saveAllRequests() {
     try {
-      const result = await saveAll.mutateAsync();
-      const parts = [`Saved ${result.saved}`];
-      if (result.failed) parts.push(`failed ${result.failed}`);
-      if (result.skipped) parts.push(`skipped ${result.skipped}`);
-      window.alert(`${parts.join(", ")}.${result.errors[0] ? `\n${result.errors[0].error}` : ""}`);
+      const result = await exportObsidian.mutateAsync(undefined);
+      window.alert(`Opening AirType to save ${result.note_count} note${result.note_count === 1 ? "" : "s"} to Obsidian.`);
     } catch (error) {
       window.alert(`Save all failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -100,11 +101,18 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
 
   async function saveRequest(request: ClipRequest) {
     if (request.status !== "completed" || !clipHasNote(request)) return;
-    // The list only has summaries; load the full note first.
+    if (!isMobile) {
+      try {
+        await exportObsidian.mutateAsync([request.id]);
+      } catch (error) {
+        window.alert(`Save failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return;
+    }
+    // Mobile: mark saved before opening Obsidian. obsidian:// switches away
+    // from the browser and can cancel the mark-saved request if it runs after.
     const full = await loadFullClipRequest(queryClient, request);
     if (!full.note) return;
-    // Mark saved before opening Obsidian. On mobile, obsidian:// switches away
-    // from the browser and can cancel the mark-saved request if it runs after.
     await saveClip.mutateAsync(request.id);
     await openObsidianDraft(
       { noteTitle: full.note_title || full.title || "Untitled", note: full.note },
@@ -131,15 +139,15 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
       >
         Not saved to Obsidian
       </Typography>
-      {readyCount > 0 ? (
+      {!isMobile && readyCount > 0 ? (
         <Button
           size="small"
           variant="contained"
-          disabled={saveAll.isPending}
+          disabled={saving}
           onClick={() => void saveAllRequests()}
           sx={{ mx: 1, mb: 1, textTransform: "none" }}
         >
-          {saveAll.isPending ? "Saving…" : `Save all to Obsidian (${readyCount})`}
+          {exportObsidian.isPending ? "Saving…" : `Save all to Obsidian (${readyCount})`}
         </Button>
       ) : null}
       <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", px: 0.5 }}>
@@ -264,7 +272,7 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
                     size="small"
                     variant="contained"
                     fullWidth
-                    disabled={!clipHasNote(task) || saveClip.isPending}
+                    disabled={!clipHasNote(task) || saving}
                     onClick={(event) => {
                       event.stopPropagation();
                       void saveRequest(task);

@@ -1,7 +1,23 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { apiRequest } from "./client";
 
 export type ClipRequestStatus = "queued" | "running" | "completed" | "failed";
+
+/** Until this timestamp, the pending queue refetches every 2s (Local App save handoff). */
+let obsidianWaitUntilMs = 0;
+const obsidianWaitListeners = new Set<() => void>();
+
+/** Poll the pending queue while the Local App finishes an Obsidian import. */
+export function watchObsidianExport(durationMs = 60_000) {
+  obsidianWaitUntilMs = Date.now() + durationMs;
+  obsidianWaitListeners.forEach((listener) => listener());
+  window.setTimeout(() => {
+    if (Date.now() >= obsidianWaitUntilMs) {
+      obsidianWaitListeners.forEach((listener) => listener());
+    }
+  }, durationMs + 50);
+}
 
 /**
  * A clip request. The queue list (`GET /api/clip-requests`) sends a summary:
@@ -41,6 +57,14 @@ export type ClipRequest = {
 };
 
 export function useClipRequestsQuery() {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const listener = () => bump((value) => value + 1);
+    obsidianWaitListeners.add(listener);
+    return () => {
+      obsidianWaitListeners.delete(listener);
+    };
+  }, []);
   return useQuery({
     queryKey: ["clip-requests"],
     queryFn: async () => {
@@ -48,6 +72,7 @@ export function useClipRequestsQuery() {
       return payload.requests;
     },
     refetchInterval: (query) => {
+      if (Date.now() < obsidianWaitUntilMs) return 2000;
       const requests = query.state.data;
       if (!requests?.some((item) => item.status === "queued" || item.status === "running")) return false;
       return 2000;
@@ -140,21 +165,3 @@ export function useSaveClipRequestMutation() {
   });
 }
 
-export type SaveAllResult = {
-  saved: number;
-  failed: number;
-  skipped: number;
-  vault: string;
-  errors: { id: string; error: string }[];
-};
-
-/** Write every completed, unsaved note straight into the Obsidian vault. */
-export function useSaveAllClipRequestsMutation() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => apiRequest<SaveAllResult>("/api/clip-requests/save-all", { method: "POST" }),
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ["clip-requests"] });
-    }
-  });
-}

@@ -10,7 +10,9 @@ import {
   Snackbar,
   Stack,
   TextField,
-  Typography
+  Typography,
+  useMediaQuery,
+  useTheme
 } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -19,6 +21,7 @@ import { uploadNoteMedia } from "../api/immich";
 import type { NoteMediaImage } from "../api/immich";
 import { chainWarningsFromPayload, useImportPostMutation } from "../api/postWeaver";
 import { clipHasNote, loadFullClipRequest, useCreateClipRequestMutation, useSaveClipRequestMutation } from "../api/clipRequests";
+import { useObsidianExportMutation } from "../api/obsidianExports";
 import { useSettingsQuery } from "../api/settings";
 import { fetchClipId, fetchWebArticleJob, startWebArticleJob } from "../api/webArticle";
 import type { WebArticleImage, WebArticleJob } from "../api/webArticle";
@@ -87,6 +90,8 @@ type PersistedObsidianClipperState = {
 };
 
 export function VToTextPage() {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const sourceUrlInputRef = useRef<HTMLInputElement | null>(null);
@@ -131,6 +136,7 @@ export function VToTextPage() {
   const createUrlJob = useCreateUrlTranscriptionJobMutation();
   const createClipRequest = useCreateClipRequestMutation();
   const saveClipRequest = useSaveClipRequestMutation();
+  const exportObsidian = useObsidianExportMutation();
   const uploadJob = useUploadTranscriptionJobMutation();
   const clipSelection = useClipRequestSelection();
   const cancelJob = useCancelTranscriptionJobMutation();
@@ -889,14 +895,18 @@ export function VToTextPage() {
       return;
     }
     try {
-      // The queue list only has summaries; load the full note if it is not here yet.
+      if (!isMobile) {
+        await exportObsidian.mutateAsync([current.id]);
+        setToast("Opening AirType to save to Obsidian");
+        return;
+      }
+      // Mobile: mark saved before opening Obsidian. obsidian:// switches away
+      // from the browser and can cancel the mark-saved request if it runs after.
       const selected = await loadFullClipRequest(queryClient, current);
       if (!selected.note) {
         setToast("This request has no note to save");
         return;
       }
-      // Mark saved before opening Obsidian. On mobile, obsidian:// switches away
-      // from the browser and can cancel the mark-saved request if it runs after.
       await saveClipRequest.mutateAsync(selected.id);
       await openObsidianDraft(
         { noteTitle: selected.note_title || selected.title || "Untitled", note: selected.note },
@@ -1094,7 +1104,13 @@ export function VToTextPage() {
             </Stack>
             <Button
               variant="contained"
-              disabled={!selectedClip || selectedClip.status !== "completed" || !clipHasNote(selectedClip)}
+              disabled={
+                !selectedClip ||
+                selectedClip.status !== "completed" ||
+                !clipHasNote(selectedClip) ||
+                saveClipRequest.isPending ||
+                exportObsidian.isPending
+              }
               onClick={saveToObsidian}
               sx={{ whiteSpace: "nowrap" }}
             >
