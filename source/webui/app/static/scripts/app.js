@@ -781,7 +781,7 @@ async function loadServerSettings(options = {}) {
         saveSettings(payload.settings || {}, { persist: false, markWhisperClean: true });
         loadWhisperServerStatus();
     } catch {
-        // Keep browser-local defaults when ~/.airtype/config.toml is unavailable.
+        // Keep browser-local defaults when ~/.airtype/config.json is unavailable.
     }
 }
 

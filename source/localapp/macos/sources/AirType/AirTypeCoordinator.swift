@@ -42,6 +42,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     private var recordingState: RecordingState = .idle
     private var sessionCueGate = RecordingSessionCueGate()
     private var settingsWindow: SettingsWindowController?
+    private let localWhisperServer = LocalWhisperServerManager()
 
     func start() {
         do {
@@ -76,6 +77,17 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         setupHotkey()
         // Install after first prepare so CoreAudio start-up noise does not immediately re-prepare.
         audioRecorder.ensureHardwareListeners()
+        // Enabled only means "auto-start on next launch" — honor it here at cold start.
+        if configStore.config.localWhisper.enabled {
+            let whisperConfig = configStore.config.localWhisper
+            Task { @MainActor [weak self] in
+                do {
+                    try await self?.localWhisperServer.start(whisperConfig)
+                } catch {
+                    Logger.shared.log("LocalWhisper: launch-on-start failed: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     private func showStartupError(_ message: String) {
@@ -95,6 +107,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         hotkeyMonitor?.stop()
         audioRecorder.stop()
         engine.cancel()
+        localWhisperServer.stop()
     }
 
     private func loadEngine() {
@@ -114,7 +127,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     /// Remote endpoint list / auth come from [localapp.backend-endpoint] + [webui.auth] of the app config
-    /// (~/.airtype-experiment/config.toml, seeded from ~/.airtype/config.toml); AIRTYPE_REMOTE_ENDPOINT overrides.
+    /// (~/.airtype/config.json); AIRTYPE_REMOTE_ENDPOINT overrides.
     private func configureRemoteSettings() {
         RemoteWhisperSettings.configure(
             backend: configStore.config.backend,
@@ -539,37 +552,72 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                     Logger.shared.log("\(self.inputLogPrefix(inputID))stale ASR finish ignored after session closed")
                     return
                 }
-                let finalText = TranscriptFormatter.format(raw, mode: mode)
-                guard TextPolisher.enabled, !finalText.isEmpty else {
-                    self.deliverFinal(finalText, targetApp: targetApp, inputID: inputID, startedAt: inputStartedAt)
+                let asrText = TranscriptFormatter.format(raw, mode: mode)
+                guard TextPolisher.enabled, !asrText.isEmpty else {
+                    self.deliverFinal(
+                        asrText,
+                        asrText: asrText,
+                        llmText: nil,
+                        llmUsed: false,
+                        targetApp: targetApp,
+                        inputID: inputID,
+                        startedAt: inputStartedAt
+                    )
                     return
                 }
-                // 停錄後 LLM 整理 (local oMLX, thinking off). On any failure paste the original ASR text.
-                Logger.shared.log("\(self.inputLogPrefix(inputID))LLM polish requested chars=\(finalText.count)")
-                TextPolisher.polish(finalText, llm: self.configStore.config.webui.llm) { [weak self] polished in
+                // 停錄後 LLM 整理. On any failure paste the original ASR text.
+                Logger.shared.log("\(self.inputLogPrefix(inputID))LLM polish requested chars=\(asrText.count)")
+                TextPolisher.polish(asrText, llm: self.configStore.config.webui.llm) { [weak self] polished in
                     DispatchQueue.main.async {
                         guard let self else { return }
                         if let inputID, self.sessionCueGate.isClosed(inputID) {
                             Logger.shared.log("\(self.inputLogPrefix(inputID))stale LLM polish ignored after session closed")
                             return
                         }
-                        let output = polished.map { TranscriptFormatter.format($0, mode: mode, fixEnglishCase: false) } ?? finalText
-                        self.deliverFinal(output.isEmpty ? finalText : output, targetApp: targetApp, inputID: inputID, startedAt: inputStartedAt)
+                        let llmText = polished.map { TranscriptFormatter.format($0, mode: mode, fixEnglishCase: false) }
+                        let output = (llmText?.isEmpty == false) ? llmText! : asrText
+                        self.deliverFinal(
+                            output,
+                            asrText: asrText,
+                            llmText: llmText,
+                            llmUsed: llmText != nil,
+                            targetApp: targetApp,
+                            inputID: inputID,
+                            startedAt: inputStartedAt
+                        )
                     }
                 }
             }
         }
     }
 
-    private func deliverFinal(_ finalText: String, targetApp: RunningAppIdentity?, inputID: Int?, startedAt: Date?) {
+    private func deliverFinal(
+        _ finalText: String,
+        asrText: String,
+        llmText: String?,
+        llmUsed: Bool,
+        targetApp: RunningAppIdentity?,
+        inputID: Int?,
+        startedAt: Date?
+    ) {
         if let inputID, sessionCueGate.isClosed(inputID) {
             Logger.shared.log("\(inputLogPrefix(inputID))stale deliverFinal ignored")
             return
         }
         Logger.shared.log("\(inputLogPrefix(inputID))final transcript chars=\(finalText.count)")
+        let recordResult: (String) -> Void = { [weak self] result in
+            self?.recordVoiceHistory(
+                asrText: asrText,
+                llmText: llmUsed ? llmText : nil,
+                llmUsed: llmUsed,
+                result: result,
+                startedAt: startedAt
+            )
+        }
         if liveTypingActive, targetIsFrontmost, AXIsProcessTrusted() {
             liveTyper.apply(finalText)
             floatingPanel?.hide()
+            recordResult("COMPLETE")
             finishInput(inputID, startedAt: startedAt, result: "COMPLETE", details: "output=live_typing, chars=\(finalText.count)")
             return
         }
@@ -581,6 +629,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             floatingPanel?.hide()
             // Empty ASR → not a successful delivery; non-empty already typed live → success.
             let result = finalText.isEmpty ? "SKIPPED" : "COMPLETE"
+            recordResult(result)
             finishInput(inputID, startedAt: startedAt, result: result, details: "output=nothing_to_paste, chars=\(finalText.count)")
             return
         }
@@ -591,13 +640,49 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                 return
             }
             self.floatingPanel?.hide()
+            let result = ok ? "COMPLETE" : "FAILED"
+            recordResult(result)
             self.finishInput(
                 inputID,
                 startedAt: startedAt,
-                result: ok ? "COMPLETE" : "FAILED",
+                result: result,
                 details: "output=paste, paste=\(ok ? "ok" : "failed"), chars=\(remainder.count)"
             )
         }
+    }
+
+    private func recordVoiceHistory(
+        asrText: String,
+        llmText: String?,
+        llmUsed: Bool,
+        result: String,
+        startedAt: Date?
+    ) {
+        let kind = engine.kind
+        let llm = configStore.config.webui.llm
+        let durationMs = startedAt.map { Int(Date().timeIntervalSince($0) * 1000) }
+        let asrModel: String
+        let asrEndpoint: String?
+        if kind.isRemote {
+            asrModel = RemoteWhisperSettings.selectedEndpoint
+            asrEndpoint = RemoteWhisperSettings.selectedEndpoint
+        } else {
+            asrModel = kind.rawValue
+            asrEndpoint = nil
+        }
+        HistoryStore.shared.recordVoiceAsync(
+            asrText: asrText,
+            llmText: llmText,
+            asrBackend: kind.isRemote ? "remote" : "local",
+            asrEngine: kind.shortName,
+            asrModel: asrModel,
+            asrEndpoint: asrEndpoint,
+            llmEnabled: llmUsed,
+            llmModel: llmUsed ? (ProcessInfo.processInfo.environment["AIRTYPE_LLM_POLISH_MODEL"] ?? TextPolisher.defaultModel) : nil,
+            llmEndpoint: llmUsed ? llm.endpoint : nil,
+            result: result,
+            durationMs: durationMs
+        )
     }
 
     private func cancelRecording() {
@@ -1072,11 +1157,13 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     private func showSettings(tab: String?) {
         if settingsWindow == nil {
             let controller = SettingsWindowController(configPath: configStore.filePath)
+            controller.localWhisperServer = localWhisperServer
             controller.onSave = { [weak self] newConfig, useRemote in
                 self?.applySettings(newConfig, useRemote: useRemote)
             }
             settingsWindow = controller
         }
+        settingsWindow?.localWhisperServer = localWhisperServer
         settingsWindow?.present(
             config: configStore.config,
             remoteActive: engine.kind.isRemote,
@@ -1084,13 +1171,15 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         )
     }
 
-    /// Settings window → write config.toml, reload it, and reapply runtime settings without a restart.
+    /// Settings window → write config.json, reload it, and reapply runtime settings without a restart.
     private func applySettings(_ newConfig: AirTypeConfig, useRemote: Bool) {
         configStore.replaceAndSave(newConfig)
         if let endpoint = RemoteWhisperSettings.normalize(newConfig.remoteASR.endpoint) {
             RemoteWhisperSettings.select(endpoint)
         }
         reloadConfig()
+        // Enabled is launch preference only; do not start/stop whisper-server on Apply.
+        settingsWindow?.refreshLocalWhisperServerControls()
         guard recordingState == .idle else { return }
         if useRemote, !engine.kind.isRemote {
             ASREngineKind.persistBackend(remote: true)
@@ -1205,6 +1294,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             var failed = 0
             var skipped = 0
             var firstError: String?
+            var historyItems: [(String, String, String, String, String?)] = []
             do {
                 let summaries = try await client.listClipRequests(endpoint: endpoint, auth: auth)
                 for summary in summaries {
@@ -1225,10 +1315,12 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                         let path = try ObsidianVault.writeNote(title: title, note: note, config: obsidian)
                         try await client.markClipRequestSaved(id: summary.id, endpoint: endpoint, auth: auth)
                         saved += 1
+                        historyItems.append((summary.id, title, path.path, "saved", nil))
                         Logger.shared.log("Saved to Obsidian: id=\(summary.id) path=\(path.path)")
                     } catch {
                         failed += 1
                         if firstError == nil { firstError = error.localizedDescription }
+                        historyItems.append((summary.id, summary.title ?? summary.id, "", "failed", error.localizedDescription))
                         Logger.shared.log("Save to Obsidian failed: id=\(summary.id) error=\(error.localizedDescription)")
                     }
                 }
@@ -1237,6 +1329,15 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                 firstError = error.localizedDescription
                 Logger.shared.log("Save all to Obsidian list failed: \(error.localizedDescription)")
             }
+
+            HistoryStore.shared.recordObsidianImportAsync(
+                sourceURL: endpoint,
+                sourceKind: "clip_requests_api",
+                savedCount: saved,
+                failedCount: failed,
+                skippedCount: skipped,
+                items: historyItems
+            )
 
             await MainActor.run {
                 NSApp.activate(ignoringOtherApps: true)
@@ -1247,6 +1348,91 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                     info += "\n\nFirst error: \(firstError)"
                 }
                 info += "\n\nVault: \(obsidian.vaultPath)"
+                alert.informativeText = info
+                alert.runModal()
+            }
+        }
+    }
+
+    /// `airtype://obsidian-import?url=…` — download an Obsidian import manifest and write notes.
+    func handleOpenURL(_ url: URL) {
+        guard url.scheme?.lowercased() == "airtype" else { return }
+        let host = (url.host ?? url.path).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard host == "obsidian-import" || url.path.contains("obsidian-import") else {
+            Logger.shared.log("Ignored airtype URL: \(url.absoluteString)")
+            return
+        }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let manifestURLString = components.queryItems?.first(where: { $0.name == "url" })?.value,
+              let manifestURL = URL(string: manifestURLString) else {
+            Logger.shared.log("airtype://obsidian-import missing url query")
+            return
+        }
+        importObsidianManifest(from: manifestURL)
+    }
+
+    private func importObsidianManifest(from manifestURL: URL) {
+        let obsidian = configStore.config.obsidian
+        Task {
+            var saved = 0
+            var failed = 0
+            var historyItems: [(String, String, String, String, String?)] = []
+            var firstError: String?
+            do {
+                let (data, response) = try await URLSession.shared.data(from: manifestURL)
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                guard (200..<300).contains(status) else {
+                    throw NSError(domain: "AirType.ObsidianImport", code: status, userInfo: [NSLocalizedDescriptionKey: "HTTP \(status)"])
+                }
+                let manifest = try JSONDecoder().decode(ObsidianImportManifest.self, from: data)
+                guard manifest.kind == "airtype.obsidian_import" else {
+                    throw NSError(domain: "AirType.ObsidianImport", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unexpected kind \(manifest.kind)"])
+                }
+                var writeConfig = obsidian
+                if let folder = manifest.vaultFolder, !folder.isEmpty {
+                    writeConfig.defaultFolder = folder
+                }
+                for note in manifest.notes {
+                    do {
+                        var noteConfig = writeConfig
+                        if let folder = note.folder, !folder.isEmpty {
+                            noteConfig.defaultFolder = folder
+                        }
+                        let path = try ObsidianVault.writeNote(title: note.title, note: note.markdown, config: noteConfig)
+                        if let mark = note.markSaved, let markURL = URL(string: mark.url) {
+                            var request = URLRequest(url: markURL)
+                            request.httpMethod = mark.method ?? "POST"
+                            _ = try? await URLSession.shared.data(for: request)
+                        }
+                        saved += 1
+                        historyItems.append((note.id, note.title, path.path, "saved", nil))
+                    } catch {
+                        failed += 1
+                        if firstError == nil { firstError = error.localizedDescription }
+                        historyItems.append((note.id, note.title, "", "failed", error.localizedDescription))
+                    }
+                }
+            } catch {
+                failed += 1
+                firstError = error.localizedDescription
+                Logger.shared.log("Obsidian manifest import failed: \(error.localizedDescription)")
+            }
+
+            HistoryStore.shared.recordObsidianImportAsync(
+                sourceURL: manifestURL.absoluteString,
+                sourceKind: "manifest_url",
+                savedCount: saved,
+                failedCount: failed,
+                skippedCount: 0,
+                items: historyItems
+            )
+
+            await MainActor.run {
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                alert.messageText = failed == 0 ? "Imported to Obsidian" : "Obsidian Import Finished with Errors"
+                var info = "Saved \(saved), failed \(failed)."
+                if let firstError, !firstError.isEmpty { info += "\n\nFirst error: \(firstError)" }
                 alert.informativeText = info
                 alert.runModal()
             }

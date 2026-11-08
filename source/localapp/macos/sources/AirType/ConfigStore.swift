@@ -20,12 +20,18 @@ struct AirTypeConfig {
 
 struct LocalWhisperServiceConfig: Equatable {
     var enabled = false
-    var launchOnStart = false
     var serverBin = ""
     var serverArgs = ""
-    var modelDir = ""
+    var host = "127.0.0.1"
+    var port = 8080
+    var maxThreads = 4
+    var maxGpu = 1
+    var modelDir = "~/.airtype/models/whisper"
     var modelFilename = ""
     var language = "zh-tw"
+    var vocabularyPrompt = ""
+    var noTimestamps = true
+    var noLanguageSymbol = true
     var beam = 5
     var temperature = 0.0
 }
@@ -57,7 +63,7 @@ struct RemoteASRConfig: Equatable {
     var apiKey = ""
 }
 
-/// Field metadata exposed to the Settings window (mirrors the TOML schema).
+/// Field metadata exposed to the Settings window (mirrors the JSON schema sections).
 enum ConfigFieldKind {
     case string, secret, int, number, bool, array
 }
@@ -128,6 +134,7 @@ struct LLMServerEntry {
     let selectedModel: String
     let contextLength: Int
     let temperature: Double
+    let thinking: Bool
     let system: String
 }
 
@@ -141,6 +148,9 @@ struct WebUIAuthConfig {
 struct WhisperServerConfig: Equatable {
     var name = "default"
     var remoteEndpoint = ""
+    var temperature = 0.0
+    var beam = 5
+    var language = "zh-tw"
 }
 
 struct LLMServerConfig: Equatable {
@@ -152,6 +162,7 @@ struct LLMServerConfig: Equatable {
     var selectedModel: String
     var contextLength: Int
     var temperature: Double
+    var thinking: Bool
     var system: String
 
     init(
@@ -163,6 +174,7 @@ struct LLMServerConfig: Equatable {
         selectedModel: String = "",
         contextLength: Int = 8192,
         temperature: Double = 0.4,
+        thinking: Bool = false,
         system: String = "Summarize and answer questions using the transcript as the source of truth."
     ) {
         self.name = name
@@ -173,6 +185,7 @@ struct LLMServerConfig: Equatable {
         self.selectedModel = selectedModel
         self.contextLength = contextLength
         self.temperature = temperature
+        self.thinking = thinking
         self.system = system
     }
 }
@@ -182,25 +195,54 @@ final class ConfigStore: ObservableObject {
 
     let projectRoot: URL?
 
-    private let path: URL
+    private var path: URL { Self.configPath }
 
     init() {
-        let foundProjectRoot = Self.findProjectRoot()
-        projectRoot = foundProjectRoot
-
-        path = Self.configPath
+        projectRoot = Self.findProjectRoot()
+        let migrateNotes = AirTypeHome.migrateIfNeeded()
+        for note in migrateNotes {
+            Logger.shared.log("Home migrate: \(note)")
+        }
     }
 
     func load() throws {
-        Self.seedExperimentConfigIfNeeded(at: path)
+        try Self.ensureConfigJSONExists()
         guard FileManager.default.fileExists(atPath: path.path) else {
             throw ConfigStoreError.missingConfig(path.path)
         }
-        guard let text = try? String(contentsOf: path, encoding: .utf8) else {
+        guard var text = try? String(contentsOf: path, encoding: .utf8) else {
             throw ConfigStoreError.unreadableConfig(path.path)
         }
-        config = Self.parse(text)
+        AirTypeHome.rewriteLegacyPaths(in: &text)
+        guard let data = text.data(using: .utf8) else {
+            throw ConfigStoreError.unreadableConfig(path.path)
+        }
+        do {
+            config = try ConfigJSON.decode(data)
+        } catch {
+            throw ConfigStoreError.unreadableConfig(path.path)
+        }
+        rewriteLegacyModelDirsInMemory()
         logLoadedConfig()
+    }
+
+    private func rewriteLegacyModelDirsInMemory() {
+        let flat = "~/.airtype/models"
+        let correct = "~/.airtype/models/whisper"
+        if config.localWhisper.modelDir == flat || config.localWhisper.modelDir.hasSuffix("/.airtype/models") {
+            config.localWhisper.modelDir = correct
+        }
+        // Mistaken double "whisper" segment from earlier UI/defaults.
+        if config.localWhisper.modelDir == "~/.airtype/models/whisper/whisper"
+            || config.localWhisper.modelDir.hasSuffix("/models/whisper/whisper") {
+            config.localWhisper.modelDir = correct
+        }
+        if config.localWhisper.modelDir.contains(".airtype-experiment/models") {
+            config.localWhisper.modelDir = config.localWhisper.modelDir.replacingOccurrences(
+                of: ".airtype-experiment/models",
+                with: ".airtype/models/asr"
+            )
+        }
     }
 
     private func logLoadedConfig() {
@@ -239,7 +281,7 @@ final class ConfigStore: ObservableObject {
             + "remote_endpoint=\(config.webui.whisper.remoteEndpoint)"
         )
         Logger.shared.log(
-            "Config localapp.local-whisper: enabled=\(config.localWhisper.enabled), launch_on_start=\(config.localWhisper.launchOnStart), "
+            "Config localapp.local-whisper: enabled=\(config.localWhisper.enabled), "
             + "server_bin=\(config.localWhisper.serverBin), model_dir=\(config.localWhisper.modelDir), "
             + "model_filename=\(config.localWhisper.modelFilename), language=\(config.localWhisper.language), "
             + "beam=\(config.localWhisper.beam), temperature=\(config.localWhisper.temperature)"
@@ -261,7 +303,7 @@ final class ConfigStore: ObservableObject {
 
     var filePath: String { path.path }
 
-    /// Settings window: replace the whole config and write it back to config.toml.
+    /// Settings window: replace the whole config and write it back to config.json.
     func replaceAndSave(_ newConfig: AirTypeConfig) {
         config = newConfig
         save()
@@ -276,25 +318,16 @@ final class ConfigStore: ObservableObject {
         }
     }
 
-    /// Plain (unquoted) value of a field; arrays are returned comma-separated.
+    /// Plain field value; arrays are returned comma-separated.
     static func displayValue(section: String, key: String, in config: AirTypeConfig) -> String {
         guard let field = schema.first(where: { $0.name == section })?.fields.first(where: { $0.key == key }) else { return "" }
-        let rendered = field.render(config)
-        if field.kind == .array {
-            return parseTomlStringArray(rendered).joined(separator: ", ")
-        }
-        return parseTomlValue(rendered)
+        return field.render(config)
     }
 
-    /// Applies a plain value (arrays comma-separated) through the same validation as the TOML parser.
+    /// Applies a plain value (arrays comma-separated) through the Settings field schema.
     static func apply(section: String, key: String, value: String, to config: inout AirTypeConfig) {
         guard let field = schema.first(where: { $0.name == section })?.fields.first(where: { $0.key == key }) else { return }
-        if field.kind == .array {
-            let items = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-            field.apply(&config, tomlStringArray(items))
-        } else {
-            field.apply(&config, value.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
+        field.apply(&config, value.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     func updateChineseMode(_ mode: String) {
@@ -330,12 +363,9 @@ final class ConfigStore: ObservableObject {
 
     func updateLLMServer(_ serverName: String) {
         config.webui.selectedServerName = serverName
-        // Also update the active llm config to match the selected server
-        guard let text = try? String(contentsOf: path, encoding: .utf8) else { return }
-        let entries = Self.parseAllLLMServers(from: text)
-        if let entry = Self.llmServerEntry(for: serverName, in: entries) {
-            config.webui.llm = Self.config(from: entry)
-            config.webui.llmServers = entries.map(Self.config(from:))
+        if let match = config.webui.llmServers.first(where: { $0.name == serverName }) {
+            config.webui.llm = match
+            config.webui.selectedModelName = match.selectedModel
         }
         save()
     }
@@ -350,109 +380,49 @@ final class ConfigStore: ObservableObject {
     func updateLLMSelection(serverName: String, modelName: String) {
         config.webui.selectedServerName = serverName
         config.webui.selectedModelName = modelName
-        if let text = try? String(contentsOf: path, encoding: .utf8) {
-            let entries = Self.parseAllLLMServers(from: text)
-            if let entry = Self.llmServerEntry(for: serverName, in: entries) {
-                config.webui.llm = Self.config(from: entry)
-                config.webui.llm.selectedModel = modelName
-                config.webui.llmServers = entries.map(Self.config(from:))
-                syncActiveLLMServer()
-            }
-            let patched = Self.patchLLMSelection(in: text, serverName: serverName, modelName: modelName)
-            do {
-                try patched.write(to: path, atomically: true, encoding: .utf8)
-            } catch {
-                Logger.shared.log("Could not write LLM selection: \(error)")
-            }
-        } else {
-            config.webui.llm.selectedModel = modelName
-            save()
+        if let match = config.webui.llmServers.first(where: { $0.name == serverName }) {
+            config.webui.llm = match
         }
+        config.webui.llm.selectedModel = modelName
+        syncActiveLLMServer()
+        save()
     }
 
     func updateLLMServerModels(_ modelsByServer: [String: [String]]) {
-        guard let text = try? String(contentsOf: path, encoding: .utf8) else { return }
-        let patched = Self.patchLLMServerModels(in: text, modelsByServer: modelsByServer)
-        do {
-            try patched.write(to: path, atomically: true, encoding: .utf8)
-            try load()
-        } catch {
-            Logger.shared.log("Could not write LLM server models: \(error)")
+        for (serverName, models) in modelsByServer {
+            if let index = config.webui.llmServers.firstIndex(where: { $0.name == serverName }) {
+                config.webui.llmServers[index].models = models
+                if config.webui.llmServers[index].selectedModel.isEmpty, let first = models.first {
+                    config.webui.llmServers[index].selectedModel = first
+                }
+            }
+            if config.webui.llm.name == serverName {
+                config.webui.llm.models = models
+                if config.webui.llm.selectedModel.isEmpty, let first = models.first {
+                    config.webui.llm.selectedModel = first
+                    config.webui.selectedModelName = first
+                }
+            }
         }
+        save()
     }
 
     func availableLLMServers() -> [LLMServerEntry] {
-        guard let text = try? String(contentsOf: path, encoding: .utf8) else {
-            return []
+        let servers = config.webui.llmServers.isEmpty ? [config.webui.llm] : config.webui.llmServers
+        return servers.map {
+            LLMServerEntry(
+                name: $0.name,
+                provider: $0.provider,
+                endpoint: $0.endpoint,
+                apiKey: $0.apiKey,
+                models: $0.models,
+                selectedModel: $0.selectedModel,
+                contextLength: $0.contextLength,
+                temperature: $0.temperature,
+                thinking: $0.thinking,
+                system: $0.system
+            )
         }
-        return Self.parseAllLLMServers(from: text)
-    }
-
-    private static func parseAllLLMServers(from text: String) -> [LLMServerEntry] {
-        var entries: [LLMServerEntry] = []
-        var currentTable: [String: String] = [:]
-        var inLLMSection = false
-
-        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let trimmed = stripComment(String(rawLine)).trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.hasPrefix("[["), trimmed.hasSuffix("]]") {
-                if inLLMSection && !currentTable.isEmpty {
-                    entries.append(Self.makeEntry(from: currentTable))
-                }
-                let sectionName = String(trimmed.dropFirst(2).dropLast(2))
-                inLLMSection = sectionName.hasPrefix("webui.llm-server")
-                currentTable = [:]
-            } else if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
-                if inLLMSection && !currentTable.isEmpty {
-                    entries.append(Self.makeEntry(from: currentTable))
-                }
-                inLLMSection = false
-                currentTable = [:]
-            } else if inLLMSection, let eqIndex = trimmed.firstIndex(of: "=") {
-                let key = String(trimmed[..<eqIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
-                let value = parseTomlValue(String(trimmed[trimmed.index(after: eqIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines))
-                currentTable[key] = value
-            }
-        }
-        if inLLMSection && !currentTable.isEmpty {
-            entries.append(Self.makeEntry(from: currentTable))
-        }
-        return entries
-    }
-
-    private static func makeEntry(from table: [String: String]) -> LLMServerEntry {
-        let name = table["name"] ?? "default"
-        let provider = table["provider"] ?? "llama.cpp"
-        let endpoint = table["endpoint"] ?? "http://127.0.0.1:8080"
-        let apiKey = table["api_key"] ?? table["api-key"] ?? ""
-        let models = parseTomlStringArray(table["models"] ?? "")
-        let selectedModel = table["selected-model"] ?? table["default_model"] ?? table["model"] ?? ""
-        let contextLength = parseInt(table["contextLength"] ?? "8192", defaultValue: 8192)
-        let temperature = parseDouble(table["temperature"] ?? "0.4", defaultValue: 0.4)
-        let system = table["system"] ?? ""
-        return LLMServerEntry(
-            name: name, provider: provider, endpoint: endpoint, apiKey: apiKey,
-            models: models, selectedModel: selectedModel, contextLength: contextLength,
-            temperature: temperature, system: system
-        )
-    }
-
-    private static func llmServerEntry(for name: String, in entries: [LLMServerEntry]) -> LLMServerEntry? {
-        entries.first { $0.name == name }
-    }
-
-    private static func config(from entry: LLMServerEntry) -> LLMServerConfig {
-        LLMServerConfig(
-            name: entry.name,
-            provider: entry.provider,
-            endpoint: entry.endpoint,
-            apiKey: entry.apiKey,
-            models: entry.models,
-            selectedModel: entry.selectedModel,
-            contextLength: entry.contextLength,
-            temperature: entry.temperature,
-            system: entry.system
-        )
     }
 
     private func syncActiveLLMServer() {
@@ -465,385 +435,18 @@ final class ConfigStore: ObservableObject {
         }
     }
 
-    private static func parse(_ text: String) -> AirTypeConfig {
-        let tables = parseTomlTables(text)
-        var parsed = AirTypeConfig()
-
-        for section in schema {
-            for field in section.fields {
-                let normalized = normalizedSection(field.section)
-                if let table = tables[normalized], let value = table[field.key] {
-                    field.apply(&parsed, value)
-                }
-            }
-        }
-        if parsed.microphone.selectedDeviceName.isEmpty,
-           let value = tables["localapp.microphone"]?["selected_order"] {
-            parsed.microphone.selectedDeviceName = value
-        }
-
-        let entries = parseAllLLMServers(from: text)
-        if !entries.isEmpty {
-            parsed.webui.llmServers = entries.map(config(from:))
-            let selectedName = parsed.webui.selectedServerName.isEmpty ? entries[0].name : parsed.webui.selectedServerName
-            parsed.webui.selectedServerName = selectedName
-            if let selected = entries.first(where: { $0.name == selectedName }) ?? entries.first {
-                parsed.webui.llm = config(from: selected)
-                parsed.webui.selectedModelName = selected.selectedModel
-            }
-        }
-
-        // Remote ASR profiles: [[localapp.remote-asr]] (legacy single [localapp.remote-asr] → one profile "default").
-        let asrProfiles = uniquelyNamed(
-            profileTables(in: text, section: "localapp.remote-asr").map { table -> RemoteASRConfig in
-                var scratch = AirTypeConfig()
-                apply(table: table, section: "localapp.remote-asr", to: &scratch)
-                return scratch.remoteASR
-            },
-            name: \.name
-        )
-        parsed.remoteASRProfiles = asrProfiles.isEmpty ? [parsed.remoteASR] : asrProfiles
-        let asrActive = parsed.remoteASRProfiles.first(where: { $0.name == parsed.selectedRemoteASRName }) ?? parsed.remoteASRProfiles[0]
-        parsed.remoteASR = asrActive
-        parsed.selectedRemoteASRName = asrActive.name
-
-        // Whisper profiles: [[webui.whisper-server]] (legacy single [webui.whisper-server] → one profile "default").
-        let whisperTables = profileTables(in: text, section: "webui.whisper-server")
-        let whisperProfiles = uniquelyNamed(
-            whisperTables.map { table -> WhisperServerConfig in
-                var scratch = AirTypeConfig()
-                apply(table: table, section: "webui.whisper-server", to: &scratch)
-                return scratch.webui.whisper
-            },
-            name: \.name
-        )
-        parsed.webui.whisperServers = whisperProfiles.isEmpty ? [parsed.webui.whisper] : whisperProfiles
-        let whisperActive = parsed.webui.whisperServers.first(where: { $0.name == parsed.webui.selectedWhisperServerName })
-            ?? parsed.webui.whisperServers[0]
-        parsed.webui.whisper = whisperActive
-        parsed.webui.selectedWhisperServerName = whisperActive.name
-
-        // Migration: older configs kept self-host keys (server_bin, model_dir, …) on the whisper-server table.
-        if tables["localapp.local-whisper"] == nil {
-            let legacy = whisperTables.first(where: { ($0["name"] ?? "default") == whisperActive.name }) ?? whisperTables.first
-            if let legacy {
-                apply(table: legacy, section: "localapp.local-whisper", to: &parsed)
-                let remote = (legacy["remote_endpoint"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                let model = (legacy["model_filename"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                parsed.localWhisper.enabled = remote.isEmpty && !model.isEmpty
-            }
-        }
-
-        return parsed
-    }
-
-    /// Every table (`[section]` or `[[section]]`) whose normalized name is `section`, in file order.
-    private static func profileTables(in text: String, section: String) -> [[String: String]] {
-        var tables: [[String: String]] = []
-        var current: [String: String]?
-        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let trimmed = stripComment(String(rawLine)).trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty { continue }
-            if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
-                if let current { tables.append(current) }
-                let isArray = trimmed.hasPrefix("[[") && trimmed.hasSuffix("]]")
-                let name = isArray ? String(trimmed.dropFirst(2).dropLast(2)) : String(trimmed.dropFirst().dropLast())
-                current = normalizedSection(name.trimmingCharacters(in: .whitespaces)) == section ? [:] : nil
-            } else if current != nil, let eqIndex = trimmed.firstIndex(of: "=") {
-                let key = String(trimmed[..<eqIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
-                current?[key] = parseTomlValue(String(trimmed[trimmed.index(after: eqIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines))
-            }
-        }
-        if let current { tables.append(current) }
-        return tables
-    }
-
-    private static func apply(table: [String: String], section: String, to config: inout AirTypeConfig) {
-        guard let schemaSection = schema.first(where: { $0.name == section }) else { return }
-        for field in schemaSection.fields {
-            if let value = table[field.key] { field.apply(&config, value) }
-        }
-    }
-
-    /// Duplicate profile names get "-2", "-3", … so selection by name stays unambiguous.
-    private static func uniquelyNamed<T>(_ items: [T], name: WritableKeyPath<T, String>) -> [T] {
-        var seen = Set<String>()
-        return items.map { item in
-            var item = item
-            var candidate = item[keyPath: name]
-            var suffix = 2
-            while seen.contains(candidate) { candidate = "\(item[keyPath: name])-\(suffix)"; suffix += 1 }
-            item[keyPath: name] = candidate
-            seen.insert(candidate)
-            return item
-        }
-    }
-
-    /// Per-profile copies of `config` for the array sections, with the active profile synced into its slot.
-    private static func profileVariants(for sectionName: String, in config: AirTypeConfig) -> [AirTypeConfig]? {
-        switch sectionName {
-        case "webui.llm-server":
-            let servers = config.webui.llmServers.isEmpty ? [config.webui.llm] : config.webui.llmServers
-            return servers.map { var copy = config; copy.webui.llm = $0; return copy }
-        case "localapp.remote-asr":
-            var profiles = config.remoteASRProfiles
-            let activeName = config.selectedRemoteASRName.isEmpty ? config.remoteASR.name : config.selectedRemoteASRName
-            if let index = profiles.firstIndex(where: { $0.name == activeName }) {
-                profiles[index] = config.remoteASR
-            } else {
-                profiles.append(config.remoteASR)
-            }
-            return profiles.map { var copy = config; copy.remoteASR = $0; return copy }
-        case "webui.whisper-server":
-            var profiles = config.webui.whisperServers
-            let activeName = config.webui.selectedWhisperServerName.isEmpty ? config.webui.whisper.name : config.webui.selectedWhisperServerName
-            if let index = profiles.firstIndex(where: { $0.name == activeName }) {
-                profiles[index] = config.webui.whisper
-            } else {
-                profiles.append(config.webui.whisper)
-            }
-            return profiles.map { var copy = config; copy.webui.whisper = $0; return copy }
-        default:
-            return nil
-        }
-    }
-
     private func save() {
+        let jsonPath = AirTypeHome.configJSON
         try? FileManager.default.createDirectory(
-            at: path.deletingLastPathComponent(),
+            at: jsonPath.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
         do {
-            try Self.tomlText(config).write(to: path, atomically: true, encoding: .utf8)
+            let data = try ConfigJSON.encode(config)
+            try data.write(to: jsonPath, options: .atomic)
         } catch {
-            Logger.shared.log("Could not write config: \(error)")
+            Logger.shared.log("Could not write config.json: \(error)")
         }
-    }
-
-    private static func tomlText(_ config: AirTypeConfig) -> String {
-        var lines: [String] = [
-            "# AirType user config",
-            "#:schema ./config.schema.json",
-            "# Local app settings live under [localapp.*].",
-            "# Web UI runtime settings live under [webui.*].",
-            ""
-        ]
-
-        var previousGroup = ""
-        for section in schema {
-            if section.group != previousGroup {
-                if !previousGroup.isEmpty {
-                    lines.append("")
-                }
-                lines.append("#===============================================================================")
-                lines.append("# \(section.group)")
-                lines.append("#===============================================================================")
-                lines.append("")
-                previousGroup = section.group
-            } else {
-                lines.append("")
-            }
-
-            if let variants = profileVariants(for: section.name, in: config) {
-                for (index, serverConfig) in variants.enumerated() {
-                    if index > 0 {
-                        lines.append("")
-                    }
-                    lines.append("[[\(section.name)]]")
-                    for field in section.fields {
-                        if let comment = field.comment {
-                            lines.append("# \(comment)")
-                        }
-                        lines.append("\(field.key) = \(field.render(serverConfig))")
-                    }
-                }
-            } else {
-                let header = "[\(section.name)]"
-                lines.append(header)
-                for field in section.fields {
-                    if let comment = field.comment {
-                        lines.append("# \(comment)")
-                    }
-                    lines.append("\(field.key) = \(field.render(config))")
-                }
-            }
-        }
-
-        return lines.joined(separator: "\n") + "\n"
-    }
-
-    private static func patchLLMSelection(in text: String, serverName: String, modelName: String) -> String {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        let modelPatchedLines = patchLLMServerDefaultModel(in: lines, serverName: serverName, modelName: modelName)
-        let webuiPatchedLines = patchWebUISelection(in: modelPatchedLines, serverName: serverName)
-        return webuiPatchedLines.joined(separator: "\n")
-    }
-
-    private static func patchLLMServerDefaultModel(in lines: [String], serverName: String, modelName: String) -> [String] {
-        var output: [String] = []
-        var block: [String] = []
-        var inLLMServer = false
-
-        func flushBlock() {
-            guard inLLMServer else { return }
-            let table = tableValues(from: block)
-            if table["name"] == serverName {
-                let patched = replacingOrAppending(key: "selected-model", value: tomlString(modelName), in: block)
-                output.append(contentsOf: removing(keys: ["model", "default_model"], from: patched))
-            } else {
-                output.append(contentsOf: block)
-            }
-            block.removeAll()
-            inLLMServer = false
-        }
-
-        for line in lines {
-            let trimmed = stripComment(line).trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.hasPrefix("[[") || trimmed.hasPrefix("[") {
-                flushBlock()
-                if trimmed == "[[webui.llm-server]]" {
-                    inLLMServer = true
-                    block = [line]
-                } else {
-                    output.append(line)
-                }
-            } else if inLLMServer {
-                block.append(line)
-            } else {
-                output.append(line)
-            }
-        }
-        flushBlock()
-        return output
-    }
-
-    private static func patchLLMServerModels(in text: String, modelsByServer: [String: [String]]) -> String {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        var output: [String] = []
-        var block: [String] = []
-        var inLLMServer = false
-
-        func flushBlock() {
-            guard inLLMServer else { return }
-            let table = tableValues(from: block)
-            guard let serverName = table["name"], let modelNames = modelsByServer[serverName] else {
-                output.append(contentsOf: block)
-                block.removeAll()
-                inLLMServer = false
-                return
-            }
-            var patched = replacingOrAppending(key: "models", value: tomlStringArray(modelNames), in: block)
-            let selectedModel = table["selected-model"] ?? table["default_model"] ?? table["model"] ?? ""
-            if selectedModel.isEmpty || !modelNames.contains(selectedModel) {
-                patched = replacingOrAppending(key: "selected-model", value: tomlString(modelNames.first ?? ""), in: patched)
-            }
-            output.append(contentsOf: removing(keys: ["model", "default_model"], from: patched))
-            block.removeAll()
-            inLLMServer = false
-        }
-
-        for line in lines {
-            let trimmed = stripComment(line).trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.hasPrefix("[[") || trimmed.hasPrefix("[") {
-                flushBlock()
-                if trimmed == "[[webui.llm-server]]" {
-                    inLLMServer = true
-                    block = [line]
-                } else {
-                    output.append(line)
-                }
-            } else if inLLMServer {
-                block.append(line)
-            } else {
-                output.append(line)
-            }
-        }
-        flushBlock()
-        return output.joined(separator: "\n")
-    }
-
-    private static func patchWebUISelection(in lines: [String], serverName: String) -> [String] {
-        var output: [String] = []
-        var block: [String] = []
-        var inWebUI = false
-        var foundWebUI = false
-        var shouldKeepCurrentWebUI = false
-
-        func flushBlock() {
-            guard inWebUI else { return }
-            if shouldKeepCurrentWebUI {
-                let patched = replacingOrAppending(key: "default-llm-server-name", value: tomlString(serverName), in: block)
-                output.append(contentsOf: patched)
-            }
-            block.removeAll()
-            inWebUI = false
-            shouldKeepCurrentWebUI = false
-        }
-
-        for line in lines {
-            let trimmed = stripComment(line).trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.hasPrefix("[[") || trimmed.hasPrefix("[") {
-                flushBlock()
-                if trimmed == "[webui]" {
-                    shouldKeepCurrentWebUI = !foundWebUI
-                    foundWebUI = true
-                    inWebUI = true
-                    block = [line]
-                } else {
-                    output.append(line)
-                }
-            } else if inWebUI {
-                block.append(line)
-            } else {
-                output.append(line)
-            }
-        }
-        flushBlock()
-
-        if !foundWebUI {
-            if output.last?.isEmpty == false {
-            output.append("")
-            }
-            output.append("[webui]")
-            output.append("default-llm-server-name = \(tomlString(serverName))")
-        }
-        return output
-    }
-
-    private static func replacingOrAppending(key: String, value: String, in lines: [String]) -> [String] {
-        var patched = lines
-        let replacement = "\(key) = \(value)"
-        if let index = patched.firstIndex(where: { line in
-            let trimmed = stripComment(line).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let eqIndex = trimmed.firstIndex(of: "=") else { return false }
-            return trimmed[..<eqIndex].trimmingCharacters(in: .whitespacesAndNewlines) == key
-        }) {
-            patched[index] = replacement
-        } else {
-            patched.append(replacement)
-        }
-        return patched
-    }
-
-    private static func removing(keys: Set<String>, from lines: [String]) -> [String] {
-        lines.filter { line in
-            let trimmed = stripComment(line).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let eqIndex = trimmed.firstIndex(of: "=") else { return true }
-            let key = trimmed[..<eqIndex].trimmingCharacters(in: .whitespacesAndNewlines)
-            return !keys.contains(String(key))
-        }
-    }
-
-    private static func tableValues(from lines: [String]) -> [String: String] {
-        var values: [String: String] = [:]
-        for line in lines {
-            let trimmed = stripComment(line).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let eqIndex = trimmed.firstIndex(of: "=") else { continue }
-            let key = String(trimmed[..<eqIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
-            let value = parseTomlValue(String(trimmed[trimmed.index(after: eqIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines))
-            values[key] = value
-        }
-        return values
     }
 
     private struct ConfigSectionSchema {
@@ -984,12 +587,21 @@ final class ConfigStore: ObservableObject {
                 boolField("localapp.local-whisper", "enabled",
                           apply: { $0.localWhisper.enabled = parseBool($1, defaultValue: false) },
                           render: { $0.localWhisper.enabled ? "true" : "false" }),
-                boolField("localapp.local-whisper", "launch_on_start",
-                          apply: { $0.localWhisper.launchOnStart = parseBool($1, defaultValue: false) },
-                          render: { $0.localWhisper.launchOnStart ? "true" : "false" }),
                 stringField("localapp.local-whisper", "server_bin",
                             apply: { $0.localWhisper.serverBin = $1 },
                             render: { $0.localWhisper.serverBin }),
+                stringField("localapp.local-whisper", "host",
+                            apply: { $0.localWhisper.host = $1.isEmpty ? "127.0.0.1" : $1 },
+                            render: { $0.localWhisper.host }),
+                intField("localapp.local-whisper", "port",
+                         apply: { $0.localWhisper.port = clamp(parseInt($1, defaultValue: 8080), minimum: 1, maximum: 65535) },
+                         render: { String($0.localWhisper.port) }),
+                intField("localapp.local-whisper", "max_threads",
+                         apply: { $0.localWhisper.maxThreads = clamp(parseInt($1, defaultValue: 4), minimum: 1, maximum: 256) },
+                         render: { String($0.localWhisper.maxThreads) }),
+                intField("localapp.local-whisper", "max_gpu",
+                         apply: { $0.localWhisper.maxGpu = clamp(parseInt($1, defaultValue: 1), minimum: 0, maximum: 16) },
+                         render: { String($0.localWhisper.maxGpu) }),
                 stringField("localapp.local-whisper", "server_args",
                             apply: { $0.localWhisper.serverArgs = $1 },
                             render: { $0.localWhisper.serverArgs }),
@@ -1000,6 +612,7 @@ final class ConfigStore: ObservableObject {
                             apply: { $0.localWhisper.modelFilename = $1 },
                             render: { $0.localWhisper.modelFilename }),
                 stringField("localapp.local-whisper", "language",
+                            options: ["zh-tw", "zh-cn", "en", "auto"],
                             apply: { $0.localWhisper.language = $1.isEmpty ? "zh-tw" : $1 },
                             render: { $0.localWhisper.language }),
                 intField("localapp.local-whisper", "beam",
@@ -1007,7 +620,16 @@ final class ConfigStore: ObservableObject {
                          render: { String($0.localWhisper.beam) }),
                 numberField("localapp.local-whisper", "temperature",
                             apply: { $0.localWhisper.temperature = clamp(parseDouble($1, defaultValue: 0), minimum: 0, maximum: 2) },
-                            render: { format($0.localWhisper.temperature) })
+                            render: { format($0.localWhisper.temperature) }),
+                stringField("localapp.local-whisper", "vocabulary_prompt",
+                            apply: { $0.localWhisper.vocabularyPrompt = $1 },
+                            render: { $0.localWhisper.vocabularyPrompt }),
+                boolField("localapp.local-whisper", "no_timestamps",
+                          apply: { $0.localWhisper.noTimestamps = parseBool($1, defaultValue: true) },
+                          render: { $0.localWhisper.noTimestamps ? "true" : "false" }),
+                boolField("localapp.local-whisper", "no_language_symbol",
+                          apply: { $0.localWhisper.noLanguageSymbol = parseBool($1, defaultValue: true) },
+                          render: { $0.localWhisper.noLanguageSymbol ? "true" : "false" })
             ]
         ),
         ConfigSectionSchema(
@@ -1043,7 +665,16 @@ final class ConfigStore: ObservableObject {
                             render: { $0.webui.whisper.name }),
                 stringField("webui.whisper-server", "remote_endpoint",
                             apply: { $0.webui.whisper.remoteEndpoint = $1 },
-                            render: { $0.webui.whisper.remoteEndpoint })
+                            render: { $0.webui.whisper.remoteEndpoint }),
+                numberField("webui.whisper-server", "temperature",
+                            apply: { $0.webui.whisper.temperature = clamp(parseDouble($1, defaultValue: 0), minimum: 0, maximum: 2) },
+                            render: { format($0.webui.whisper.temperature) }),
+                intField("webui.whisper-server", "beam",
+                         apply: { $0.webui.whisper.beam = clamp(parseInt($1, defaultValue: 5), minimum: 1, maximum: 16) },
+                         render: { String($0.webui.whisper.beam) }),
+                stringField("webui.whisper-server", "language",
+                            apply: { $0.webui.whisper.language = $1.isEmpty ? "zh-tw" : $1 },
+                            render: { $0.webui.whisper.language })
             ]
         ),
         ConfigSectionSchema(
@@ -1076,6 +707,9 @@ final class ConfigStore: ObservableObject {
                 numberField("webui.llm-server", "temperature",
                             apply: { $0.webui.llm.temperature = clamp(parseDouble($1, defaultValue: 0.4), minimum: 0, maximum: 2) },
                             render: { format($0.webui.llm.temperature) }),
+                boolField("webui.llm-server", "thinking",
+                          apply: { $0.webui.llm.thinking = parseBool($1, defaultValue: false) },
+                          render: { $0.webui.llm.thinking ? "true" : "false" }),
                 stringField("webui.llm-server", "system",
                             apply: { $0.webui.llm.system = $1 },
                             render: { $0.webui.llm.system })
@@ -1109,7 +743,7 @@ final class ConfigStore: ObservableObject {
             key: key,
             comment: comment,
             apply: apply,
-            render: { tomlString(render($0)) },
+            render: render,
             kind: kind,
             options: options
         )
@@ -1126,8 +760,11 @@ final class ConfigStore: ObservableObject {
             section: section,
             key: key,
             comment: comment,
-            apply: { config, value in apply(&config, parseTomlStringArray(value)) },
-            render: { tomlStringArray(render($0)) },
+            apply: { config, value in
+                let items = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                apply(&config, items)
+            },
+            render: { render($0).joined(separator: ", ") },
             kind: .array
         )
     }
@@ -1160,161 +797,6 @@ final class ConfigStore: ObservableObject {
         render: @escaping (AirTypeConfig) -> String
     ) -> ConfigFieldSchema {
         ConfigFieldSchema(section: section, key: key, comment: comment, apply: apply, render: render, kind: .bool)
-    }
-
-    private static func parseTomlTables(_ text: String) -> [String: [String: String]] {
-        // Collect all sections: [section] -> [key: value], [[section]] -> [[key: value]]
-        var sections: [String: [[String: String]]] = [:]
-        var currentSection = ""
-        var currentTable: [String: String] = [:]
-
-        func flushTable() {
-            if !currentSection.isEmpty {
-                sections[currentSection, default: []].append(currentTable)
-                currentTable = [:]
-            }
-        }
-
-        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let trimmed = stripComment(String(rawLine)).trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty {
-                continue
-            }
-            if trimmed.hasPrefix("[["), trimmed.hasSuffix("]]") {
-                flushTable()
-                currentSection = normalizedSection(String(trimmed.dropFirst(2).dropLast(2)))
-                currentTable = [:]
-            } else if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
-                flushTable()
-                currentSection = normalizedSection(String(trimmed.dropFirst().dropLast()))
-                currentTable = [:]
-            } else if let eqIndex = trimmed.firstIndex(of: "=") {
-                let key = String(trimmed[..<eqIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
-                let value = parseTomlValue(String(trimmed[trimmed.index(after: eqIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines))
-                currentTable[key] = value
-            }
-        }
-        flushTable()
-
-        // Find the default LLM server name from [webui] section
-        var defaultLLMName: String?
-        if let webuiTables = sections["webui"] {
-            if let webuiTable = webuiTables.last,
-               let name = webuiTable["default-llm-server-name"] {
-                defaultLLMName = name.isEmpty ? nil : name
-            }
-        }
-
-        // Select default for each section
-        var result: [String: [String: String]] = [:]
-        for (section, tables) in sections {
-            if section.hasPrefix("webui.llm-server"), let defaultName = defaultLLMName {
-                // Select the LLM server matching default-llm-server-name
-                if let matched = tables.first(where: { $0["name"] == defaultName }) {
-                    result[section] = matched
-                } else if let first = tables.first {
-                    result[section] = first
-                }
-            } else {
-                result[section] = tables.last ?? [:]
-            }
-        }
-
-        return result
-    }
-
-    private static func stripComment(_ line: String) -> String {
-        var result = ""
-        var inString = false
-        var escaped = false
-        for char in line {
-            if escaped {
-                result.append(char)
-                escaped = false
-            } else if char == "\\" && inString {
-                result.append(char)
-                escaped = true
-            } else if char == "\"" {
-                result.append(char)
-                inString.toggle()
-            } else if char == "#" && !inString {
-                break
-            } else {
-                result.append(char)
-            }
-        }
-        return result
-    }
-
-    private static func unquote(_ value: String) -> String {
-        var text = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.hasPrefix("\""), text.hasSuffix("\""), text.count >= 2 {
-            text.removeFirst()
-            text.removeLast()
-        }
-        return text
-            .replacingOccurrences(of: "\\\"", with: "\"")
-            .replacingOccurrences(of: "\\\\", with: "\\")
-    }
-
-    private static func parseTomlValue(_ value: String) -> String {
-        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.hasPrefix("[") ? text : unquote(text)
-    }
-
-    private static func tomlString(_ value: String) -> String {
-        let escaped = value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        return "\"\(escaped)\""
-    }
-
-    private static func tomlStringArray(_ values: [String]) -> String {
-        "[\(values.map(tomlString).joined(separator: ", "))]"
-    }
-
-    private static func parseTomlStringArray(_ value: String) -> [String] {
-        var text = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard text.hasPrefix("["), text.hasSuffix("]") else {
-            return []
-        }
-        text.removeFirst()
-        text.removeLast()
-
-        var values: [String] = []
-        var current = ""
-        var inString = false
-        var escaped = false
-        for char in text {
-            if escaped {
-                current.append(char)
-                escaped = false
-            } else if char == "\\" && inString {
-                escaped = true
-            } else if char == "\"" {
-                if inString {
-                    values.append(current)
-                    current = ""
-                }
-                inString.toggle()
-            } else if inString {
-                current.append(char)
-            }
-        }
-        return values
-    }
-
-    private static func normalizedSection(_ section: String) -> String {
-        switch section {
-        case "localapp.backend", "localapp.backend_endpoint":
-            return "localapp.backend-endpoint"
-        case "webui.whisper":
-            return "webui.whisper-server"
-        case "webui.llm":
-            return "webui.llm-server"
-        default:
-            return section
-        }
     }
 
     private static func normalizeLanguage(_ value: String) -> String {
@@ -1416,29 +898,19 @@ final class ConfigStore: ObservableObject {
         }
     }
 
-    // localapp keeps its own config so menu changes never touch ~/.airtype/config.toml.
     private static var configPath: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".airtype-experiment/config.toml")
+        AirTypeHome.configJSON
     }
 
-    private static var originalConfigPath: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".airtype/config.toml")
-    }
-
-    /// First run: copy ~/.airtype/config.toml (read-only) to ~/.airtype-experiment/config.toml.
-    private static func seedExperimentConfigIfNeeded(at path: URL) {
-        let fileManager = FileManager.default
-        guard !fileManager.fileExists(atPath: path.path),
-              fileManager.fileExists(atPath: originalConfigPath.path) else { return }
-        do {
-            try fileManager.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fileManager.copyItem(at: originalConfigPath, to: path)
-            Logger.shared.log("Seeded experiment config from \(originalConfigPath.path) to \(path.path)")
-        } catch {
-            Logger.shared.log("Could not seed experiment config: \(error)")
-        }
+    /// Ensure `~/.airtype/config.json` exists (create defaults if missing).
+    private static func ensureConfigJSONExists() throws {
+        let json = AirTypeHome.configJSON
+        let fm = FileManager.default
+        if fm.fileExists(atPath: json.path) { return }
+        try fm.createDirectory(at: json.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try ConfigJSON.encode(AirTypeConfig())
+        try data.write(to: json, options: .atomic)
+        Logger.shared.log("Created default config.json at \(json.path)")
     }
 }
 

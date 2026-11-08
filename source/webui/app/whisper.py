@@ -36,7 +36,7 @@ OPENCC_CONFIGS = {
 }
 
 def _find_config_path() -> Path:
-    config_path = Path("~/.airtype/config.toml").expanduser().resolve()
+    config_path = Path("~/.airtype/config.json").expanduser().resolve()
     if not config_path.exists():
         ensure_config_exists(config_path, generator_name="webui whisper import")
         append_service_log("webui", f"config file missing; generated default config from schema path={config_path}")
@@ -145,7 +145,7 @@ class WhisperCppTranscriber:
         )
         if use_local_server and not Path(selected_model).exists():
             raise WhisperCppNotConfigured(
-                f"whisper.cpp model not found: {selected_model}. Set [webui.whisper-server].model_dir and model_filename in ~/.airtype/config.toml."
+                f"whisper.cpp model not found: {selected_model}. Set webui.whisper-server model_dir and model_filename in ~/.airtype/config.json."
             )
 
         with tempfile.TemporaryDirectory(prefix="airtype-transcribe-") as work_dir:
@@ -311,7 +311,7 @@ class WhisperCppTranscriber:
             server_bin = self.server_binary
             if not server_bin:
                 raise WhisperCppNotConfigured(
-                    "whisper.cpp server executable not found. Set [webui.whisper-server].server_bin in ~/.airtype/config.toml."
+                    "whisper.cpp server executable not found. Set webui.whisper-server server_bin in ~/.airtype/config.json."
                 )
 
             host = "127.0.0.1"

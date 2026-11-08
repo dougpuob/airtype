@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="$ROOT_DIR/.venv"
 AIRTYPE_HOME="$HOME/.airtype"
-CONFIG_PATH="$HOME/.airtype/config.toml"
-MODEL_DIR="$AIRTYPE_HOME/models"
+CONFIG_PATH="$HOME/.airtype/config.json"
+MODEL_DIR="$AIRTYPE_HOME/models/whisper"
 DEFAULT_WHISPER_MODEL_NAME="large-v3-turbo-q5_0"
 DEFAULT_WHISPER_MODEL_FILE="ggml-${DEFAULT_WHISPER_MODEL_NAME}.bin"
 DEFAULT_WHISPER_MODEL_PATH="$MODEL_DIR/$DEFAULT_WHISPER_MODEL_FILE"
@@ -168,7 +168,6 @@ write_backend_settings() {
   mkdir -p "$(dirname "$CONFIG_PATH")"
   "$VENV_DIR/bin/python" - "$CONFIG_PATH" "$DEFAULT_WHISPER_MODEL_PATH" "$WHISPER_BIN_DIR" "$ROOT_DIR/config.schema.json" <<'PY'
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -178,30 +177,11 @@ model = Path(model_path)
 server_bin = str(Path(whisper_bin_dir) / "whisper-server")
 schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
 
-def toml_string(value):
-    text = str(value or "")
-    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-def toml_value(value):
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (int, float)):
-        return str(value)
-    if isinstance(value, list):
-        return "[" + ", ".join(toml_value(item) for item in value) + "]"
-    return toml_string(value)
-
 def object_defaults(object_schema):
     return {
         key: property_schema.get("default", "")
         for key, property_schema in object_schema.get("properties", {}).items()
     }
-
-def remove_backend_sections(text):
-    text = re.sub(r"(?ms)^\[{1,2}webui\.(?:whisper-server|llm-server|yt-dlp|ytdlp|whisper|llm)\]{1,2}\n.*?(?=^\[|\Z)", "", text)
-    text = re.sub(r"(?ms)^\[webui\]\n.*?(?=^\[|\Z)", "", text)
-    text = re.sub(r"(?m)^#=+\n# Web UI Settings\n#=+\n(?:\n|$)", "", text)
-    return text.rstrip()
 
 webui_schema = schema["properties"]["webui"]["properties"]
 whisper_defaults = object_defaults(webui_schema["whisper-server"])
@@ -209,7 +189,7 @@ ytdlp_defaults = object_defaults(webui_schema["yt-dlp"])
 llm_defaults = object_defaults(webui_schema["llm-server"]["items"])
 default_llm_name = webui_schema["default-llm-server-name"].get("default", "")
 
-model_dir = str(model.parent) if model.exists() else ""
+model_dir = str(model.parent) if model.exists() else "~/.airtype/models/whisper"
 model_filename = model.name if model.exists() else ""
 server_bin_value = server_bin if Path(server_bin).exists() else ""
 whisper_defaults.update({
@@ -221,53 +201,26 @@ if not llm_defaults.get("name"):
     llm_defaults["name"] = "default"
 if not default_llm_name:
     default_llm_name = llm_defaults["name"]
-
-backend_text = "\n".join([
-    "#===============================================================================",
-    "# Web UI Settings",
-    "#===============================================================================",
-    "",
-    "[webui.whisper-server]",
-    *(f"{key} = {toml_value(whisper_defaults[key])}" for key in [
-        "model_dir",
-        "model_filename",
-        "server_bin",
-        "remote_endpoint",
-        "server_args",
-        "language",
-        "beam",
-        "temperature",
-    ]),
-    "",
-    "[webui.yt-dlp]",
-    *(f"{key} = {toml_value(ytdlp_defaults[key])}" for key in [
-        "cookies",
-        "cookies_from_browser",
-    ]),
-    "",
-    "[[webui.llm-server]]",
-    *(f"{key} = {toml_value(llm_defaults[key])}" for key in [
-        "name",
-        "provider",
-        "endpoint",
-        "models",
-        "selected-model",
-        "contextLength",
-        "temperature",
-        "system",
-    ]),
-    "",
-    "[webui]",
-    f"default-llm-server-name = {toml_string(default_llm_name)}",
-])
+if "thinking" not in llm_defaults and "disable_thinking" in llm_defaults:
+    llm_defaults["thinking"] = not bool(llm_defaults.pop("disable_thinking"))
+llm_defaults.setdefault("thinking", False)
 
 try:
-    text = config_path.read_text(encoding="utf-8")
-except OSError:
-    text = "# AirType user config\n"
-
-text = remove_backend_sections(text)
-config_path.write_text(f"{text}\n\n{backend_text}\n", encoding="utf-8")
+    document = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+except (OSError, json.JSONDecodeError):
+    document = {}
+if not isinstance(document, dict):
+    document = {}
+webui = document.setdefault("webui", {})
+if not isinstance(webui, dict):
+    webui = {}
+    document["webui"] = webui
+webui["whisper-server"] = whisper_defaults
+webui["yt-dlp"] = ytdlp_defaults
+webui["llm-server"] = [llm_defaults]
+webui["default-llm-server-name"] = default_llm_name
+config_path.parent.mkdir(parents=True, exist_ok=True)
+config_path.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 print(f"Wrote {config_path}")
 if model.exists():
     print(f"Configured Whisper model: {model_path}")

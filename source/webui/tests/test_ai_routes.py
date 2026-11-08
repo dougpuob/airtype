@@ -1,41 +1,44 @@
+import json
 import os
 import tempfile
-import tomllib
 import unittest
 from unittest import mock
 
 from app import ai_routes
 from app import main as webui
-from app.config_schema import _toml_number, _toml_string
 
-LEGACY_CONFIG = """
-[[webui.llm-server]]
-name = "omlx"
-provider = "openai"
-endpoint = "http://127.0.0.1:8000"
-api_key = "local-secret"
-models = ["qwen"]
-selected-model = "qwen"
-
-[webui]
-default-llm-server-name = "omlx"
-
-[webui.grok-cli]
-enabled = true
-bin = "~/.grok/bin/grok"
-reasoning_effort = "low"
-steps = ["correct", "polish"]
-timeout_seconds = 300
-typo_concurrency = 3
-"""
+LEGACY_CONFIG = {
+    "webui": {
+        "llm-server": [
+            {
+                "name": "omlx",
+                "provider": "openai",
+                "endpoint": "http://127.0.0.1:8000",
+                "api_key": "local-secret",
+                "models": ["qwen"],
+                "selected-model": "qwen",
+            }
+        ],
+        "default-llm-server-name": "omlx",
+        "grok-cli": {
+            "enabled": True,
+            "bin": "~/.grok/bin/grok",
+            "reasoning_effort": "low",
+            "steps": ["correct", "polish"],
+            "timeout_seconds": 300,
+            "typo_concurrency": 3,
+        },
+    }
+}
 
 
 class AiRoutesTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.path = os.path.join(self.tmp.name, "config.toml")
+        self.path = os.path.join(self.tmp.name, "config.json")
         with open(self.path, "w", encoding="utf-8") as config_file:
-            config_file.write(LEGACY_CONFIG)
+            json.dump(LEGACY_CONFIG, config_file, indent=2)
+            config_file.write("\n")
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -49,18 +52,18 @@ class AiRoutesTest(unittest.TestCase):
             config["steps"], {"correct": "Grok CLI", "polish": "Grok CLI", "title": "omlx", "tags": "omlx"}
         )
 
-    def test_render_round_trip(self) -> None:
+    def test_normalize_filters_routes(self) -> None:
         routes = [
             {"name": "CLI", "type": "grok-cli", "timeout_seconds": 200},
             {"name": "xAI", "type": "grok-api", "api_key": "k", "model": "grok-4"},
             {"name": "", "type": "grok-api"},
             {"name": "bad", "type": "nope"},
         ]
-        text = ai_routes.render_ai_toml(routes, {"title": "xAI"}, _toml_string, _toml_number)
-        loaded = tomllib.loads(text)["webui"]
-        self.assertEqual([route["name"] for route in loaded["ai-route"]], ["CLI", "xAI"])
-        self.assertEqual(loaded["ai-steps"]["title"], "xAI")
-        self.assertEqual(loaded["ai-steps"]["correct"], "")
+        normalized = [route for raw in routes if (route := ai_routes.normalize_cloud_route(raw))]
+        self.assertEqual([route["name"] for route in normalized], ["CLI", "xAI"])
+        steps = ai_routes.normalize_steps({"title": "xAI"})
+        self.assertEqual(steps["title"], "xAI")
+        self.assertEqual(steps["correct"], "")
 
     def test_blank_api_key_keeps_saved_key(self) -> None:
         current = [{"name": "xAI", "type": "grok-api", "api_key": "saved"}]
@@ -81,7 +84,7 @@ class AiRoutesTest(unittest.TestCase):
             self.assertEqual(config["routes"][0]["name"], "Grok CLI")
             self.assertEqual(config["steps"]["polish"], "Grok CLI")
             with open(self.path, encoding="utf-8") as config_file:
-                raw = tomllib.loads(config_file.read())["webui"]
+                raw = json.load(config_file)["webui"]
             self.assertIn("grok-cli", raw)  # legacy table left in place
             self.assertEqual(raw["llm-server"][0]["api_key"], "local-secret")
 

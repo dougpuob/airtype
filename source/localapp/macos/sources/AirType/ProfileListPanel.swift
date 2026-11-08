@@ -171,7 +171,7 @@ final class ProfileListPanel: NSObject, NSTableViewDataSource, NSTableViewDelega
 /// Model: the list holds saved profiles; the form below edits a copy of the selected one.
 /// Add = form → new profile, Modify = form → selected profile, Delete = remove selected,
 /// Set Active = selected profile becomes the one the app uses. Nothing is written to
-/// config.toml until the window's Apply / Save (which also folds in pending form edits).
+/// config.json until the window's Apply / Save (which also folds in pending form edits).
 @MainActor
 final class ProfileSession<Profile: Equatable> {
     let kind: String

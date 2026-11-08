@@ -11,16 +11,33 @@ import Foundation
 ///
 /// So text appears in bursts (per pause / ~1 s), not word by word like Nemotron.
 ///
-/// The same VAD + re-decode loop also drives Fun-ASR-Nano (sherpa-onnx `funasr_nano`, also an
-/// audio-encoder + Qwen3-0.6B LLM decoder, offline only); `model` picks which one is loaded.
+/// The same VAD + re-decode loop also drives other offline sherpa-onnx families
+/// (Fun-ASR-Nano, SenseVoice, Zipformer zh-en transducer); `model` picks which one is loaded.
+/// Streaming Paraformer lives in `ParaformerStreamingEngine`.
 final class Qwen3ASREngine: ASREngine, @unchecked Sendable {
     enum Model {
         case qwen3
         case qwen3Large
         case funasrNano
+        case senseVoice
+        case zipformer
 
         /// Both Qwen3-ASR sizes share the sherpa `qwen3_asr` config, env knobs and hotwords file.
-        var isQwen3: Bool { self != .funasrNano }
+        var isQwen3: Bool {
+            switch self {
+            case .qwen3, .qwen3Large: return true
+            default: return false
+            }
+        }
+
+        var envPrefix: String {
+            switch self {
+            case .qwen3, .qwen3Large: return "AIRTYPE_QWEN3_"
+            case .funasrNano: return "AIRTYPE_FUNASR_"
+            case .senseVoice: return "AIRTYPE_SENSEVOICE_"
+            case .zipformer: return "AIRTYPE_ZIPFORMER_"
+            }
+        }
     }
 
     let model: Model
@@ -29,13 +46,15 @@ final class Qwen3ASREngine: ASREngine, @unchecked Sendable {
         case .qwen3: return .qwen3
         case .qwen3Large: return .qwen3Large
         case .funasrNano: return .funasrNano
+        case .senseVoice: return .senseVoice
+        case .zipformer: return .zipformer
         }
     }
     private var name: String { kind.shortName }
 
     init(model: Model = .qwen3) {
         self.model = model
-        let prefix = model.isQwen3 ? "AIRTYPE_QWEN3_" : "AIRTYPE_FUNASR_"
+        let prefix = model.envPrefix
         partialInterval = Self.envDouble(prefix + "PARTIAL_SECONDS", 1.0)
         minSilence = Float(Self.envDouble(prefix + "MIN_SILENCE", 0.5))
         maxSegment = Float(Self.envDouble(prefix + "MAX_SEGMENT", 15.0))
@@ -45,27 +64,46 @@ final class Qwen3ASREngine: ASREngine, @unchecked Sendable {
     static let defaultModelName = "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
     static let defaultLargeModelName = "qwen3-asr-1.7B-int8"
     static let defaultFunASRModelName = "sherpa-onnx-funasr-nano-int8-2025-12-30"
+    /// FunAudioLLM SenseVoiceSmall int8 (zh / en / ja / ko / yue).
+    static let defaultSenseVoiceModelName = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
+    /// icefall Zipformer transducer bilingual zh+en (encoder/decoder/joiner).
+    static let defaultZipformerModelName = "sherpa-onnx-zipformer-zh-en-2023-11-22"
+    static let zipformerEncoderName = "encoder-epoch-34-avg-19.int8.onnx"
+    static let zipformerDecoderName = "decoder-epoch-34-avg-19.onnx"
+    static let zipformerJoinerName = "joiner-epoch-34-avg-19.int8.onnx"
 
     static var funASRModelDirectory: URL {
         if let override = ProcessInfo.processInfo.environment["AIRTYPE_FUNASR_MODEL_DIR"], !override.isEmpty {
             return URL(fileURLWithPath: override)
         }
-        return experimentDirectory.appendingPathComponent("models").appendingPathComponent(defaultFunASRModelName)
+        return AirTypeHome.asrModels.appendingPathComponent(defaultFunASRModelName)
     }
 
     static var funASRHotwordsFile: URL {
-        experimentDirectory.appendingPathComponent("funasr-hotwords.txt")
+        AirTypeHome.root.appendingPathComponent("funasr-hotwords.txt")
     }
 
-    static var experimentDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".airtype-experiment")
+    static var senseVoiceModelDirectory: URL {
+        if let override = ProcessInfo.processInfo.environment["AIRTYPE_SENSEVOICE_MODEL_DIR"], !override.isEmpty {
+            return URL(fileURLWithPath: override)
+        }
+        return AirTypeHome.asrModels.appendingPathComponent(defaultSenseVoiceModelName)
     }
+
+    static var zipformerModelDirectory: URL {
+        if let override = ProcessInfo.processInfo.environment["AIRTYPE_ZIPFORMER_MODEL_DIR"], !override.isEmpty {
+            return URL(fileURLWithPath: override)
+        }
+        return AirTypeHome.asrModels.appendingPathComponent(defaultZipformerModelName)
+    }
+
+    static var homeDirectory: URL { AirTypeHome.root }
 
     static var modelDirectory: URL {
         if let override = ProcessInfo.processInfo.environment["AIRTYPE_QWEN3_MODEL_DIR"], !override.isEmpty {
             return URL(fileURLWithPath: override)
         }
-        return experimentDirectory.appendingPathComponent("models").appendingPathComponent(defaultModelName)
+        return AirTypeHome.asrModels.appendingPathComponent(defaultModelName)
     }
 
     /// Qwen3-ASR 1.7B int8 (ModelScope zengshuishui/Qwen3-ASR-onnx model_1.7B; scripts/setup-qwen3-1.7b.sh).
@@ -73,16 +111,16 @@ final class Qwen3ASREngine: ASREngine, @unchecked Sendable {
         if let override = ProcessInfo.processInfo.environment["AIRTYPE_QWEN3_1_7B_MODEL_DIR"], !override.isEmpty {
             return URL(fileURLWithPath: override)
         }
-        return experimentDirectory.appendingPathComponent("models").appendingPathComponent(defaultLargeModelName)
+        return AirTypeHome.asrModels.appendingPathComponent(defaultLargeModelName)
     }
 
     static var vadModelPath: URL {
-        experimentDirectory.appendingPathComponent("models/silero_vad.onnx")
+        AirTypeHome.asrModels.appendingPathComponent("silero_vad.onnx")
     }
 
     /// Optional: one term per line (or comma separated), e.g. product names / English jargon.
     static var hotwordsFile: URL {
-        experimentDirectory.appendingPathComponent("qwen3-hotwords.txt")
+        AirTypeHome.root.appendingPathComponent("qwen3-hotwords.txt")
     }
 
     private static func envDouble(_ key: String, _ fallback: Double) -> Double {
@@ -141,6 +179,8 @@ final class Qwen3ASREngine: ASREngine, @unchecked Sendable {
             case .qwen3: dir = Self.modelDirectory
             case .qwen3Large: dir = Self.largeModelDirectory
             case .funasrNano: dir = Self.funASRModelDirectory
+            case .senseVoice: dir = Self.senseVoiceModelDirectory
+            case .zipformer: dir = Self.zipformerModelDirectory
             }
             let required: [URL]
             switch model {
@@ -160,12 +200,28 @@ final class Qwen3ASREngine: ASREngine, @unchecked Sendable {
                     dir.appendingPathComponent("Qwen3-0.6B/vocab.json"),
                     Self.vadModelPath,
                 ]
+            case .senseVoice:
+                required = [
+                    dir.appendingPathComponent("model.int8.onnx"),
+                    dir.appendingPathComponent("tokens.txt"),
+                    Self.vadModelPath,
+                ]
+            case .zipformer:
+                required = [
+                    dir.appendingPathComponent(Self.zipformerEncoderName),
+                    dir.appendingPathComponent(Self.zipformerDecoderName),
+                    dir.appendingPathComponent(Self.zipformerJoinerName),
+                    dir.appendingPathComponent("tokens.txt"),
+                    Self.vadModelPath,
+                ]
             }
             let setupScript: String
             switch model {
             case .qwen3: setupScript = "scripts/setup-qwen3.sh"
             case .qwen3Large: setupScript = "scripts/setup-qwen3-1.7b.sh"
             case .funasrNano: setupScript = "scripts/setup-funasr-nano.sh"
+            case .senseVoice: setupScript = "scripts/setup-sensevoice.sh"
+            case .zipformer: setupScript = "scripts/setup-zipformer.sh"
             }
             for file in required where !FileManager.default.fileExists(atPath: file.path) {
                 let message = "\(name) file missing: \(file.path) (run \(setupScript))"
@@ -177,6 +233,7 @@ final class Qwen3ASREngine: ASREngine, @unchecked Sendable {
 
             let startedAt = Date()
             let hotwords = Self.loadHotwords(model)
+            let env = ProcessInfo.processInfo.environment
             var owned: [UnsafeMutablePointer<CChar>] = []
             func c(_ s: String) -> UnsafePointer<CChar> {
                 let p = strdup(s)!
@@ -201,8 +258,8 @@ final class Qwen3ASREngine: ASREngine, @unchecked Sendable {
                 config.model_config.qwen3_asr.top_p = 0.8
                 config.model_config.qwen3_asr.seed = 42
                 config.model_config.qwen3_asr.hotwords = c(hotwords)
+                config.model_config.tokens = c("")
             case .funasrNano:
-                let env = ProcessInfo.processInfo.environment
                 config.model_config.funasr_nano.encoder_adaptor = c(dir.appendingPathComponent("encoder_adaptor.int8.onnx").path)
                 config.model_config.funasr_nano.llm = c(dir.appendingPathComponent("llm.int8.onnx").path)
                 config.model_config.funasr_nano.embedding = c(dir.appendingPathComponent("embedding.int8.onnx").path)
@@ -218,8 +275,21 @@ final class Qwen3ASREngine: ASREngine, @unchecked Sendable {
                 // ITN on: punctuation + digits ("二零二六" -> "2026"). AIRTYPE_FUNASR_ITN=0 disables.
                 config.model_config.funasr_nano.itn = env["AIRTYPE_FUNASR_ITN"] == "0" ? 0 : 1
                 config.model_config.funasr_nano.hotwords = c(hotwords)
+                config.model_config.tokens = c("")
+            case .senseVoice:
+                // language: auto | zh | en | ja | ko | yue. Default auto; AIRTYPE_SENSEVOICE_LANGUAGE overrides.
+                let language = env["AIRTYPE_SENSEVOICE_LANGUAGE"] ?? "auto"
+                config.model_config.sense_voice.model = c(dir.appendingPathComponent("model.int8.onnx").path)
+                config.model_config.sense_voice.language = c(language)
+                // ITN on by default (punctuation / numbers). AIRTYPE_SENSEVOICE_ITN=0 disables.
+                config.model_config.sense_voice.use_itn = env["AIRTYPE_SENSEVOICE_ITN"] == "0" ? 0 : 1
+                config.model_config.tokens = c(dir.appendingPathComponent("tokens.txt").path)
+            case .zipformer:
+                config.model_config.transducer.encoder = c(dir.appendingPathComponent(Self.zipformerEncoderName).path)
+                config.model_config.transducer.decoder = c(dir.appendingPathComponent(Self.zipformerDecoderName).path)
+                config.model_config.transducer.joiner = c(dir.appendingPathComponent(Self.zipformerJoinerName).path)
+                config.model_config.tokens = c(dir.appendingPathComponent("tokens.txt").path)
             }
-            config.model_config.tokens = c("")
             config.model_config.num_threads = threads
             config.model_config.provider = c("cpu")
             config.decoding_method = c("greedy_search")
@@ -266,7 +336,8 @@ final class Qwen3ASREngine: ASREngine, @unchecked Sendable {
         }
     }
 
-    /// `language` is ignored: Qwen3-ASR / Fun-ASR-Nano detect zh / en / mixed by themselves.
+    /// `language` is mostly ignored for offline models (auto zh/en or Chinese-only).
+    /// SenseVoice language can be forced with `AIRTYPE_SENSEVOICE_LANGUAGE` at load time.
     func startSession(language: String, onUpdate: @escaping (String) -> Void) {
         queue.async { [self] in
             guard recognizer != nil, let vad else {
@@ -286,7 +357,7 @@ final class Qwen3ASREngine: ASREngine, @unchecked Sendable {
             speechSinceCommit = false
             decodeSeconds = 0
             decodeCount = 0
-            Logger.shared.log("\(name) session #\(sessionID) started (language hint \(language) ignored; auto zh/en)")
+            Logger.shared.log("\(name) session #\(sessionID) started (language hint \(language); menu still drives OpenCC)")
         }
     }
 
@@ -422,6 +493,8 @@ final class Qwen3ASREngine: ASREngine, @unchecked Sendable {
     }
 
     private static func loadHotwords(_ model: Model) -> String {
+        // SenseVoice / Zipformer packages do not take the LLM-style hotwords string.
+        guard model.isQwen3 || model == .funasrNano else { return "" }
         let envKey = model.isQwen3 ? "AIRTYPE_QWEN3_HOTWORDS" : "AIRTYPE_FUNASR_HOTWORDS"
         if let env = ProcessInfo.processInfo.environment[envKey], !env.isEmpty {
             return env

@@ -108,9 +108,14 @@ A: 請手動執行更新指令，並查看錯誤訊息解決問題。
 
 如果更新後仍然遇到問題，可以考慮設定瀏覽器 cookies：
 
-```toml
-[webui.yt-dlp]
-cookies_from_browser = "chrome"
+```json
+{
+  "webui": {
+    "yt-dlp": {
+      "cookies_from_browser": "chrome"
+    }
+  }
+}
 ```
 
 這會讓 yt-dlp 使用您瀏覽器的cookies來下載內容，適用於需要登入的媒體。

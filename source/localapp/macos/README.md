@@ -56,22 +56,22 @@ run `dist/AirType.app/Contents/MacOS/AirType &` from a shell):
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `AIRTYPE_ASR_ENGINE` | menu choice, else `qwen3` | `qwen3`, `qwen3-1.7b`, `funasr-nano` or `nemotron` |
-| `AIRTYPE_QWEN3_MODEL_DIR` | `~/.airtype-experiment/models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25` | e.g. a 1.7B export |
+| `AIRTYPE_ASR_ENGINE` | menu choice, else `qwen3` | `qwen3`, `qwen3-1.7b`, `funasr-nano`, `sensevoice`, `paraformer`, `zipformer`, or `nemotron` |
+| `AIRTYPE_QWEN3_MODEL_DIR` | `~/.airtype/models/asr/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25` | e.g. a 1.7B export |
 | `AIRTYPE_QWEN3_PARTIAL_SECONDS` | `1.0` | draft re-decode interval |
 | `AIRTYPE_QWEN3_MIN_SILENCE` | `0.5` | pause (s) that closes a phrase |
 | `AIRTYPE_QWEN3_MAX_SEGMENT` | `15` | force-split long phrases (s) |
 | `AIRTYPE_QWEN3_THREADS` | `4` | ONNX threads |
 | `AIRTYPE_OPENCC` | (on) | `0` disables OpenCC |
 
-Hotwords (bias toward your terms): put one per line in `~/.airtype-experiment/qwen3-hotwords.txt`
+Hotwords (bias toward your terms): put one per line in `~/.airtype/qwen3-hotwords.txt`
 (or `AIRTYPE_QWEN3_HOTWORDS="foo,bar"`), then restart the app.
 
 **Qwen3-ASR 1.7B int8** (added 2026-10-31): menu ▸ ASR Engine ▸ **Qwen3-ASR 1.7B** (or
 `AIRTYPE_ASR_ENGINE=qwen3-1.7b`). Same loop, sherpa config, `AIRTYPE_QWEN3_*` knobs and hotwords file as
 0.6B; more accurate but ~2x slower per decode, ~2.4 GB on disk, ~2.5–3 GB RAM. Install with
 `./scripts/setup-qwen3-1.7b.sh` (ModelScope `zengshuishui/Qwen3-ASR-onnx` `model_1.7B`, SHA-256 verified)
-into `~/.airtype-experiment/models/qwen3-asr-1.7B-int8` (override: `AIRTYPE_QWEN3_1_7B_MODEL_DIR`).
+into `~/.airtype/models/asr/qwen3-asr-1.7B-int8` (override: `AIRTYPE_QWEN3_1_7B_MODEL_DIR`).
 If drafts lag, raise `AIRTYPE_QWEN3_PARTIAL_SECONDS` (e.g. 2.0).
 
 Self-test: `AIRTYPE_ASR_ENGINE=qwen3 dist/AirType.app/Contents/MacOS/AirType --selftest-wav x.wav zh-tw`
@@ -91,13 +91,43 @@ same Silero VAD + ~1 s draft re-decode loop as Qwen3-ASR (bursty, not word-by-wo
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `AIRTYPE_FUNASR_MODEL_DIR` | `~/.airtype-experiment/models/sherpa-onnx-funasr-nano-int8-2025-12-30` | e.g. the fp16 / fp32 sherpa tarballs |
+| `AIRTYPE_FUNASR_MODEL_DIR` | `~/.airtype/models/asr/sherpa-onnx-funasr-nano-int8-2025-12-30` | e.g. the fp16 / fp32 sherpa tarballs |
 | `AIRTYPE_FUNASR_LANGUAGE` | `` (auto) | e.g. `中文` / `英文` to force |
 | `AIRTYPE_FUNASR_ITN` | `1` | `0` = raw text |
 | `AIRTYPE_FUNASR_PARTIAL_SECONDS` / `_MIN_SILENCE` / `_MAX_SEGMENT` / `_THREADS` | 1.0 / 0.5 / 15 / 4 | same as the Qwen3 knobs |
-| `AIRTYPE_FUNASR_HOTWORDS` | — | comma list; else `~/.airtype-experiment/funasr-hotwords.txt`, else `qwen3-hotwords.txt` |
+| `AIRTYPE_FUNASR_HOTWORDS` | — | comma list; else `~/.airtype/funasr-hotwords.txt`, else `qwen3-hotwords.txt` |
 
 Both pause-chunked engines share `Qwen3ASREngine.swift` (`Qwen3ASREngine(model: .funasrNano)`).
+
+## SenseVoice / Paraformer / Zipformer (zh+en capable)
+
+| Menu | Engine id | Mode | Default model | Languages |
+|---|---|---|---|---|
+| **SenseVoice Multilingual** | `sensevoice` | offline VAD | `sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17` (~155 MB) | zh / en / ja / ko / yue |
+| **Paraformer ZH-EN Streaming** | `paraformer` | true streaming | `sherpa-onnx-streaming-paraformer-bilingual-zh-en` (~1 GB) | zh + en (+ dialects) |
+| **Zipformer ZH-EN** | `zipformer` | offline VAD transducer | `sherpa-onnx-zipformer-zh-en-2023-11-22` (~298 MB) | zh + en |
+
+SenseVoice / Zipformer share the Silero VAD + ~1 s draft re-decode loop with Qwen3.
+Paraformer uses the same online feed/decode path as Nemotron (`ParaformerStreamingEngine`).
+Output is Simplified; zh-tw OpenCC s2twp still applies.
+
+```bash
+./scripts/setup-chinese-models.sh   # all three + silero_vad + opencc
+# or individually:
+./scripts/setup-sensevoice.sh
+./scripts/setup-paraformer.sh
+./scripts/setup-zipformer.sh
+./scripts/build-app.sh
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AIRTYPE_SENSEVOICE_MODEL_DIR` / `_LANGUAGE` / `_ITN` | …/sense-voice-…-int8-2024-07-17 / `auto` / `1` | force e.g. `zh`; ITN off with `0` |
+| `AIRTYPE_PARAFORMER_MODEL_DIR` | …/streaming-paraformer-bilingual-zh-en | e.g. trilingual `…-zh-cantonese-en` |
+| `AIRTYPE_ZIPFORMER_MODEL_DIR` | …/zipformer-zh-en-2023-11-22 | alternate Zipformer transducer tarball |
+| `AIRTYPE_SENSEVOICE_*` / `AIRTYPE_ZIPFORMER_*` VAD knobs | 1.0 / 0.5 / 15 / 4 | `PARTIAL_SECONDS` / `MIN_SILENCE` / `MAX_SEGMENT` / `THREADS` |
+
+Self-test: `AIRTYPE_ASR_ENGINE=sensevoice dist/AirType.app/Contents/MacOS/AirType --selftest-wav x.wav zh-tw`
 
 ## Use
 
@@ -119,10 +149,12 @@ Menu bar:
 
 | What | Where |
 |---|---|
-| sherpa-onnx runtime (dylibs + header) | `~/.airtype-experiment/runtime/sherpa-onnx-v2.0.1-osx-arm64-shared` (`SHERPA_ONNX_DIR` to override at build time) |
-| Model | `~/.airtype-experiment/models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11` (`AIRTYPE_NEMOTRON_MODEL_DIR` to override at run time) |
-| Config | `~/.airtype-experiment/config.toml` (copied once from `~/.airtype/config.toml`; the original is never written) |
-| Log | `~/.airtype-experiment/airtype-localapp.log` |
+| sherpa-onnx runtime (dylibs + header) | `~/.airtype/models/asr/runtime/sherpa-onnx-v2.0.1-osx-arm64-shared` (`SHERPA_ONNX_DIR` / `AIRTYPE_HOME` to override) |
+| ASR models | `~/.airtype/models/asr/…` (`AIRTYPE_NEMOTRON_MODEL_DIR` etc. to override a model dir) |
+| Whisper models | `~/.airtype/models/whisper/` |
+| Config | `~/.airtype/config.json` (shared with WebUI) |
+| History DB | `~/.airtype/history.sqlite` |
+| Log | `~/.airtype/airtype-localapp.log` |
 | App bundle | `source/localapp/macos/dist/AirType.app` (dylibs copied into `Contents/Frameworks`) |
 
 Other chunk sizes (80/160/1120 ms) exist: lower = snappier, higher = more accurate, e.g.
@@ -154,7 +186,7 @@ Streams the WAV in real time (100 ms chunks) and prints each partial and the fin
 ## ASR Engine: Local vs Remote (merged from localapp)
 
 Menu `ASR Engine ▸`
-- `Local (ONNX, on-device) ▸` Qwen3-ASR 0.6B / 1.7B / Fun-ASR-Nano / Nemotron (sherpa-onnx, in-process; live text + Live Typing).
+- `Local (ONNX, on-device) ▸` Qwen3-ASR 0.6B / 1.7B / Fun-ASR-Nano / SenseVoice / Paraformer ZH-EN / Zipformer ZH-EN / Nemotron (sherpa-onnx, in-process; live text + Live Typing).
 - `Remote (Whisper via WebUI) ▸` `Whisper server: <url>` entries from `[localapp.backend-endpoint]` `remote_endpoint` / `local_endpoint`,
   plus `Test connection`. Uploads one WAV on stop to `POST <url>/api/transcribe/ime` (HTTP Basic from `[webui.auth]`); no partials,
   so Live Typing is greyed out and the result is pasted. The WebUI is **not** auto-started; it must already be running.
@@ -169,16 +201,21 @@ Future: `RemoteASRProtocol.openAITranscriptions` (`/v1/audio/transcriptions`, e.
 
 ## Settings window
 
-Menu ▸ **Settings…** (⌘,) opens a tabbed editor for `~/.airtype-experiment/config.toml`
-(Language, Backend, Remote ASR, Microphone, Floating Dialog, Web UI Auth, Whisper Server, LLM Servers).
-Apply/Save writes the file and reloads it in-app. **ASR Engine ▸ Remote ▸ Configure…** opens the Remote ASR tab:
+Menu ▸ **Settings…** (⌘,) opens a sidebar editor for `~/.airtype/config.json`
+(Service Providers / Endpoint Profiles / Voice Input / Others / Obsidian, including searchable History panes).
+Apply/Save writes the JSON file and reloads it in-app. **ASR Engine ▸ Remote ▸ Configure…** opens the ASR Endpoints tab:
 
-```toml
-[localapp.remote-asr]
-endpoint = "https://omlx.dougpuob.uk"   # empty = [localapp.backend-endpoint].remote_endpoint
-protocol = "openai"                     # "webui-ime" (AirType WebUI /api/transcribe/ime) | "openai" (/v1/audio/transcriptions)
-model = "Qwen3-ASR-1.7B-8bit"           # openai only
-api_key = "..."                         # openai Bearer token; webui-ime uses [webui.auth]
+```json
+{
+  "localapp": {
+    "remote-asr": [{
+      "endpoint": "https://omlx.dougpuob.uk",
+      "protocol": "openai",
+      "model": "Qwen3-ASR-1.7B-8bit",
+      "api_key": "..."
+    }]
+  }
+}
 ```
 
 Fetch Models tries `GET /v1/models`, then the WebUI `/api/health` + `/api/whisper-server/status`.

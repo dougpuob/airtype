@@ -2,7 +2,7 @@ import Foundation
 import ServiceManagement
 
 /// `AirType --selftest-wav <16kHz mono int16 wav> [zh-tw|zh-cn|en|auto-tw|auto-cn]`
-/// Engine: AIRTYPE_ASR_ENGINE=qwen3|funasr-nano|nemotron|remote (default: menu choice, else qwen3).
+/// Engine: AIRTYPE_ASR_ENGINE=qwen3|funasr-nano|sensevoice|paraformer|zipformer|nemotron|remote (default: menu choice, else qwen3).
 /// Remote uses the app config's [localapp.remote-asr] / [localapp.backend-endpoint] / [webui.auth] (AIRTYPE_REMOTE_ENDPOINT overrides).
 /// Streams a WAV through the same engine/formatter the hotkey path uses, printing partials, then exits.
 enum SelfTest {
@@ -89,7 +89,7 @@ enum SelfTest {
     }
 
     /// `AirType --selftest-config`: lists models for [localapp.remote-asr] (as Settings ▸ Fetch Models does),
-    /// then rewrites config.toml through the same save path as the Settings window and exits.
+    /// then rewrites config.json through the same save path as the Settings window and exits.
     private static func runConfigTest() -> Never {
         let store = ConfigStore()
         do { try store.load() } catch { print("load failed: \(error)"); exit(1) }

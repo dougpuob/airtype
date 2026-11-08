@@ -23,6 +23,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator?.start()
     }
 
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            coordinator?.handleOpenURL(url)
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         coordinator?.stop()
     }

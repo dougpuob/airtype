@@ -1,28 +1,30 @@
 #!/usr/bin/env bash
 # Downloads Fun-ASR-Nano-2512 int8 (sherpa-onnx export, ~840 MB tarball) + Silero VAD into
-# ~/.airtype-experiment/models (override with AIRTYPE_EXPERIMENT_DIR), and installs OpenCC for
+# ~/.airtype/models/asr (override with AIRTYPE_HOME), and installs OpenCC for
 # zh-tw s2twp conversion if Homebrew is available. Safe to re-run.
 # The sherpa-onnx runtime itself comes from setup-nemotron.sh (same v2.0.1 runtime).
 set -euo pipefail
 
-EXP_DIR="${AIRTYPE_EXPERIMENT_DIR:-$HOME/.airtype-experiment}"
+AIRTYPE_HOME="${AIRTYPE_HOME:-$HOME/.airtype}"
+ASR_DIR="$AIRTYPE_HOME/models/asr"
+EXP_DIR="$ASR_DIR"
 MODEL_NAME="${FUNASR_MODEL_NAME:-sherpa-onnx-funasr-nano-int8-2025-12-30}"
 BASE="https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
 
-mkdir -p "$EXP_DIR/models"
+mkdir -p "$EXP_DIR"
 
-if [[ ! -f "$EXP_DIR/models/$MODEL_NAME/llm.int8.onnx" ]]; then
+if [[ ! -f "$EXP_DIR/$MODEL_NAME/llm.int8.onnx" ]]; then
   echo "Downloading $MODEL_NAME (~840 MB)..."
-  curl -fL -o "$EXP_DIR/models/$MODEL_NAME.tar.bz2" "$BASE/${MODEL_NAME}.tar.bz2"
-  tar -xjf "$EXP_DIR/models/$MODEL_NAME.tar.bz2" -C "$EXP_DIR/models"
-  rm "$EXP_DIR/models/$MODEL_NAME.tar.bz2"
+  curl -fL -o "$EXP_DIR/$MODEL_NAME.tar.bz2" "$BASE/${MODEL_NAME}.tar.bz2"
+  tar -xjf "$EXP_DIR/$MODEL_NAME.tar.bz2" -C "$EXP_DIR"
+  rm "$EXP_DIR/$MODEL_NAME.tar.bz2"
 else
   echo "Fun-ASR-Nano model already present."
 fi
 
-if [[ ! -f "$EXP_DIR/models/silero_vad.onnx" ]]; then
+if [[ ! -f "$EXP_DIR/silero_vad.onnx" ]]; then
   echo "Downloading silero_vad.onnx..."
-  curl -fL -o "$EXP_DIR/models/silero_vad.onnx" "$BASE/silero_vad.onnx"
+  curl -fL -o "$EXP_DIR/silero_vad.onnx" "$BASE/silero_vad.onnx"
 else
   echo "Silero VAD already present."
 fi

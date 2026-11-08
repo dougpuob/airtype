@@ -3,8 +3,7 @@ import Foundation
 final class Logger {
     static let shared = Logger()
 
-    private let path = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".airtype-experiment/airtype-localapp.log")
+    private var path: URL { AirTypeHome.localAppLog }
 
     private init() {}
 

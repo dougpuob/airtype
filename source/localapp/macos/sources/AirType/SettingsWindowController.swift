@@ -2,9 +2,9 @@ import AVFoundation
 import AppKit
 import Foundation
 
-/// Settings window: left sidebar with Local Service / Endpoints / UI / External groups (NSOutlineView) and a detail pane on the right.
-/// Each leaf maps to a section of ~/.airtype-experiment/config.toml; Apply / Save writes config.toml through
-/// ConfigStore and the coordinator reloads it in-app.
+/// Settings window: left sidebar (Service Providers / Endpoint Profiles / Voice Input / Others / Obsidian)
+/// with a detail pane on the right. Leaves map to sections of ~/.airtype/config.json; Apply / Save writes
+/// JSON through ConfigStore and the coordinator reloads it in-app.
 ///
 /// Endpoints (ASR, Whisper, LLM) are profile lists: [[localapp.remote-asr]], [[webui.whisper-server]] and
 /// [[webui.llm-server]], each with a `name` and an active-profile key
@@ -20,6 +20,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
     /// (new config, use Remote ASR as the active engine)
     var onSave: ((AirTypeConfig, Bool) -> Void)?
+    /// Shared with the coordinator; owns the managed whisper-server process.
+    var localWhisperServer: LocalWhisperServerManager?
 
     private let configPath: String
     private var window: NSWindow?
@@ -36,12 +38,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     }
     private final class SidebarLeaf: NSObject {
         let title: String
-        /// config.toml section ids shown in this pane (used to route `present(tab:)`).
+        /// config.json section ids shown in this pane (used to route `present(tab:)`).
         let sections: [String]
+        /// Optional config path shown beside the detail title, e.g. `[localapp.local-whisper]`.
+        let configPath: String?
         let view: NSView
-        init(title: String, sections: [String], view: NSView) {
+        init(title: String, sections: [String], view: NSView, configPath: String? = nil) {
             self.title = title
             self.sections = sections
+            self.configPath = configPath
             self.view = view
         }
     }
@@ -49,6 +54,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     private let sidebarOutline = NSOutlineView()
     private let detailContainer = NSView()
     private let detailTitle = NSTextField(labelWithString: "")
+    private let detailConfigPath = NSTextField(labelWithString: "")
+    private let detailTitleStack = NSStackView()
     private weak var selectedLeaf: SidebarLeaf?
 
     private struct FieldBinding {
@@ -97,12 +104,22 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
     // Local Service ▸ Whisper Server
     private let localServerBinField = NSTextField()
+    private let localHostField = NSTextField()
+    private let localPortField = NSTextField()
+    private let localMaxThreadsField = NSTextField()
+    private let localMaxGpuField = NSTextField()
+    private let localBeamField = NSTextField()
+    private let localTemperatureField = NSTextField()
     private let whisperModelDirField = NSTextField()
     private let whisperModelCombo = NSComboBox()
     private let whisperModelNote = NSTextField(wrappingLabelWithString: "")
+    private let localEnabledCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let localToggleButton = NSButton()
+    private let localServerStatus = NSTextField(wrappingLabelWithString: "Status: stopped")
     private let localTestButton = NSButton()
     private let localSpinner = NSProgressIndicator()
-    private let localTestResult = NSTextField(wrappingLabelWithString: "")
+    private var localWhisperStartInFlight = false
+    private var localWhisperLastError: String?
 
     // LLM form
     private var llmBindings: [FieldBinding] = []
@@ -125,6 +142,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     // Obsidian
     private let obsidianVaultField = NSTextField()
 
+    // History panes (retain controllers while window lives)
+    private var voiceHistoryPane: HistorySettingsPaneController?
+    private var obsidianHistoryPane: HistorySettingsPaneController?
+
     private let footerStatus = NSTextField(labelWithString: "")
 
     init(configPath: String) {
@@ -134,7 +155,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
     // MARK: - Presenting
 
-    /// `tab` is a config.toml section id (e.g. `localapp.remote-asr`, `webui.llm-server`, `webui.auth`).
+    /// `tab` is a config.json section id (e.g. `localapp.remote-asr`, `webui.llm-server`, `webui.auth`).
     func present(config: AirTypeConfig, remoteActive: Bool, tab: String?) {
         if window == nil {
             buildWindow()
@@ -151,6 +172,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
             selectFirstLeaf()
         }
         startMicTimer()
+        // Show a Dock icon while Settings is open so the window is easy to find.
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
@@ -164,7 +187,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         remoteEndpointField.placeholderString = fallback.isEmpty ? "" : fallback
         reloadSessions(from: config, keepSelection: false)
         refreshWhisperModels()
-        localTestResult.stringValue = ""
+        refreshLocalWhisperServerControls()
         remoteEngineActive = remoteActive
         footerStatus.stringValue = ""
         refreshMicDevices(force: true)
@@ -197,6 +220,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     func windowWillClose(_ notification: Notification) {
         micTimer?.invalidate()
         micTimer = nil
+        // Return to menu-bar agent mode (no Dock icon) once Settings is gone.
+        NSApp.setActivationPolicy(.accessory)
     }
 
     // MARK: - Window
@@ -250,7 +275,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
         // Detail
         detailTitle.font = .systemFont(ofSize: 17, weight: .semibold)
-        detailTitle.translatesAutoresizingMaskIntoConstraints = false
+        detailTitle.setContentHuggingPriority(.required, for: .horizontal)
+        detailConfigPath.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+        detailConfigPath.textColor = .secondaryLabelColor
+        detailConfigPath.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        detailTitleStack.orientation = .horizontal
+        detailTitleStack.alignment = .lastBaseline
+        detailTitleStack.spacing = 10
+        detailTitleStack.addArrangedSubview(detailTitle)
+        detailTitleStack.addArrangedSubview(detailConfigPath)
+        detailTitleStack.translatesAutoresizingMaskIntoConstraints = false
         detailContainer.translatesAutoresizingMaskIntoConstraints = false
 
         // Footer
@@ -279,7 +313,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         let content = NSView()
         content.addSubview(sidebar)
         content.addSubview(separator)
-        content.addSubview(detailTitle)
+        content.addSubview(detailTitleStack)
         content.addSubview(detailContainer)
         content.addSubview(footer)
         NSLayoutConstraint.activate([
@@ -296,16 +330,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
             separator.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             separator.widthAnchor.constraint(equalToConstant: 1),
 
-            detailTitle.topAnchor.constraint(equalTo: content.topAnchor, constant: 14),
-            detailTitle.leadingAnchor.constraint(equalTo: separator.trailingAnchor, constant: 20),
-            detailTitle.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -20),
-            detailContainer.topAnchor.constraint(equalTo: detailTitle.bottomAnchor, constant: 8),
-            detailContainer.leadingAnchor.constraint(equalTo: separator.trailingAnchor, constant: 12),
+            detailTitleStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 10),
+            detailTitleStack.leadingAnchor.constraint(equalTo: separator.trailingAnchor, constant: 12),
+            detailTitleStack.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -16),
+            detailContainer.topAnchor.constraint(equalTo: detailTitleStack.bottomAnchor, constant: 12),
+            detailContainer.leadingAnchor.constraint(equalTo: separator.trailingAnchor, constant: 6),
             detailContainer.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
             footer.topAnchor.constraint(equalTo: detailContainer.bottomAnchor, constant: 10),
-            footer.leadingAnchor.constraint(equalTo: separator.trailingAnchor, constant: 20),
-            footer.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
-            footer.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -14)
+            footer.leadingAnchor.constraint(equalTo: separator.trailingAnchor, constant: 12),
+            footer.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+            footer.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12)
         ])
         window.contentView = content
         self.window = window
@@ -315,62 +349,61 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         }
     }
 
-    /// Sidebar groups and leaves, in display order. Each leaf is built from its config.toml section(s).
+    /// Sidebar groups and leaves, in display order. Each leaf is built from its config.json section(s).
     private func buildCategories() {
         let descriptors = Dictionary(ConfigStore.sectionDescriptors.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
-        func leaf(_ title: String, _ id: String, extraSections: [String] = [], builder: (ConfigSectionDescriptor) -> NSView) -> SidebarLeaf? {
+        func leaf(
+            _ title: String,
+            _ id: String,
+            extraSections: [String] = [],
+            configPath: String? = nil,
+            builder: (ConfigSectionDescriptor) -> NSView
+        ) -> SidebarLeaf? {
             guard let section = descriptors[id] else { return nil }
-            return SidebarLeaf(title: title, sections: [id] + extraSections, view: builder(section))
+            return SidebarLeaf(
+                title: title,
+                sections: [id] + extraSections,
+                view: builder(section),
+                configPath: configPath
+            )
         }
 
-        // Local Service: self-hosted servers on this Mac. Endpoints: ASR / Whisper / LLM profile lists + backend.
-        // UI: appearance & auth. External: mic & integrations.
-        // [localapp] / [webui] only hold the active-profile names, which live on the ASR / Whisper / LLM pages.
-        let localServiceLeaves: [SidebarLeaf] = [
-            leaf("Whisper Server", Self.localWhisperTabID, builder: buildLocalWhisperTab)
+        let providerLeaves: [SidebarLeaf] = [
+            leaf(
+                "Whisper Server",
+                Self.localWhisperTabID,
+                configPath: "[localapp.local-whisper]",
+                builder: buildLocalWhisperTab
+            )
         ].compactMap { $0 }
 
-        var endpointLeaves: [SidebarLeaf] = [
+        let endpointLeaves: [SidebarLeaf] = [
             leaf("ASR Endpoints", Self.remoteTabID, extraSections: ["localapp"], builder: buildRemoteTab),
             leaf("LLM Endpoints", Self.llmTabID, extraSections: ["webui"], builder: buildLLMTab),
             leaf("Whisper Endpoints", Self.whisperTabID, builder: buildWhisperTab)
         ].compactMap { $0 }
 
-        let uiLeaves: [SidebarLeaf] = [
-            leaf("Floating Pill", "localapp.floating-dialog", builder: buildSectionTab)
+        var voiceLeaves: [SidebarLeaf] = [
+            leaf("Floating Pill", "localapp.floating-dialog", builder: buildSectionTab),
+            leaf("Recording", "localapp.recording", builder: buildSectionTab)
+        ].compactMap { $0 }
+        voiceLeaves.append(SidebarLeaf(title: "History", sections: ["voice.history"], view: buildVoiceHistoryTab()))
+
+        let otherLeaves: [SidebarLeaf] = [
+            leaf("Microphone", Self.microphoneTabID, builder: buildMicrophoneTab)
         ].compactMap { $0 }
 
-        var externalLeaves: [SidebarLeaf] = [
-            leaf("Microphone", Self.microphoneTabID, builder: buildMicrophoneTab),
-            leaf("Recording", "localapp.recording", builder: buildSectionTab),
-            leaf("Obsidian", "localapp.obsidian", builder: buildObsidianTab)
+        var obsidianLeaves: [SidebarLeaf] = [
+            leaf("Config", "localapp.obsidian", builder: buildObsidianTab)
         ].compactMap { $0 }
-
-        // Any leftover sectionDescriptors stay reachable (do not drop tabs).
-        let hiddenSections: Set<String> = ["localapp.backend-endpoint", "localapp.chinese-mode", "webui.auth"]
-        let placed = Set((localServiceLeaves + endpointLeaves + uiLeaves + externalLeaves).flatMap(\.sections)).union(hiddenSections)
-        let leftovers = ConfigStore.sectionDescriptors.filter { !placed.contains($0.name) && $0.name != "webui" && $0.name != "localapp" }
-        for section in leftovers {
-            let connectionLike = section.name.contains("server")
-                || section.name.contains("endpoint")
-                || section.name.contains("asr")
-                || section.name.contains("backend")
-            let title = section.name.split(separator: ".").last.map { part -> String in
-                part.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
-            } ?? section.name
-            let item = SidebarLeaf(title: title, sections: [section.name], view: buildSectionTab(section))
-            if connectionLike {
-                endpointLeaves.append(item)
-            } else {
-                externalLeaves.append(item)
-            }
-        }
+        obsidianLeaves.append(SidebarLeaf(title: "History", sections: ["obsidian.history"], view: buildObsidianHistoryTab()))
 
         groups = [
-            SidebarGroup(title: "Service Providers", leaves: localServiceLeaves),
-            SidebarGroup(title: "Service Connectors", leaves: endpointLeaves),
-            SidebarGroup(title: "UI", leaves: uiLeaves),
-            SidebarGroup(title: "Others", leaves: externalLeaves)
+            SidebarGroup(title: "Service Providers", leaves: providerLeaves),
+            SidebarGroup(title: "Endpoint Profiles", leaves: endpointLeaves),
+            SidebarGroup(title: "Voice Input", leaves: voiceLeaves),
+            SidebarGroup(title: "Others", leaves: otherLeaves),
+            SidebarGroup(title: "Obsidian", leaves: obsidianLeaves)
         ].filter { !$0.leaves.isEmpty }
     }
 
@@ -401,6 +434,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         if selectedLeaf === leaf { return }
         selectedLeaf = leaf
         detailTitle.stringValue = leaf.title
+        if let path = leaf.configPath, !path.isEmpty {
+            detailConfigPath.stringValue = path
+            detailConfigPath.isHidden = false
+        } else {
+            detailConfigPath.stringValue = ""
+            detailConfigPath.isHidden = true
+        }
         detailContainer.subviews.forEach { $0.removeFromSuperview() }
         let view = leaf.view
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -413,6 +453,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         ])
         if leaf.sections.contains(Self.microphoneTabID) {
             refreshMicDevices(force: false)
+        }
+        if leaf.sections.contains(Self.localWhisperTabID) {
+            refreshLocalWhisperServerControls()
         }
     }
 
@@ -508,15 +551,24 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         case "default_folder": return "Default Folder"
         case "api_key": return "API Key"
         case "contextLength": return "Context Length"
-        case "selected-model": return "Selected Model"
+        case "selected-model": return "Model Name"
         case "default-llm-server-name": return "Default Server"
-        case "model_dir": return "Model Dir"
-        case "server_bin": return "Server Binary"
-        case "server_args": return "Server Args"
-        case "model_filename": return "Model"
-        case "launch_on_start": return "Launch on App Start"
+        case "model_dir": return "Model Path"
+        case "server_bin": return "File Path"
+        case "server_args": return "Advanced Args"
+        case "model_filename": return "Model File"
         case "hotkey_press_count": return "Hotkey Presses"
         case "play_cues": return "Play Cues"
+        case "max_threads": return "Max Thread Number"
+        case "max_gpu": return "Max GPU Number"
+        case "host": return "Host IP"
+        case "port": return "Host Port"
+        case "vocabulary_prompt": return "Vocabulary Prompt"
+        case "no_timestamps": return "No Timestamp"
+        case "no_language_symbol": return "No Language Symbol"
+        case "thinking": return "Thinking"
+        case "remote_endpoint": return "Endpoint URL"
+        case "system": return "System Prompt"
         default:
             return key.split(whereSeparator: { $0 == "_" || $0 == "-" })
                 .map { $0.prefix(1).uppercased() + $0.dropFirst() }
@@ -531,14 +583,26 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     }
 
     /// Generic `[section]` form; `overrides` supplies custom controls for specific keys.
+    /// `rowsAfterKey` inserts extra rows immediately after the named field (e.g. after `enabled`).
+    /// `skipKeys` omits a field's own row (bindings must be registered by an override that consumes them).
     private func buildCustomSectionTab(_ section: ConfigSectionDescriptor,
                                        overrides: [String: (ConfigFieldDescriptor) -> (NSView, FieldBinding)],
-                                       extraRows: [NSView] = []) -> NSView {
-        var rows: [NSView] = [sectionHeader("[\(section.name)]")]
+                                       extraRows: [NSView] = [],
+                                       rowsAfterKey: [String: [NSView]] = [:],
+                                       skipKeys: Set<String> = [],
+                                       showSectionHeader: Bool = true) -> NSView {
+        var rows: [NSView] = []
+        if showSectionHeader {
+            rows.append(sectionHeader("[\(section.name)]"))
+        }
         for field in section.fields {
+            if skipKeys.contains(field.key) { continue }
             let (control, binding) = overrides[field.key]?(field) ?? makeControl(field)
             sectionBindings.append(binding)
             rows.append(row(label: Self.fieldLabel(field.key), key: field.key, control: control, comment: field.comment))
+            if let inserted = rowsAfterKey[field.key] {
+                rows.append(contentsOf: inserted)
+            }
         }
         return scrollWrap(rows + extraRows)
     }
@@ -586,7 +650,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         name.alignment = .right
         name.font = Self.fieldFont
         name.toolTip = key
-        name.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        name.widthAnchor.constraint(equalToConstant: 128).isActive = true
         let right = NSStackView(views: [control])
         right.orientation = .vertical
         right.alignment = .leading
@@ -595,7 +659,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         let stack = NSStackView(views: [name, right])
         stack.orientation = .horizontal
         stack.alignment = .firstBaseline
-        stack.spacing = 12
+        stack.spacing = 8
         return stack
     }
 
@@ -603,7 +667,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         let stack = NSStackView(views: rows)
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 14
+        stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
         let document = FlippedView()
         document.translatesAutoresizingMaskIntoConstraints = false
@@ -614,10 +678,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         scroll.borderType = .noBorder
         scroll.documentView = document
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: document.topAnchor, constant: 16),
-            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: document.trailingAnchor, constant: -16),
-            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: document.topAnchor, constant: 8),
+            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 8),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: document.trailingAnchor, constant: -12),
+            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -12),
             document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
@@ -995,43 +1059,342 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     // MARK: - Local Service ▸ Whisper Server pane ([localapp.local-whisper])
 
     private func buildLocalWhisperTab(_ section: ConfigSectionDescriptor) -> NSView {
-        let testStack = setupTestControls(button: localTestButton, spinner: localSpinner, result: localTestResult, action: #selector(testLocalWhisper))
+        // Match generic text fields (Advanced Args / Vocabulary Prompt use 480 in makeControl).
+        let fieldWidth: CGFloat = 480
+        // Shared width for Start / Check / Browse… / Refresh so every action button matches.
+        let actionButtonWidth: CGFloat = 88
+        // Enabled is launch preference only (next app start); no immediate process side effects.
+        localEnabledCheckbox.target = nil
+        localEnabledCheckbox.action = nil
+        localToggleButton.title = "Start"
+        localToggleButton.bezelStyle = .rounded
+        localToggleButton.controlSize = .large
+        localToggleButton.target = self
+        localToggleButton.action = #selector(toggleLocalWhisperServer)
         localTestButton.title = "Check"
+        localTestButton.bezelStyle = .rounded
+        localTestButton.controlSize = .large
+        localTestButton.target = self
+        localTestButton.action = #selector(checkLocalWhisperStatus)
+        // Keep Start/Check the same size even when the title flips to Stop.
+        localToggleButton.widthAnchor.constraint(equalToConstant: actionButtonWidth).isActive = true
+        localTestButton.widthAnchor.constraint(equalToConstant: actionButtonWidth).isActive = true
+        localToggleButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        localTestButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        localSpinner.style = .spinning
+        localSpinner.controlSize = .small
+        localSpinner.isDisplayedWhenStopped = false
+        localServerStatus.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        localServerStatus.textColor = .secondaryLabelColor
+        localServerStatus.isSelectable = true
+        localServerStatus.alignment = .left
+        localServerStatus.maximumNumberOfLines = 2
+        localServerStatus.usesSingleLineMode = false
+        localServerStatus.lineBreakMode = .byWordWrapping
+        localServerStatus.cell?.wraps = true
+        localServerStatus.preferredMaxLayoutWidth = fieldWidth
+        localServerStatus.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        localServerStatus.heightAnchor.constraint(greaterThanOrEqualToConstant: 32).isActive = true
         return buildCustomSectionTab(section, overrides: [
+            "enabled": { [unowned self] field in
+                let box = self.localEnabledCheckbox
+                // Row 1: controls; Row 2: Status (up to 2 lines, left-aligned).
+                let buttons = self.hstack([
+                    box,
+                    self.localToggleButton,
+                    self.localTestButton,
+                    self.localSpinner
+                ], spacing: 8)
+                let stack = self.vstack([buttons, self.localServerStatus], spacing: 6)
+                stack.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+                let binding = FieldBinding(
+                    descriptor: field,
+                    get: { box.state == .on ? "true" : "false" },
+                    set: { box.state = ["true", "1", "yes", "on"].contains($0.lowercased()) ? .on : .off }
+                )
+                return (stack, binding)
+            },
             "server_bin": { [unowned self] field in
                 let text = self.localServerBinField
                 self.styleEditableField(text)
-                text.widthAnchor.constraint(equalToConstant: 380).isActive = true
+                text.widthAnchor.constraint(equalToConstant: fieldWidth - actionButtonWidth - 8).isActive = true
                 text.placeholderString = "whisper-server"
                 let browse = NSButton(title: "Browse…", target: self, action: #selector(self.browseLocalServerBin))
                 browse.bezelStyle = .rounded
+                browse.controlSize = .regular
+                browse.widthAnchor.constraint(equalToConstant: actionButtonWidth).isActive = true
                 let binding = FieldBinding(descriptor: field, get: { text.stringValue }, set: { text.stringValue = $0 })
-                return (self.hstack([text, browse]), binding)
+                let combined = self.hstack([text, browse], spacing: 8)
+                combined.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+                return (combined, binding)
+            },
+            "host": { [unowned self] field in
+                let host = self.localHostField
+                let port = self.localPortField
+                self.styleEditableField(host)
+                self.styleEditableField(port)
+                host.placeholderString = "127.0.0.1"
+                port.placeholderString = "8080"
+                port.widthAnchor.constraint(equalToConstant: 72).isActive = true
+                host.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                if let portField = section.fields.first(where: { $0.key == "port" }) {
+                    self.sectionBindings.append(FieldBinding(
+                        descriptor: portField,
+                        get: { port.stringValue },
+                        set: { port.stringValue = $0 }
+                    ))
+                }
+                let portLabel = NSTextField(labelWithString: "Port")
+                portLabel.font = Self.fieldFont
+                portLabel.textColor = .secondaryLabelColor
+                let combined = self.hstack([host, portLabel, port], spacing: 8)
+                combined.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+                let binding = FieldBinding(descriptor: field, get: { host.stringValue }, set: { host.stringValue = $0 })
+                return (combined, binding)
+            },
+            "max_threads": { [unowned self] field in
+                let threads = self.localMaxThreadsField
+                let gpu = self.localMaxGpuField
+                self.styleEditableField(threads)
+                self.styleEditableField(gpu)
+                threads.placeholderString = "4"
+                gpu.placeholderString = "1"
+                gpu.widthAnchor.constraint(equalToConstant: 72).isActive = true
+                threads.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                threads.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                if let gpuField = section.fields.first(where: { $0.key == "max_gpu" }) {
+                    self.sectionBindings.append(FieldBinding(
+                        descriptor: gpuField,
+                        get: { gpu.stringValue },
+                        set: { gpu.stringValue = $0 }
+                    ))
+                }
+                let gpuLabel = NSTextField(labelWithString: "Max GPU")
+                gpuLabel.font = Self.fieldFont
+                gpuLabel.textColor = .secondaryLabelColor
+                let combined = self.hstack([threads, gpuLabel, gpu], spacing: 8)
+                combined.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+                let binding = FieldBinding(descriptor: field, get: { threads.stringValue }, set: { threads.stringValue = $0 })
+                return (combined, binding)
             },
             "model_dir": { [unowned self] field in
                 let text = self.whisperModelDirField
                 self.styleEditableField(text)
-                text.widthAnchor.constraint(equalToConstant: 380).isActive = true
+                text.widthAnchor.constraint(equalToConstant: fieldWidth - actionButtonWidth - 8).isActive = true
                 text.target = self
                 text.action = #selector(self.refreshWhisperModels)
                 let browse = NSButton(title: "Browse…", target: self, action: #selector(self.browseWhisperModelDir))
                 browse.bezelStyle = .rounded
+                browse.controlSize = .regular
+                browse.widthAnchor.constraint(equalToConstant: actionButtonWidth).isActive = true
                 let binding = FieldBinding(descriptor: field, get: { text.stringValue }, set: { text.stringValue = $0 })
-                return (self.hstack([text, browse]), binding)
+                let combined = self.hstack([text, browse], spacing: 8)
+                combined.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+                return (combined, binding)
             },
             "model_filename": { [unowned self] field in
                 let combo = self.whisperModelCombo
                 self.styleEditableCombo(combo)
                 combo.completes = true
                 combo.numberOfVisibleItems = 14
-                combo.widthAnchor.constraint(equalToConstant: 380).isActive = true
+                combo.widthAnchor.constraint(equalToConstant: fieldWidth - actionButtonWidth - 8).isActive = true
                 let refresh = NSButton(title: "Refresh", target: self, action: #selector(self.refreshWhisperModels))
                 refresh.bezelStyle = .rounded
+                refresh.controlSize = .regular
+                refresh.widthAnchor.constraint(equalToConstant: actionButtonWidth).isActive = true
                 self.noteStyle(self.whisperModelNote)
                 let binding = FieldBinding(descriptor: field, get: { combo.stringValue }, set: { combo.stringValue = $0 })
-                return (self.vstack([self.hstack([combo, refresh]), self.whisperModelNote]), binding)
+                let combined = self.hstack([combo, refresh], spacing: 8)
+                combined.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+                return (self.vstack([combined, self.whisperModelNote]), binding)
+            },
+            "language": { [unowned self] field in
+                let popup = NSPopUpButton()
+                popup.font = Self.fieldFont
+                popup.removeAllItems()
+                popup.addItems(withTitles: field.options.isEmpty ? ["zh-tw", "zh-cn", "en", "auto"] : field.options)
+                popup.widthAnchor.constraint(equalToConstant: 110).isActive = true
+                let beam = self.localBeamField
+                let temperature = self.localTemperatureField
+                self.styleEditableField(beam)
+                self.styleEditableField(temperature)
+                beam.placeholderString = "5"
+                temperature.placeholderString = "0"
+                beam.widthAnchor.constraint(equalToConstant: 56).isActive = true
+                temperature.widthAnchor.constraint(equalToConstant: 56).isActive = true
+                if let beamField = section.fields.first(where: { $0.key == "beam" }) {
+                    self.sectionBindings.append(FieldBinding(
+                        descriptor: beamField,
+                        get: { beam.stringValue },
+                        set: { beam.stringValue = $0 }
+                    ))
+                }
+                if let temperatureField = section.fields.first(where: { $0.key == "temperature" }) {
+                    self.sectionBindings.append(FieldBinding(
+                        descriptor: temperatureField,
+                        get: { temperature.stringValue },
+                        set: { temperature.stringValue = $0 }
+                    ))
+                }
+                let beamLabel = NSTextField(labelWithString: "Beam")
+                beamLabel.font = Self.fieldFont
+                beamLabel.textColor = .secondaryLabelColor
+                let temperatureLabel = NSTextField(labelWithString: "Temperature")
+                temperatureLabel.font = Self.fieldFont
+                temperatureLabel.textColor = .secondaryLabelColor
+                let spacer = NSView()
+                spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                let combined = self.hstack([
+                    popup,
+                    spacer,
+                    beamLabel,
+                    beam,
+                    temperatureLabel,
+                    temperature
+                ], spacing: 8)
+                combined.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+                let binding = FieldBinding(
+                    descriptor: field,
+                    get: { popup.titleOfSelectedItem ?? "zh-tw" },
+                    set: { value in
+                        if popup.item(withTitle: value) == nil, !value.isEmpty {
+                            popup.addItem(withTitle: value)
+                        }
+                        popup.selectItem(withTitle: value.isEmpty ? "zh-tw" : value)
+                    }
+                )
+                return (combined, binding)
+            },
+            "no_timestamps": { [unowned self] field in
+                let noTimestamps = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+                let noLanguageSymbol = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+                if let languageSymbolField = section.fields.first(where: { $0.key == "no_language_symbol" }) {
+                    self.sectionBindings.append(FieldBinding(
+                        descriptor: languageSymbolField,
+                        get: { noLanguageSymbol.state == .on ? "true" : "false" },
+                        set: {
+                            noLanguageSymbol.state = ["true", "1", "yes", "on"].contains($0.lowercased()) ? .on : .off
+                        }
+                    ))
+                }
+                let languageSymbolLabel = NSTextField(labelWithString: "No Language Symbol")
+                languageSymbolLabel.font = Self.fieldFont
+                languageSymbolLabel.textColor = .secondaryLabelColor
+                let spacer = NSView()
+                spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                let combined = self.hstack([
+                    noTimestamps,
+                    spacer,
+                    languageSymbolLabel,
+                    noLanguageSymbol
+                ], spacing: 8)
+                combined.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+                let binding = FieldBinding(
+                    descriptor: field,
+                    get: { noTimestamps.state == .on ? "true" : "false" },
+                    set: {
+                        noTimestamps.state = ["true", "1", "yes", "on"].contains($0.lowercased()) ? .on : .off
+                    }
+                )
+                return (combined, binding)
             }
-        ], extraRows: [row(label: "Check", key: nil, control: testStack, comment: nil)])
+        ], skipKeys: ["port", "max_gpu", "beam", "temperature", "no_language_symbol"], showSectionHeader: false)
+    }
+
+    private func setLocalWhisperStatus(_ detail: String, ok: Bool?) {
+        localServerStatus.stringValue = "Status: \(detail)"
+        switch ok {
+        case .some(true): localServerStatus.textColor = .systemGreen
+        case .some(false): localServerStatus.textColor = .systemRed
+        case .none: localServerStatus.textColor = .secondaryLabelColor
+        }
+    }
+
+    /// Refresh Start/Stop label and Status from the live managed process (Enabled is unrelated).
+    func refreshLocalWhisperServerControls(syncFinished: Bool = false) {
+        _ = syncFinished
+        let running = localWhisperServer?.isRunning == true
+        if localWhisperStartInFlight {
+            localToggleButton.title = "Stop"
+            localToggleButton.isEnabled = false
+            setLocalWhisperStatus("starting…", ok: nil)
+            return
+        }
+        localSpinner.stopAnimation(nil)
+        localToggleButton.title = running ? "Stop" : "Start"
+        localToggleButton.isEnabled = localWhisperServer != nil
+
+        if running {
+            localWhisperLastError = nil
+            setLocalWhisperStatus(localWhisperServer?.statusText ?? "running", ok: true)
+        } else if let error = localWhisperLastError, !error.isEmpty {
+            setLocalWhisperStatus(error, ok: false)
+        } else {
+            setLocalWhisperStatus("stopped", ok: nil)
+        }
+    }
+
+    func showLocalWhisperServerMessage(_ text: String, ok: Bool?) {
+        if ok == false {
+            localWhisperLastError = text
+            setLocalWhisperStatus(text, ok: false)
+        } else if ok == true {
+            localWhisperLastError = nil
+            setLocalWhisperStatus(text, ok: true)
+        } else {
+            setLocalWhisperStatus(text, ok: nil)
+        }
+    }
+
+    @objc private func checkLocalWhisperStatus() {
+        localWhisperLastError = nil
+        refreshLocalWhisperServerControls()
+    }
+
+    @objc private func toggleLocalWhisperServer() {
+        if localWhisperServer?.isRunning == true {
+            stopLocalWhisperServerNow()
+        } else {
+            startLocalWhisperServerNow()
+        }
+    }
+
+    private func startLocalWhisperServerNow() {
+        guard let localWhisperServer else {
+            showLocalWhisperServerMessage("Whisper server manager is unavailable.", ok: false)
+            return
+        }
+        let config = collectConfig().localWhisper
+        localWhisperLastError = nil
+        localWhisperStartInFlight = true
+        localToggleButton.title = "Stop"
+        localToggleButton.isEnabled = false
+        localSpinner.startAnimation(nil)
+        setLocalWhisperStatus("starting…", ok: nil)
+        Task { @MainActor in
+            defer {
+                self.localWhisperStartInFlight = false
+                self.localSpinner.stopAnimation(nil)
+                self.refreshLocalWhisperServerControls()
+            }
+            do {
+                try await localWhisperServer.start(config)
+                self.localWhisperLastError = nil
+            } catch {
+                self.localWhisperLastError = error.localizedDescription
+            }
+        }
+    }
+
+    private func stopLocalWhisperServerNow() {
+        localWhisperServer?.stop()
+        localWhisperLastError = nil
+        localWhisperStartInFlight = false
+        localSpinner.stopAnimation(nil)
+        refreshLocalWhisperServerControls()
     }
 
     @objc private func browseLocalServerBin() {
@@ -1080,44 +1443,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         let current = Self.trim(whisperModelCombo.stringValue)
         if current.isEmpty, let first = models.first { whisperModelCombo.stringValue = first }
         whisperModelNote.stringValue = !current.isEmpty && !models.contains(current) ? "“\(current)” is not in this folder" : ""
-    }
-
-    /// Checks that the binary and model file exist (does not start the server).
-    @objc private func testLocalWhisper() {
-        let fm = FileManager.default
-        var lines: [String] = []
-        var ok = true
-        let bin = Self.expandPath(localServerBinField.stringValue)
-        if bin.isEmpty {
-            let found = ["/opt/homebrew/bin/whisper-server", "/usr/local/bin/whisper-server"].first(where: fm.isExecutableFile(atPath:))
-            if let found {
-                lines.append("✓ server binary: \(found)")
-            } else {
-                ok = false
-                lines.append("✗ whisper-server not found; set Server Binary.")
-            }
-        } else if fm.isExecutableFile(atPath: bin) {
-            lines.append("✓ server binary: \(bin)")
-        } else {
-            ok = false
-            lines.append("✗ not executable: \(bin)")
-        }
-        let dir = Self.expandPath(whisperModelDirField.stringValue)
-        let file = Self.trim(whisperModelCombo.stringValue)
-        if dir.isEmpty || file.isEmpty {
-            ok = false
-            lines.append("✗ set Model Dir and Model.")
-        } else {
-            let model = (dir as NSString).appendingPathComponent(file)
-            if let attributes = try? fm.attributesOfItem(atPath: model), let size = attributes[.size] as? NSNumber {
-                lines.append(String(format: "✓ model: %@ (%.0f MB)", model, size.doubleValue / 1_048_576))
-            } else {
-                ok = false
-                lines.append("✗ model not found: \(model)")
-            }
-        }
-        Logger.shared.log("Settings: local whisper check ok=\(ok), result=\(lines.joined(separator: " | "))")
-        Self.show(lines.joined(separator: "\n"), ok: ok, in: localTestResult)
     }
 
     // MARK: - LLM pane ([[webui.llm-server]])
@@ -1404,6 +1729,20 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         chooseDirectory(startingAt: obsidianVaultField.stringValue, message: "Choose the Obsidian vault folder AirType writes notes into") { [weak self] path in
             self?.obsidianVaultField.stringValue = path
         }
+    }
+
+    // MARK: - History panes
+
+    private func buildVoiceHistoryTab() -> NSView {
+        let pane = HistorySettingsPaneController(kind: .voice)
+        voiceHistoryPane = pane
+        return pane.makeView()
+    }
+
+    private func buildObsidianHistoryTab() -> NSView {
+        let pane = HistorySettingsPaneController(kind: .obsidian)
+        obsidianHistoryPane = pane
+        return pane.makeView()
     }
 
     /// 16 kHz mono 16-bit WAV of `text` spoken by macOS `say` (Meijia zh_TW, falls back to the default voice).

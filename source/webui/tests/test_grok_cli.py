@@ -29,33 +29,33 @@ def _fake_run(stdout="", returncode=0, stderr="", seen=None):
 
 
 class ReadSettingsTests(unittest.TestCase):
-    def _read(self, text: str):
+    def _read(self, webui: dict):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.toml"
-            path.write_text(text, encoding="utf-8")
+            path = Path(tmp) / "config.json"
+            path.write_text(json.dumps({"webui": webui}, indent=2) + "\n", encoding="utf-8")
             return grok_cli.read_grok_cli_settings(path)
 
     def test_correct_timeout_and_concurrency_settings(self) -> None:
-        settings = self._read("[webui.grok-cli]\nenabled = true\ntimeout_seconds = 300\n")
+        settings = self._read({"grok-cli": {"enabled": True, "timeout_seconds": 300}})
         self.assertEqual(settings["typo_concurrency"], 4)
         self.assertEqual(grok_cli.step_timeout(settings, "correct"), 180)
         self.assertEqual(grok_cli.step_timeout(settings, "polish"), 300)
         settings = self._read(
-            "[webui.grok-cli]\nenabled = true\ncorrect_timeout_seconds = 90\ntypo_concurrency = 99\n"
+            {"grok-cli": {"enabled": True, "correct_timeout_seconds": 90, "typo_concurrency": 99}}
         )
         self.assertEqual(grok_cli.step_timeout(settings, "correct"), 90)
         self.assertEqual(settings["typo_concurrency"], 8)
-        settings = self._read('[webui.grok-cli]\ntypo_concurrency = "x"\n')
+        settings = self._read({"grok-cli": {"typo_concurrency": "x"}})
         self.assertEqual(settings["typo_concurrency"], 4)
 
     def test_disabled_without_section(self) -> None:
-        settings = self._read("[webui.ime]\ncorrection_enabled = false\n")
+        settings = self._read({"ime": {"correction_enabled": False}})
         self.assertFalse(settings["enabled"])
         self.assertFalse(grok_cli.handles_step(settings, "polish"))
 
     def test_reads_section_and_filters_steps(self) -> None:
         settings = self._read(
-            '[webui.grok-cli]\nenabled = true\nsteps = ["polish", "tags", "bogus"]\ntimeout_seconds = 5\n'
+            {"grok-cli": {"enabled": True, "steps": ["polish", "tags", "bogus"], "timeout_seconds": 5}}
         )
         self.assertTrue(grok_cli.handles_step(settings, "polish"))
         self.assertTrue(grok_cli.handles_step(settings, "tags"))

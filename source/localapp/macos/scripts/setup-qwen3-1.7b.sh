@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Downloads Qwen3-ASR 1.7B int8 (sherpa-onnx qwen3_asr layout, ~2.4 GB) from ModelScope
 # zengshuishui/Qwen3-ASR-onnx (the export used by the sherpa-onnx Qwen3-ASR PR) into
-# ~/.airtype-experiment/models/qwen3-asr-1.7B-int8 (override with AIRTYPE_EXPERIMENT_DIR).
+# ~/.airtype/models/asr/qwen3-asr-1.7B-int8 (override with AIRTYPE_HOME).
 # Verifies SHA-256. Safe to re-run (skips files already verified). VAD/OpenCC come from setup-qwen3.sh.
 set -euo pipefail
 
-EXP_DIR="${AIRTYPE_EXPERIMENT_DIR:-$HOME/.airtype-experiment}"
-DEST="$EXP_DIR/models/qwen3-asr-1.7B-int8"
+AIRTYPE_HOME="${AIRTYPE_HOME:-$HOME/.airtype}"
+ASR_DIR="$AIRTYPE_HOME/models/asr"
+EXP_DIR="$ASR_DIR"
+DEST="$EXP_DIR/qwen3-asr-1.7B-int8"
 BASE="https://modelscope.cn/models/zengshuishui/Qwen3-ASR-onnx/resolve/master"
 
 FILES=(
@@ -35,7 +37,7 @@ for entry in "${FILES[@]}"; do
   mv "$out.part" "$out"
 done
 
-if [[ ! -f "$EXP_DIR/models/silero_vad.onnx" ]]; then
+if [[ ! -f "$EXP_DIR/silero_vad.onnx" ]]; then
   echo "Silero VAD missing: run scripts/setup-qwen3.sh too."
 fi
 echo

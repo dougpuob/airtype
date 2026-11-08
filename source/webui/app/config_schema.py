@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import tomllib
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -94,9 +93,8 @@ def read_config(path: str | Path) -> Dict[str, Any]:
         return {}
 
     try:
-        with config_path.open("rb") as config_file:
-            loaded = tomllib.load(config_file)
-    except (OSError, tomllib.TOMLDecodeError):
+        loaded = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return {}
 
     return loaded if isinstance(loaded, dict) else {}
@@ -107,92 +105,54 @@ def ensure_config_exists(
     schema_path: str | Path = DEFAULT_CONFIG_SCHEMA_PATH,
     generator_name: str = "webui",
 ) -> Path:
-    config_path = Path(path).expanduser().resolve()
-    if config_path.exists():
-        return config_path
+    """Ensure ~/.airtype/config.json exists; create schema defaults when missing."""
+    del path, generator_name  # always use the shared JSON home path
+    home = Path("~/.airtype").expanduser()
+    json_path = (home / "config.json").resolve()
+
+    if json_path.exists():
+        return json_path
 
     schema_file = Path(schema_path)
     schema = json.loads(schema_file.read_text(encoding="utf-8"))
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(_render_schema_defaults_toml(schema, generator_name), encoding="utf-8")
-    return config_path
+    defaults = _schema_defaults_object(schema)
+    # Ensure whisper model_dir default points at models/whisper.
+    webui = defaults.setdefault("webui", {})
+    if isinstance(webui, dict):
+        whisper = webui.get("whisper-server")
+        if isinstance(whisper, dict):
+            whisper.setdefault("model_dir", "~/.airtype/models/whisper")
+        elif whisper is None:
+            webui["whisper-server"] = {"model_dir": "~/.airtype/models/whisper"}
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(defaults, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return json_path
 
 
-def _render_schema_defaults_toml(schema: Dict[str, Any], generator_name: str) -> str:
-    lines = [
-        "# AirType user config",
-        "#:schema ./config.schema.json",
-        f"# Generated from config.schema.json defaults by {generator_name}.",
-        "",
-    ]
+def _schema_defaults_object(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Best-effort nested defaults from JSON Schema properties (for first-run config.json)."""
+    props = schema.get("properties") if isinstance(schema, dict) else None
+    if not isinstance(props, dict):
+        return {}
 
-    top_properties = schema.get("properties", {})
-    localapp = top_properties.get("localapp", {})
-    if localapp:
-        lines.extend(
-            [
-                "#===============================================================================",
-                "# Local App Settings",
-                "#===============================================================================",
-            ]
-        )
-        _emit_child_sections(lines, "localapp", localapp)
-        lines.append("")
+    def walk(node: Dict[str, Any]) -> Any:
+        if not isinstance(node, dict):
+            return {}
+        if "default" in node:
+            return node["default"]
+        if node.get("type") == "array":
+            items = node.get("items")
+            if isinstance(items, dict) and "default" in items:
+                return [items["default"]]
+            if isinstance(items, dict) and isinstance(items.get("properties"), dict):
+                return [walk(items)]
+            return []
+        nested = node.get("properties")
+        if isinstance(nested, dict):
+            return {key: walk(value) for key, value in nested.items()}
+        return {}
 
-    webui = top_properties.get("webui", {})
-    if webui:
-        lines.extend(
-            [
-                "#===============================================================================",
-                "# Web UI Settings",
-                "#===============================================================================",
-            ]
-        )
-        _emit_object_section(lines, "webui", webui)
-        _emit_child_sections(lines, "webui", webui)
-
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def _emit_object_section(lines: list[str], section_name: str, object_schema: Dict[str, Any]) -> None:
-    lines.append(f"[{section_name}]")
-    for key, property_schema in object_schema.get("properties", {}).items():
-        if property_schema.get("type") in ("object", "array"):
-            continue
-        lines.append(f"{key} = {_toml_value(_default_for_schema_property(property_schema))}")
-
-
-def _emit_child_sections(lines: list[str], parent_name: str, object_schema: Dict[str, Any]) -> None:
-    for key, property_schema in object_schema.get("properties", {}).items():
-        section_name = f"{parent_name}.{key}"
-        property_type = property_schema.get("type")
-        if property_type == "object":
-            lines.append("")
-            _emit_object_section(lines, section_name, property_schema)
-        elif property_type == "array":
-            item_schema = property_schema.get("items", {})
-            lines.append("")
-            lines.append(f"[[{section_name}]]")
-            for item_key, item_property_schema in item_schema.get("properties", {}).items():
-                lines.append(f"{item_key} = {_toml_value(_default_for_schema_property(item_property_schema))}")
-
-
-def _default_for_schema_property(property_schema: Dict[str, Any]) -> Any:
-    if "default" in property_schema:
-        return property_schema["default"]
-    if property_schema.get("type") == "array":
-        return []
-    return ""
-
-
-def _toml_value(value: Any) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (int, float)):
-        return str(value)
-    if isinstance(value, list):
-        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
-    return _toml_string(value)
+    return {key: walk(value) for key, value in props.items()}
 
 
 def _select_default_llm(servers: list | None, default_name: str | None = None) -> dict | None:
@@ -393,96 +353,6 @@ def normalize_app_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def remove_webui_sections(text: str) -> str:
-    import re
-
-    pattern = re.compile(
-        r"(?ms)^(?:\[webui\]|\[{1,2}webui\.(?:auth|whisper-server|llm-server|yt-dlp|ytdlp|obsidian|capture-post|capture_post|web-to-markdown|immich|ime|ai-route|ai-steps)\]{1,2})\n.*?(?=^\[|\Z)"
-    )
-    text = pattern.sub("", text)
-    header_pattern = re.compile(
-        r"(?m)^#=+\n# Web UI Settings\n#=+\n(?:\n|$)"
-    )
-    return header_pattern.sub("", text)
-
-
-def render_webui_settings_toml(settings: Dict[str, Any]) -> str:
-    normalized = normalize_app_settings(settings)
-    whisper = normalized["whisper"]
-    llm = normalized["llm"]
-    ytdlp = normalized["ytdlp"]
-    web_to_markdown = normalized["web_to_markdown"]
-    immich = normalized["immich"]
-    obsidian = normalized["obsidian"]
-    capture_post = normalized["capture_post"]
-    ime = normalized["ime"]
-    auth = normalized["auth"]
-    lines = [
-        "#===============================================================================",
-        "# Web UI Settings",
-        "#===============================================================================",
-        "",
-        "[webui.whisper-server]",
-        f"model_dir = {_toml_string(whisper.get('model_dir', ''))}",
-        f"model_filename = {_toml_string(whisper.get('model_filename', ''))}",
-        f"server_bin = {_toml_string(whisper.get('server_bin', ''))}",
-        f"remote_endpoint = {_toml_string(whisper.get('remote_endpoint', ''))}",
-        f"server_args = {_toml_string(whisper.get('server_args', ''))}",
-        f"language = {_toml_string(whisper.get('language', 'zh-tw'))}",
-        f"beam = {_toml_number(whisper.get('beam', 5), 5)}",
-        f"temperature = {_toml_number(whisper.get('temperature', 0), 0)}",
-        "",
-        "[webui.yt-dlp]",
-        f"cookies = {_toml_string(ytdlp.get('cookies', ''))}",
-        f"cookies_from_browser = {_toml_string(ytdlp.get('cookies_from_browser', ''))}",
-        "",
-        "[webui.obsidian]",
-        f"vault_name = {_toml_string(obsidian.get('vault_name', ''))}",
-        f"default_folder = {_toml_string(obsidian.get('default_folder', ''))}",
-        "",
-        "[webui.web-to-markdown]",
-        f"api_key = {_toml_string(web_to_markdown.get('api_key', ''))}",
-        f"timeout_seconds = {_toml_number(web_to_markdown.get('timeout_seconds', 60), 60)}",
-        f"download_max_mb = {_toml_number(web_to_markdown.get('download_max_mb', 20), 20)}",
-        "",
-        "[webui.immich]",
-        f"server_url = {_toml_string(immich.get('server_url', ''))}",
-        f"api_key = {_toml_string(immich.get('api_key', ''))}",
-        f"create_album = {'true' if immich.get('create_album') else 'false'}",
-        "",
-        "[webui.capture-post]",
-        f"ai_title_enabled = {'true' if capture_post.get('ai_title_enabled') else 'false'}",
-        f"title_system_prompt = {_toml_string(capture_post.get('title_system_prompt', ''))}",
-        f"thinking_steps = {_toml_string_array(capture_post.get('thinking_steps', []))}",
-        f"tags_thinking_level = {_toml_string(capture_post.get('tags_thinking_level', 'mid'))}",
-        "",
-        "[webui.ime]",
-        f"correction_enabled = {'true' if ime.get('correction_enabled') else 'false'}",
-        "",
-        "[webui.auth]",
-        f"enabled = {'true' if auth.get('enabled') else 'false'}",
-        f"username = {_toml_string(auth.get('username', 'airtype'))}",
-        f"password = {_toml_string(auth.get('password', ''))}",
-        f"session_days = {_toml_number(auth.get('session_days', 14), 14)}",
-        "",
-        "[[webui.llm-server]]",
-        f'name = {_toml_string(llm.get("name", "default"))}',
-        f"provider = {_toml_string(llm.get('provider', 'llama.cpp'))}",
-        f"endpoint = {_toml_string(llm.get('endpoint', 'http://127.0.0.1:8080'))}",
-        f"api_key = {_toml_string(llm.get('api_key', ''))}",
-        f"models = {_toml_string_array(llm.get('models', []))}",
-        f"selected-model = {_toml_string(llm.get('selected_model', llm.get('model', '')))}",
-        f"contextLength = {_toml_number(llm.get('contextLength', 8192), 8192)}",
-        f"temperature = {_toml_number(llm.get('temperature', 0.4), 0.4)}",
-        f"disable_thinking = {'true' if llm.get('disable_thinking') else 'false'}",
-        f"system = {_toml_string(llm.get('system', ''))}",
-        "",
-        "[webui]",
-        f'default-llm-server-name = {_toml_string(llm.get("name", "default"))}',
-    ]
-    return "\n".join(lines)
-
-
 def whisper_model_path_from_settings(whisper_settings: Dict[str, Any]) -> Optional[str]:
     model_dir = whisper_settings.get("model_dir")
     model_filename = whisper_settings.get("model_filename")
@@ -534,31 +404,3 @@ def _float_in_range(
     if maximum is not None:
         number = min(float(maximum), number)
     return int(number) if number.is_integer() else number
-
-
-def _toml_string(value: Any) -> str:
-    text = str(value or "")
-    escaped = (
-        text.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\b", "\\b")
-        .replace("\t", "\\t")
-        .replace("\n", "\\n")
-        .replace("\f", "\\f")
-        .replace("\r", "\\r")
-    )
-    return '"' + escaped + '"'
-
-
-def _toml_string_array(value: Any) -> str:
-    return "[" + ", ".join(_toml_string(item) for item in _string_list(value)) + "]"
-
-
-def _toml_number(value: Any, default_value: int | float) -> str:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        number = float(default_value)
-    if number.is_integer():
-        return str(int(number))
-    return f"{number:.4f}".rstrip("0").rstrip(".")

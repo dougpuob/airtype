@@ -44,14 +44,11 @@ from .config_schema import (
     read_config,
     read_webui_data_dir,
     read_webui_settings,
-    remove_webui_sections,
-    render_webui_settings_toml,
     split_whisper_model_settings,
     thinking_enabled_for_step,
     thinking_budget_for_level,
     whisper_model_path_from_settings,
 )
-from .config_schema import _toml_number as _schema_toml_number, _toml_string as _schema_toml_string
 from .whisper import WhisperCppNotConfigured, transcriber
 from . import apple_podcast
 from . import clip_pipeline
@@ -95,7 +92,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def _find_config_path() -> str:
     config_path = ensure_config_exists(
-        Path("~/.airtype/config.toml"),
+        Path("~/.airtype/config.json"),
         generator_name="webui startup",
     )
     return str(config_path)
@@ -1364,54 +1361,33 @@ def _patch_config_llm_models(models_by_server: dict[str, list[str]]) -> None:
         return
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as config_file:
-            lines = config_file.read().splitlines()
-    except OSError:
+            document = json.load(config_file)
+    except (OSError, json.JSONDecodeError):
         return
-
-    output: list[str] = []
-    block: list[str] = []
-    in_llm_server = False
-
-    def flush_block() -> None:
-        nonlocal block, in_llm_server
-        if not in_llm_server:
-            return
-        table = _toml_block_values(block)
-        server_name = table.get("name", "")
-        model_names = models_by_server.get(server_name)
+    if not isinstance(document, dict):
+        return
+    webui = document.get("webui")
+    if not isinstance(webui, dict):
+        return
+    servers = webui.get("llm-server")
+    if not isinstance(servers, list):
+        return
+    for server in servers:
+        if not isinstance(server, dict):
+            continue
+        name = str(server.get("name") or "")
+        model_names = models_by_server.get(name)
         if model_names is None:
-            output.extend(block)
-        else:
-            patched = _replace_or_append_toml_value(block, "models", _toml_string_array(model_names))
-            selected_model = table.get("selected-model") or table.get("default_model") or table.get("model") or ""
-            if not selected_model:
-                # Only pick a default when the user has not chosen a model.
-                # A selected model missing from the freshly fetched list may
-                # simply not be served right now; keep the user's choice
-                # instead of silently resetting it to the first entry.
-                patched = _replace_or_append_toml_value(patched, "selected-model", _toml_string(model_names[0] if model_names else ""))
-            patched = _remove_toml_keys(patched, {"model", "default_model"})
-            output.extend(patched)
-        block = []
-        in_llm_server = False
-
-    for line in lines:
-        trimmed = _strip_toml_comment(line).strip()
-        if trimmed.startswith("[[") or trimmed.startswith("["):
-            flush_block()
-            if trimmed == "[[webui.llm-server]]":
-                in_llm_server = True
-                block = [line]
-            else:
-                output.append(line)
-        elif in_llm_server:
-            block.append(line)
-        else:
-            output.append(line)
-    flush_block()
-
+            continue
+        server["models"] = list(model_names)
+        selected = server.get("selected-model") or server.get("default_model") or server.get("model") or ""
+        if not selected and model_names:
+            server["selected-model"] = model_names[0]
+        server.pop("model", None)
+        server.pop("default_model", None)
     with open(CONFIG_PATH, "w", encoding="utf-8") as config_file:
-        config_file.write("\n".join(output) + "\n")
+        json.dump(document, config_file, indent=2, ensure_ascii=False)
+        config_file.write("\n")
 
 
 def _patch_config_llm_models_for_endpoint(provider: str, endpoint: str, model_names: list[str]) -> None:
@@ -1434,76 +1410,6 @@ def _patch_config_llm_models_for_endpoint(provider: str, endpoint: str, model_na
         if server_name:
             models_by_server[server_name] = model_names
     _patch_config_llm_models(models_by_server)
-
-
-def _toml_block_values(lines: list[str]) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for line in lines:
-        trimmed = _strip_toml_comment(line).strip()
-        if "=" not in trimmed:
-            continue
-        key, value = trimmed.split("=", 1)
-        values[key.strip()] = _parse_toml_scalar(value.strip())
-    return values
-
-
-def _replace_or_append_toml_value(lines: list[str], key: str, value: str) -> list[str]:
-    replacement = f"{key} = {value}"
-    for index, line in enumerate(lines):
-        trimmed = _strip_toml_comment(line).strip()
-        if "=" not in trimmed:
-            continue
-        current_key = trimmed.split("=", 1)[0].strip()
-        if current_key == key:
-            return [*lines[:index], replacement, *lines[index + 1:]]
-    return [*lines, replacement]
-
-
-def _remove_toml_keys(lines: list[str], keys: set[str]) -> list[str]:
-    kept: list[str] = []
-    for line in lines:
-        trimmed = _strip_toml_comment(line).strip()
-        if "=" in trimmed and trimmed.split("=", 1)[0].strip() in keys:
-            continue
-        kept.append(line)
-    return kept
-
-
-def _strip_toml_comment(line: str) -> str:
-    result = []
-    in_string = False
-    escaped = False
-    for char in line:
-        if escaped:
-            result.append(char)
-            escaped = False
-        elif char == "\\" and in_string:
-            result.append(char)
-            escaped = True
-        elif char == '"':
-            result.append(char)
-            in_string = not in_string
-        elif char == "#" and not in_string:
-            break
-        else:
-            result.append(char)
-    return "".join(result)
-
-
-def _parse_toml_scalar(value: str) -> str:
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return value
-    return parsed if isinstance(parsed, str) else value
-
-
-def _toml_string(value: str) -> str:
-    return json.dumps(str(value))
-
-
-def _toml_string_array(values: list[str]) -> str:
-    return "[" + ", ".join(_toml_string(value) for value in values) + "]"
 
 
 @app.post("/api/local-llm/chat")
@@ -2701,124 +2607,76 @@ def _normalized_llm_servers_from_settings(settings: Dict[str, Any], selected_llm
 
 def _write_backend_config_settings(settings: Dict[str, Any]) -> None:
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+    _write_backend_config_settings_json(settings)
+
+
+def _write_backend_config_settings_json(settings: Dict[str, Any]) -> None:
+    """Merge WebUI settings into shared config.json without rewriting localapp keys."""
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as config_file:
-            text = config_file.read()
-    except OSError:
-        text = "# AirType user config\n"
-
-    text = remove_webui_sections(text).rstrip()
-    backend_text = _render_backend_config_settings(settings)
-    cloud_routes = [route for route in settings.get("ai_routes") or [] if ai_routes.is_cloud_route(route)]
-    backend_text += "\n\n" + ai_routes.render_ai_toml(
-        cloud_routes,
-        settings.get("ai_steps") or {},
-        _schema_toml_string,
-        _schema_toml_number,
-    )
-    if text:
-        text = f"{text}\n\n{backend_text}\n"
-    else:
-        text = f"{backend_text}\n"
-
-    with open(CONFIG_PATH, "w", encoding="utf-8") as config_file:
-        config_file.write(text)
-
-
-def _render_backend_config_settings(settings: Dict[str, Any]) -> str:
-    llm_servers = settings.get("llm_servers")
-    if not isinstance(llm_servers, list) or not llm_servers:
-        return render_webui_settings_toml(settings)
+            document = json.load(config_file)
+    except (OSError, json.JSONDecodeError):
+        document = {}
+    if not isinstance(document, dict):
+        document = {}
 
     normalized = normalize_app_settings(settings)
-    whisper = normalized["whisper"]
-    ytdlp = normalized["ytdlp"]
-    obsidian = normalized["obsidian"]
-    capture_post = normalized["capture_post"]
-    ime = normalized["ime"]
-    auth = normalized["auth"]
-    web_to_markdown = normalized["web_to_markdown"]
-    immich = normalized["immich"]
-    selected_llm = normalized["llm"]
-    default_name = str(settings.get("default_llm_server_name") or selected_llm.get("name") or "default")
-    lines = [
-        "#===============================================================================",
-        "# Web UI Settings",
-        "#===============================================================================",
-        "",
-        "[webui.whisper-server]",
-        f"model_dir = {_toml_string(whisper.get('model_dir', ''))}",
-        f"model_filename = {_toml_string(whisper.get('model_filename', ''))}",
-        f"server_bin = {_toml_string(whisper.get('server_bin', ''))}",
-        f"remote_endpoint = {_toml_string(whisper.get('remote_endpoint', ''))}",
-        f"server_args = {_toml_string(whisper.get('server_args', ''))}",
-        f"language = {_toml_string(whisper.get('language', 'zh-tw'))}",
-        f"beam = {whisper.get('beam', 5)}",
-        f"temperature = {whisper.get('temperature', 0)}",
-        "",
-        "[webui.yt-dlp]",
-        f"cookies = {_toml_string(ytdlp.get('cookies', ''))}",
-        f"cookies_from_browser = {_toml_string(ytdlp.get('cookies_from_browser', ''))}",
-        "",
-        "[webui.obsidian]",
-        f"vault_name = {_toml_string(obsidian.get('vault_name', ''))}",
-        f"default_folder = {_toml_string(obsidian.get('default_folder', ''))}",
-        "",
-        "[webui.web-to-markdown]",
-        f"api_key = {_toml_string(web_to_markdown.get('api_key', ''))}",
-        f"timeout_seconds = {web_to_markdown.get('timeout_seconds', 60)}",
-        f"download_max_mb = {web_to_markdown.get('download_max_mb', 20)}",
-        "",
-        "[webui.immich]",
-        f"server_url = {_toml_string(immich.get('server_url', ''))}",
-        f"api_key = {_toml_string(immich.get('api_key', ''))}",
-        f"create_album = {'true' if immich.get('create_album') else 'false'}",
-        "",
-        "[webui.capture-post]",
-        f"ai_title_enabled = {'true' if capture_post.get('ai_title_enabled') else 'false'}",
-        f"title_system_prompt = {_toml_string(capture_post.get('title_system_prompt', ''))}",
-        f"thinking_steps = {_toml_string_array(capture_post.get('thinking_steps', []))}",
-        f"tags_thinking_level = {_toml_string(capture_post.get('tags_thinking_level', 'mid'))}",
-        "",
-        "[webui.ime]",
-        f"correction_enabled = {'true' if ime.get('correction_enabled') else 'false'}",
-        "",
-        "[webui.auth]",
-        f"enabled = {'true' if auth.get('enabled') else 'false'}",
-        f"username = {_toml_string(auth.get('username', 'airtype'))}",
-        f"password = {_toml_string(auth.get('password', ''))}",
-        f"session_days = {auth.get('session_days', 14)}",
-        "",
-    ]
+    webui = document.setdefault("webui", {})
+    if not isinstance(webui, dict):
+        webui = {}
+        document["webui"] = webui
 
-    for raw_server in llm_servers:
-        if not isinstance(raw_server, dict):
-            continue
-        server = _normalize_llm_server(raw_server)
-        lines.extend(
-            [
-                "[[webui.llm-server]]",
-                f"name = {_toml_string(server.get('name', 'default'))}",
-                f"provider = {_toml_string(server.get('provider', 'llama.cpp'))}",
-                f"endpoint = {_toml_string(server.get('endpoint', 'http://127.0.0.1:8080'))}",
-                f"api_key = {_toml_string(server.get('api_key', ''))}",
-                f"models = {_toml_string_array(server.get('models', []))}",
-                f"selected-model = {_toml_string(server.get('selected_model', server.get('model', '')))}",
-                f"contextLength = {server.get('contextLength', 8192)}",
-                f"temperature = {server.get('temperature', 0.4)}",
-                f"disable_thinking = {'true' if server.get('disable_thinking') else 'false'}",
-                f"system = {_toml_string(server.get('system', ''))}",
-                "",
-            ]
-        )
+    whisper = normalized.get("whisper") or {}
+    # Preserve multi-profile list shape when present; otherwise store object.
+    existing_whisper = webui.get("whisper-server")
+    if isinstance(existing_whisper, list) and existing_whisper:
+        name = str(whisper.get("name") or existing_whisper[0].get("name") or "default")
+        replaced = False
+        for index, item in enumerate(existing_whisper):
+            if isinstance(item, dict) and item.get("name") == name:
+                merged = dict(item)
+                merged.update(whisper)
+                existing_whisper[index] = merged
+                replaced = True
+                break
+        if not replaced:
+            existing_whisper.append(dict(whisper))
+        webui["whisper-server"] = existing_whisper
+    else:
+        webui["whisper-server"] = dict(whisper)
 
-    lines.extend(
-        [
-            "[webui]",
-            f"default-llm-server-name = {_toml_string(default_name)}",
-        ]
+    llm_servers = settings.get("llm_servers")
+    if isinstance(llm_servers, list) and llm_servers:
+        webui["llm-server"] = llm_servers
+    else:
+        webui["llm-server"] = [dict(normalized.get("llm") or {})]
+
+    webui["default-llm-server-name"] = str(
+        settings.get("default_llm_server_name")
+        or (normalized.get("llm") or {}).get("name")
+        or "default"
     )
-    return "\n".join(lines)
+    for key, value in {
+        "yt-dlp": normalized.get("ytdlp"),
+        "obsidian": normalized.get("obsidian"),
+        "capture-post": normalized.get("capture_post"),
+        "ime": normalized.get("ime"),
+        "auth": normalized.get("auth"),
+        "web-to-markdown": normalized.get("web_to_markdown"),
+        "immich": normalized.get("immich"),
+    }.items():
+        if isinstance(value, dict):
+            webui[key] = value
+
+    # Keep ai-route / ai-steps as already shaped by settings when provided.
+    if isinstance(settings.get("ai_routes"), list):
+        webui["ai-route"] = settings.get("ai_routes")
+    if isinstance(settings.get("ai_steps"), dict):
+        webui["ai-steps"] = settings.get("ai_steps")
+
+    with open(CONFIG_PATH, "w", encoding="utf-8") as config_file:
+        json.dump(document, config_file, indent=2, ensure_ascii=False)
+        config_file.write("\n")
 
 
 def _whisper_model_path_from_settings(whisper_settings: Dict[str, Any]) -> Optional[str]:

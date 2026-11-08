@@ -7,8 +7,9 @@ import PackageDescription
 // The sherpa-onnx prebuilt runtime (osx-arm64 shared) is downloaded by scripts/setup-nemotron.sh.
 // Override its location with SHERPA_ONNX_DIR if needed.
 let home = ProcessInfo.processInfo.environment["HOME"] ?? ""
+let airtypeHome = ProcessInfo.processInfo.environment["AIRTYPE_HOME"] ?? "\(home)/.airtype"
 let sherpaDir = ProcessInfo.processInfo.environment["SHERPA_ONNX_DIR"]
-    ?? "\(home)/.airtype-experiment/runtime/sherpa-onnx-v2.0.1-osx-arm64-shared"
+    ?? "\(airtypeHome)/models/asr/runtime/sherpa-onnx-v2.0.1-osx-arm64-shared"
 let sherpaLib = "\(sherpaDir)/lib"
 
 let package = Package(
@@ -30,6 +31,7 @@ let package = Package(
             dependencies: ["CSherpaOnnx"],
             path: "sources/AirType",
             linkerSettings: [
+                .linkedLibrary("sqlite3"),
                 .unsafeFlags([
                     "-L\(sherpaLib)",
                     "-lsherpa-onnx-c-api",

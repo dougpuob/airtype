@@ -2,15 +2,15 @@
 
 A route is a named way to reach a text model:
 
-* ``openai-compat`` routes are the ``[[webui.llm-server]]`` entries (local
+* ``openai-compat`` routes are the ``webui.llm-server`` entries (local
   oMLX, llama.cpp, Ollama, any OpenAI-compatible server).
-* ``grok-cli`` and ``grok-api`` routes live in ``[[webui.ai-route]]``.
+* ``grok-cli`` and ``grok-api`` routes live in ``webui.ai-route``.
 
-``[webui.ai-steps]`` binds each AI step (correct / polish / title / tags) to a
+``webui.ai-steps`` binds each AI step (correct / polish / title / tags) to a
 route name. An empty or unknown name means the default local server
 (``default-llm-server-name``).
 
-Configs written before routes existed only have ``[webui.grok-cli]``; they are
+Configs written before routes existed only have ``webui.grok-cli``; they are
 read as one ``Grok CLI`` route with the old ``steps`` list as bindings.
 """
 
@@ -178,22 +178,3 @@ def merge_cloud_routes(incoming: Any, current: list[Dict[str, Any]]) -> list[Dic
     return routes
 
 
-def render_ai_toml(routes: list[Dict[str, Any]], steps: Dict[str, str], toml_string, toml_number) -> str:
-    lines: list[str] = []
-    for route in routes:
-        route = normalize_cloud_route(route)
-        if not route:
-            continue
-        lines += ["[[webui.ai-route]]", f"name = {toml_string(route['name'])}", f"type = {toml_string(route['type'])}"]
-        for key, value in route.items():
-            if key in ("name", "type"):
-                continue
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                lines.append(f"{key} = {toml_number(value, value)}")
-            else:
-                lines.append(f"{key} = {toml_string(value)}")
-        lines.append("")
-    lines.append("[webui.ai-steps]")
-    for step in AI_STEPS:
-        lines.append(f"{step} = {toml_string(normalize_steps(steps).get(step, ''))}")
-    return "\n".join(lines)

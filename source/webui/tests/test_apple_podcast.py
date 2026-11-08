@@ -313,7 +313,7 @@ class AppleEpisodeResolutionTests(unittest.TestCase):
             seen.append(timeout)
             raise grok_cli.GrokTimeout("grok timed out")
 
-        with mock.patch.object(webui, "CONFIG_PATH", "/nonexistent/airtype-config.toml"), mock.patch.object(
+        with mock.patch.object(webui, "CONFIG_PATH", "/nonexistent/airtype-config.json"), mock.patch.object(
             grok_cli, "read_grok_cli_settings", return_value=settings
         ), mock.patch.object(
             grok_cli, "run_grok_cli", side_effect=timeouts
@@ -332,7 +332,7 @@ class AppleEpisodeResolutionTests(unittest.TestCase):
                 raise reply
             return reply
 
-        with mock.patch.object(webui, "CONFIG_PATH", "/nonexistent/airtype-config.toml"), mock.patch.object(
+        with mock.patch.object(webui, "CONFIG_PATH", "/nonexistent/airtype-config.json"), mock.patch.object(
             grok_cli, "read_grok_cli_settings", return_value=settings
         ), mock.patch.object(
             grok_cli, "run_grok_cli", side_effect=flaky
@@ -352,7 +352,7 @@ class AppleEpisodeResolutionTests(unittest.TestCase):
             seen.append(timeout)
             raise RuntimeError("not signed in")
 
-        with mock.patch.object(webui, "CONFIG_PATH", "/nonexistent/airtype-config.toml"), mock.patch.object(
+        with mock.patch.object(webui, "CONFIG_PATH", "/nonexistent/airtype-config.json"), mock.patch.object(
             grok_cli, "read_grok_cli_settings", return_value=settings
         ), mock.patch.object(
             grok_cli, "run_grok_cli", side_effect=fails

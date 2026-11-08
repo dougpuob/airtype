@@ -1,7 +1,7 @@
 import Foundation
 
 /// localapp: optional "停錄後 LLM 整理" — after recording stops, send the final ASR text to the user's
-/// local OpenAI-compatible LLM (oMLX, from ~/.airtype/config.toml [[webui.llm-server]] default server)
+/// local OpenAI-compatible LLM (oMLX, from ~/.airtype/config.json webui.llm-server default server)
 /// for typo / punctuation / proper-noun cleanup. Thinking is forced OFF for speed.
 /// Any failure (network, timeout, empty / suspicious output) returns nil so the caller pastes the original ASR text.
 enum TextPolisher {
@@ -39,6 +39,7 @@ enum TextPolisher {
             return
         }
 
+        let thinking = llm.thinking
         let body: [String: Any] = [
             "model": model,
             "stream": false,
@@ -47,9 +48,9 @@ enum TextPolisher {
                 ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": input],
             ],
-            // Thinking OFF (fastest): Qwen chat template flag + Ollama-style flag. No thinking_budget.
-            "chat_template_kwargs": ["enable_thinking": false],
-            "think": false,
+            // Prefer config `thinking`; polish defaults to off when unset/false for speed.
+            "chat_template_kwargs": ["enable_thinking": thinking],
+            "think": thinking,
         ]
         var request = URLRequest(url: url, timeoutInterval: timeoutSeconds)
         request.httpMethod = "POST"

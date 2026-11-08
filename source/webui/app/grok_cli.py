@@ -31,7 +31,7 @@ GROK_CLI_STEPS = ("polish", "title", "tags", "correct")
 
 
 def read_grok_cli_settings(config_path: str | Path) -> Dict[str, Any]:
-    """Read [webui.grok-cli]. The WebUI settings writer leaves this section alone."""
+    """Read webui.grok-cli. The WebUI settings writer leaves this section alone."""
     webui = read_config(config_path).get("webui", {})
     section = webui.get("grok-cli") if isinstance(webui, dict) else None
     return normalize_grok_cli_settings(section if isinstance(section, dict) else {})

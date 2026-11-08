@@ -16,9 +16,7 @@ final class NemotronStreamingEngine: ASREngine, @unchecked Sendable {
         if let override = ProcessInfo.processInfo.environment["AIRTYPE_NEMOTRON_MODEL_DIR"], !override.isEmpty {
             return URL(fileURLWithPath: override)
         }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".airtype-experiment/models")
-            .appendingPathComponent(defaultModelName)
+        return AirTypeHome.asrModels.appendingPathComponent(defaultModelName)
     }
 
     private let queue = DispatchQueue(label: "airtype.nemotron.engine", qos: .userInitiated)

@@ -27,7 +27,7 @@ A macOS desktop speech-to-text app. Double-press Right Ctrl or Right Option to s
 │  │ multipart upload │  │ async jobs        │  │ settings + records       │   │
 │  └──────────────────┘  └───────────────────┘  └──────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │ ffmpeg / yt-dlp / records / ~/.airtype/config.toml coordination      │    │
+│  │ ffmpeg / yt-dlp / records / ~/.airtype/config.json coordination      │    │
 │  └──────────────────────────────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────────────────────────┘
                                       │
@@ -63,7 +63,7 @@ A macOS desktop speech-to-text app. Double-press Right Ctrl or Right Option to s
 
 ```
 AirType.git/
-├── config.example.toml      # Template for ~/.airtype/config.toml
+├── config.example.json      # Template for ~/.airtype/config.json
 ├── source/
 │   ├── localapp/
 │   │   └── macos/               # Native menu bar app (Local ONNX / Remote ASR); see its README
@@ -99,7 +99,7 @@ Then run the setup script:
 ./scripts/setup.sh
 ```
 
-The setup script creates `~/.airtype/config.toml` if it does not exist. AirType will not start without that file.
+The setup script creates `~/.airtype/config.json` if it does not exist. AirType will not start without that file.
 
 YouTube URL transcription needs two things: a JavaScript runtime, and the EJS challenge-solver scripts. AirType looks for Deno first (the runtime yt-dlp enables by default), then Node.js 22+, including Homebrew paths that GUI apps often omit from `PATH`. It also passes `--remote-components ejs:github` and installs `yt-dlp-ejs` into the WebUI venv. If Deno is missing, install it and restart AirType:
 
@@ -109,10 +109,15 @@ brew install deno
 
 Cookies are a separate setting. Use them only when a media URL requires a logged-in browser session, for example age-restricted YouTube or premium Bilibili:
 
-```toml
-[webui.yt-dlp]
-cookies = ""
-cookies_from_browser = "chrome"
+```json
+{
+  "webui": {
+    "yt-dlp": {
+      "cookies": "",
+      "cookies_from_browser": "chrome"
+    }
+  }
+}
 ```
 
 Use `cookies` for a `cookies.txt` path, or `cookies_from_browser` for a browser name such as `chrome`, `safari`, `firefox`, or `edge`.
@@ -165,7 +170,7 @@ Bilibili URL transcription automatically asks yt-dlp for audio first and applies
 open source/localapp/macos/dist/AirTypeLocalInput.app
 ```
 
-This builds and starts the native SwiftUI menu bar app. The frontend starts the local WebUI automatically when `~/.airtype/config.toml` uses `mode = "local"`.
+This builds and starts the native SwiftUI menu bar app. The frontend starts the local WebUI automatically when `~/.airtype/config.json` uses `"mode": "local"`.
 
 ### Manual WebUI
 
@@ -179,14 +184,19 @@ Open `http://<this-mac-ip>:8003`, for example `http://192.168.68.83:8003`.
 Make sure your firewall allows incoming connections to the port.
 
 To require a username and password for the WebUI and API, enable cookie-session
-authentication in `~/.airtype/config.toml`:
+authentication in `~/.airtype/config.json`:
 
-```toml
-[webui.auth]
-enabled = true
-username = "airtype"
-password = "change-me"
-session_days = 14
+```json
+{
+  "webui": {
+    "auth": {
+      "enabled": true,
+      "username": "airtype",
+      "password": "change-me",
+      "session_days": 14
+    }
+  }
+}
 ```
 
 After signing in, the browser stores an HttpOnly session token rather than the
@@ -207,10 +217,12 @@ open source/localapp/macos/dist/AirTypeLocalInput.app
 
 Runtime user data is stored outside the app:
 
-- config: `~/.airtype/config.toml`
-- Whisper models: `~/.airtype/models`
+- config: `~/.airtype/config.json`
+- Whisper models: `~/.airtype/models/whisper`
+- Local ASR models + sherpa runtime: `~/.airtype/models/asr` (+ `models/asr/runtime`)
+- History: `~/.airtype/history.sqlite`
 
-macOS will ask for Microphone permission when recording. If the global hotkey or paste action does not work, grant Accessibility permission to `AirTypeLocalInput.app` in System Settings. The menu bar app keeps its own config at `~/.airtype-experiment/config.toml`.
+macOS will ask for Microphone permission when recording. If the global hotkey or paste action does not work, grant Accessibility permission to `AirTypeLocalInput.app` in System Settings.
 
 
 ## WebUI API Endpoints

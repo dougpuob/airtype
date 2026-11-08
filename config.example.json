@@ -1,0 +1,90 @@
+{
+  "localapp": {
+    "chinese-mode": { "mode": "zh-tw" },
+    "backend-endpoint": {
+      "mode": "local",
+      "local_endpoint": "http://127.0.0.1:8003",
+      "remote_endpoint": ""
+    },
+    "microphone": {
+      "selected_device_name": "",
+      "mode": "on_demand",
+      "always_on_timeout_minutes": 10,
+      "pre_roll_seconds": 2
+    },
+    "floating-dialog": {
+      "position_x_ratio": 0.5,
+      "position_y_ratio": 0.62,
+      "move_lock": true
+    },
+    "recording": {
+      "hotkey_press_count": "single",
+      "play_cues": true
+    },
+    "obsidian": {
+      "vault_path": "",
+      "default_folder": ""
+    },
+    "local-whisper": {
+      "enabled": false,
+      "server_bin": "/opt/homebrew/bin/whisper-server",
+      "host": "127.0.0.1",
+      "port": 8080,
+      "max_threads": 4,
+      "max_gpu": 1,
+      "server_args": "",
+      "model_dir": "~/.airtype/models/whisper",
+      "model_filename": "ggml-large-v3-turbo-q5_0.bin",
+      "language": "zh-tw",
+      "beam": 5,
+      "temperature": 0,
+      "vocabulary_prompt": "",
+      "no_timestamps": true,
+      "no_language_symbol": true
+    },
+    "remote-asr": [
+      {
+        "name": "default",
+        "endpoint": "",
+        "protocol": "webui-ime",
+        "model": "",
+        "api_key": ""
+      }
+    ],
+    "default-remote-asr-name": "default"
+  },
+  "webui": {
+    "storage": { "data_dir": "~/.airtype/data" },
+    "auth": {
+      "enabled": false,
+      "username": "airtype",
+      "password": "",
+      "session_days": 14
+    },
+    "whisper-server": [
+      {
+        "name": "default",
+        "remote_endpoint": "",
+        "temperature": 0,
+        "beam": 5,
+        "language": "zh-tw"
+      }
+    ],
+    "llm-server": [
+      {
+        "name": "oMLX",
+        "provider": "openai",
+        "endpoint": "http://127.0.0.1:8088/",
+        "api_key": "",
+        "models": [],
+        "selected-model": "",
+        "contextLength": 8192,
+        "temperature": 0.4,
+        "thinking": false,
+        "system": "No explanations or detailed listings are needed; simply organize the verbatim transcript, including correcting typos, polishing sentences, and stringing the transcript together into an article."
+      }
+    ],
+    "default-llm-server-name": "oMLX",
+    "default-whisper-server-name": "default"
+  }
+}

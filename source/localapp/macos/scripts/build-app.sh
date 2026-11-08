@@ -5,7 +5,8 @@ set -euo pipefail
 
 APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$APP_ROOT/../../.." && pwd)"
-SHERPA_DIR="${SHERPA_ONNX_DIR:-$HOME/.airtype-experiment/runtime/sherpa-onnx-v2.0.1-osx-arm64-shared}"
+AIRTYPE_HOME="${AIRTYPE_HOME:-$HOME/.airtype}"
+SHERPA_DIR="${SHERPA_ONNX_DIR:-$AIRTYPE_HOME/models/asr/runtime/sherpa-onnx-v2.0.1-osx-arm64-shared}"
 APP_NAME="AirType"
 BUNDLE_ID="com.airtype.nemotron-experiment"
 DIST_DIR="$APP_ROOT/dist"
@@ -88,6 +89,16 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>0.0.1-experiment</string>
   <key>CFBundleVersion</key><string>0.0.1</string>
   <key>LSUIElement</key><true/>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>com.airtype.localapp</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>airtype</string>
+      </array>
+    </dict>
+  </array>
   <key>NSMicrophoneUsageDescription</key><string>AirType streams microphone audio to a local speech recognizer.</string>
   <key>NSAccessibilityUsageDescription</key><string>AirType listens for the global hotkey and types recognized text into the focused app.</string>
   <key>NSInputMonitoringUsageDescription</key><string>AirType listens for Escape while recording to cancel dictation.</string>
