@@ -253,14 +253,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
     private func buildWindow() {
         let window = EditableWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 960, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 1020, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "AirType Settings"
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 860, height: 500)
+        window.minSize = NSSize(width: 920, height: 500)
         window.delegate = self
 
         buildCategories()
@@ -345,7 +345,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
             sidebar.topAnchor.constraint(equalTo: content.topAnchor),
             sidebar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             sidebar.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            sidebar.widthAnchor.constraint(equalToConstant: 200),
+            sidebar.widthAnchor.constraint(equalToConstant: 260),
             sidebarScroll.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 10),
             sidebarScroll.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor),
             sidebarScroll.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
@@ -404,14 +404,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
         let endpointLeaves: [SidebarLeaf] = [
             leaf("ASR Endpoints", Self.remoteTabID, extraSections: ["localapp"], builder: buildRemoteTab),
+            leaf("ASR Endpoints (Whisper)", Self.whisperTabID, builder: buildWhisperTab),
             leaf(
                 "LLM Endpoints",
                 Self.llmTabID,
                 extraSections: ["webui"],
                 configPath: "[webui.llm-server]",
                 builder: buildLLMTab
-            ),
-            leaf("ASR Endpoints (Whisper)", Self.whisperTabID, builder: buildWhisperTab)
+            )
         ].compactMap { $0 }
 
         var voiceLeaves: [SidebarLeaf] = [
