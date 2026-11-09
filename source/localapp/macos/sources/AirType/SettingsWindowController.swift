@@ -411,7 +411,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
                 configPath: "[webui.llm-server]",
                 builder: buildLLMTab
             ),
-            leaf("Whisper Endpoints", Self.whisperTabID, builder: buildWhisperTab)
+            leaf("ASR Endpoints (Whisper)", Self.whisperTabID, builder: buildWhisperTab)
         ].compactMap { $0 }
 
         var voiceLeaves: [SidebarLeaf] = [
