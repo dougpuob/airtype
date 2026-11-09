@@ -81,6 +81,7 @@ struct ObsidianImportCompletionTestMain {
         check(dialog.title == "Imported to Obsidian", "dialog title \(dialog.title)")
         check(dialog.message.contains("Notes written: 2"), "dialog written")
         check(dialog.message.contains("WebUI confirmed: 2"), "dialog confirmed")
+        check(!dialog.message.contains("callback_origin"), "dialog hides diagnostic")
         check(!dialog.message.contains("test-token-value"), "dialog token")
         check(!dialog.message.contains("s3cret-password"), "dialog password")
         check(!report.diagnosticText.contains("test-token-value"), "diagnostic token")

@@ -227,8 +227,6 @@ struct ObsidianImportDialog {
                 lines.append("• \(rejected.id): \(reasonText(rejected.reason))")
             }
         }
-        lines.append("")
-        lines.append(report.diagnosticText)
         let message = ObsidianCompletion.redactSecrets(lines.joined(separator: "\n"))
         return ObsidianImportDialog(title: title(report), message: message, offerRetry: report.canRetryAcknowledgement)
     }
