@@ -1,10 +1,12 @@
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
-import { Box, Button, Chip, IconButton, LinearProgress, Typography, useMediaQuery, useTheme } from "@mui/material";
+import { Box, Button, Chip, Collapse, IconButton, LinearProgress, Typography, useMediaQuery, useTheme } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useCancelClipRequestMutation, useDeleteClipRequestMutation, type ClipRequest } from "../../api/clipRequests";
+import { useCancelClipRequestMutation, useDeleteClipRequestMutation, useObsidianExportWatch, type ClipRequest } from "../../api/clipRequests";
 import { useSettingsQuery } from "../../api/settings";
 import { useObsidianExportMutation } from "../../api/obsidianExports";
+import { obsidianSaveStatusText, type ObsidianSaveStatus } from "../../api/obsidianExportWatch";
 import { openObsidianDraft } from "../../utils/obsidian";
 import { clipHasNote, loadFullClipRequest, useSaveClipRequestMutation } from "../../api/clipRequests";
 import { useClipRequestSelection } from "./ClipRequestContext";
@@ -77,15 +79,49 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
   const deleteClip = useDeleteClipRequestMutation();
   const saveClip = useSaveClipRequestMutation();
   const exportObsidian = useObsidianExportMutation();
+  const exportWatch = useObsidianExportWatch();
   const readyCount = requests.filter((item) => item.status === "completed" && clipHasNote(item)).length;
   const saving = saveClip.isPending || exportObsidian.isPending;
+  const [notice, setNotice] = useState<ObsidianSaveStatus | null>(null);
+  const noticePhase = useRef<"idle" | "opening" | "waiting" | "saved" | "error">("idle");
+
+  function showNotice(next: ObsidianSaveStatus, phase: typeof noticePhase.current) {
+    noticePhase.current = phase;
+    setNotice(next);
+  }
+
+  useEffect(() => {
+    const status = obsidianSaveStatusText(
+      exportWatch,
+      requests.map((item) => item.id),
+      Date.now()
+    );
+    if (!status) return;
+    if (status.tone === "success") showNotice(status, "saved");
+    else if (status.tone === "error") showNotice(status, "error");
+    else if (noticePhase.current !== "error") showNotice(status, "waiting");
+  }, [exportWatch, requests]);
+
+  useEffect(() => {
+    if (!exportWatch) return;
+    const delay = Math.max(0, exportWatch.untilMs - Date.now()) + 50;
+    const timer = window.setTimeout(() => {
+      if (noticePhase.current === "opening" || noticePhase.current === "waiting") {
+        showNotice({ tone: "error", text: "AirType has not confirmed this save yet" }, "error");
+      }
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [exportWatch]);
 
   async function saveAllRequests() {
+    showNotice({ tone: "info", text: "Opening AirType…" }, "opening");
     try {
-      const result = await exportObsidian.mutateAsync(undefined);
-      window.alert(`Opening AirType to save ${result.note_count} note${result.note_count === 1 ? "" : "s"} to Obsidian.`);
+      await exportObsidian.mutateAsync(undefined);
     } catch (error) {
-      window.alert(`Save all failed: ${error instanceof Error ? error.message : String(error)}`);
+      showNotice(
+        { tone: "error", text: `Save failed: ${error instanceof Error ? error.message : String(error)}` },
+        "error"
+      );
     }
   }
   const settingsQuery = useSettingsQuery();
@@ -102,10 +138,14 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
   async function saveRequest(request: ClipRequest) {
     if (request.status !== "completed" || !clipHasNote(request)) return;
     if (!isMobile) {
+      showNotice({ tone: "info", text: "Opening AirType…" }, "opening");
       try {
         await exportObsidian.mutateAsync([request.id]);
       } catch (error) {
-        window.alert(`Save failed: ${error instanceof Error ? error.message : String(error)}`);
+        showNotice(
+          { tone: "error", text: `Save failed: ${error instanceof Error ? error.message : String(error)}` },
+          "error"
+        );
       }
       return;
     }
@@ -139,6 +179,29 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
       >
         Not saved to Obsidian
       </Typography>
+      <Collapse in={Boolean(notice)}>
+        <Box
+          role="status"
+          aria-live="polite"
+          sx={{
+            mx: 1,
+            mb: 1,
+            px: 1,
+            py: 0.75,
+            borderRadius: 1,
+            fontSize: 12,
+            fontWeight: 600,
+            lineHeight: 1.4,
+            ...(notice?.tone === "success"
+              ? { bgcolor: "#E8F6EE", color: "#1F7A4D" }
+              : notice?.tone === "error"
+                ? { bgcolor: "#FDECEC", color: "#B42318" }
+                : { bgcolor: "#EEF1FF", color: "#4052BA" })
+          }}
+        >
+          {notice?.text}
+        </Box>
+      </Collapse>
       {!isMobile && readyCount > 0 ? (
         <Button
           size="small"

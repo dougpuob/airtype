@@ -31,67 +31,128 @@ struct RemoteASRTarget {
     var model: String
     var apiKey: String
     var auth: WebUIAuthConfig
+    /// Whisper profile beam. Nil keeps the WebUI IME default.
+    var beam: Int? = nil
+}
+
+/// One named profile from ASR Endpoints or ASR Endpoints (Whisper).
+struct RemoteProfileChoice: Equatable {
+    enum Kind: String { case asr, whisper }
+    var kind: Kind
+    var name: String
+    var title: String
+    var id: String { "\(kind.rawValue):\(name)" }
 }
 
 /// Remote endpoint choices + auth, populated by the coordinator from the config
 /// ([localapp.backend-endpoint] remote_endpoint / local_endpoint, [webui.auth]) and UserDefaults.
 /// Read and written on the main thread only.
 enum RemoteWhisperSettings {
-    static let endpointDefaultsKey = "asrRemoteEndpoint"
-    /// Env override: AIRTYPE_REMOTE_ENDPOINT=https://host (always listed first and selected).
+    /// Env override: AIRTYPE_REMOTE_ENDPOINT=https://host replaces the selected profile's endpoint.
     static var envEndpoint: String? {
         let raw = ProcessInfo.processInfo.environment["AIRTYPE_REMOTE_ENDPOINT"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return raw.isEmpty ? nil : normalize(raw)
     }
 
-    static var endpoints: [String] = []
-    static var defaultEndpoint = ""
+    static var choices: [RemoteProfileChoice] = []
+    static var selectedChoiceID = ""
     static var auth = WebUIAuthConfig()
-    /// [localapp.remote-asr] (Settings ▸ Remote ASR). Its endpoint is listed first and owns protocol/model/api_key;
-    /// the [localapp.backend-endpoint] endpoints always use the WebUI protocol.
-    static var remoteASR = RemoteASRConfig()
+    private static var asrProfiles: [RemoteASRConfig] = []
+    private static var whisperProfiles: [WhisperServerConfig] = []
 
-    static func configure(backend: BackendConfig, auth: WebUIAuthConfig, remoteASR: RemoteASRConfig = RemoteASRConfig()) {
-        self.remoteASR = remoteASR
-        var list: [String] = []
-        for candidate in [envEndpoint, normalize(remoteASR.endpoint), normalize(backend.remoteEndpoint), normalize(backend.localEndpoint)] {
-            guard let value = candidate, !value.isEmpty, !list.contains(value) else { continue }
-            list.append(value)
+    /// Profile lists from config. The active choice is `default-remote-profile`, not a remembered URL.
+    static func configure(config: AirTypeConfig) {
+        asrProfiles = config.remoteASRProfiles.isEmpty ? [config.remoteASR] : config.remoteASRProfiles
+        whisperProfiles = config.webui.whisperServers.isEmpty ? [config.webui.whisper] : config.webui.whisperServers
+        let asrNames = Set(asrProfiles.map(\.name))
+        var built = asrProfiles.map { RemoteProfileChoice(kind: .asr, name: $0.name, title: $0.name) }
+        for profile in whisperProfiles {
+            let title = asrNames.contains(profile.name) ? "\(profile.name) (Whisper)" : profile.name
+            built.append(RemoteProfileChoice(kind: .whisper, name: profile.name, title: title))
         }
-        endpoints = list
-        let configPreferred = backend.mode.lowercased() == "local" ? backend.remoteEndpoint : backend.selectedEndpoint
-        defaultEndpoint = envEndpoint ?? normalize(remoteASR.endpoint) ?? normalize(configPreferred) ?? list.first ?? ""
-        if defaultEndpoint.isEmpty { defaultEndpoint = list.first ?? "" }
-        self.auth = auth
+        choices = built
+        auth = config.webui.auth
+        let resolved = resolvedID(in: config)
+        selectedChoiceID = choices.contains(where: { $0.id == resolved }) ? resolved : (choices.first?.id ?? resolved)
     }
 
-    /// Env override > menu choice (UserDefaults, if still configured) > config remote_endpoint.
-    static var selectedEndpoint: String {
-        if let env = envEndpoint { return env }
-        if let stored = UserDefaults.standard.string(forKey: endpointDefaultsKey), endpoints.contains(stored) {
-            return stored
+    static var selectedChoice: RemoteProfileChoice? {
+        choices.first { $0.id == selectedChoiceID } ?? choices.first
+    }
+
+    static var selectedTarget: RemoteASRTarget {
+        guard let choice = selectedChoice else {
+            return RemoteASRTarget(endpoint: "", protocolKind: .webuiIME, model: "", apiKey: "", auth: auth)
         }
-        return defaultEndpoint
+        var target = target(for: choice)
+        if let env = envEndpoint { target.endpoint = env }
+        return target
     }
 
-    static func select(_ endpoint: String) {
-        UserDefaults.standard.set(endpoint, forKey: endpointDefaultsKey)
-    }
+    static var selectedEndpoint: String { selectedTarget.endpoint }
 
-    /// Protocol / model / key for an endpoint: the [localapp.remote-asr] endpoint uses its own settings,
-    /// any other endpoint is an AirType WebUI.
-    static func target(for endpoint: String) -> RemoteASRTarget {
-        if let configured = normalize(remoteASR.endpoint), configured == endpoint {
+    static func target(for choice: RemoteProfileChoice) -> RemoteASRTarget {
+        switch choice.kind {
+        case .asr:
+            let profile = asrProfiles.first { $0.name == choice.name } ?? RemoteASRConfig(name: choice.name)
             return RemoteASRTarget(
-                endpoint: endpoint,
-                protocolKind: RemoteASRProtocol(rawValue: remoteASR.protocolName) ?? .webuiIME,
-                model: remoteASR.model,
-                apiKey: remoteASR.apiKey,
+                endpoint: normalize(profile.endpoint) ?? "",
+                protocolKind: RemoteASRProtocol(rawValue: profile.protocolName) ?? .webuiIME,
+                model: profile.model,
+                apiKey: profile.apiKey,
                 auth: auth
             )
+        case .whisper:
+            let profile = whisperProfiles.first { $0.name == choice.name } ?? WhisperServerConfig(name: choice.name)
+            return RemoteASRTarget(
+                endpoint: normalize(profile.remoteEndpoint) ?? "",
+                protocolKind: .webuiIME,
+                model: "",
+                apiKey: "",
+                auth: auth,
+                beam: profile.beam
+            )
         }
-        return RemoteASRTarget(endpoint: endpoint, protocolKind: .webuiIME, model: "", apiKey: "", auth: auth)
+    }
+
+    static func resolvedID(in config: AirTypeConfig) -> String {
+        if let parsed = parse(config.defaultRemoteProfile),
+           (parsed.kind == .asr && asrProfiles.contains { $0.name == parsed.name })
+            || (parsed.kind == .whisper && whisperProfiles.contains { $0.name == parsed.name }) {
+            return parsed.id
+        }
+        let asrName = config.selectedRemoteASRName.isEmpty ? config.remoteASR.name : config.selectedRemoteASRName
+        if asrProfiles.contains(where: { $0.name == asrName && normalize($0.endpoint) != nil }) {
+            return "asr:\(asrName)"
+        }
+        let whisperName = config.webui.selectedWhisperServerName.isEmpty ? config.webui.whisper.name : config.webui.selectedWhisperServerName
+        if whisperProfiles.contains(where: { $0.name == whisperName && normalize($0.remoteEndpoint) != nil }) {
+            return "whisper:\(whisperName)"
+        }
+        return "asr:\(asrName)"
+    }
+
+    static func parse(_ raw: String) -> RemoteProfileChoice? {
+        let parts = raw.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let kind = RemoteProfileChoice.Kind(rawValue: parts[0]), !parts[1].isEmpty else { return nil }
+        return RemoteProfileChoice(kind: kind, name: parts[1], title: parts[1])
+    }
+
+    /// Point the active ASR or Whisper profile at `id` (`asr:name` or `whisper:name`).
+    static func activate(_ id: String, in config: inout AirTypeConfig) {
+        config.defaultRemoteProfile = id
+        guard let choice = parse(id) else { return }
+        switch choice.kind {
+        case .asr:
+            guard let profile = config.remoteASRProfiles.first(where: { $0.name == choice.name }) else { return }
+            config.selectedRemoteASRName = profile.name
+            config.remoteASR = profile
+        case .whisper:
+            guard let profile = config.webui.whisperServers.first(where: { $0.name == choice.name }) else { return }
+            config.webui.selectedWhisperServerName = profile.name
+            config.webui.whisper = profile
+        }
     }
 
     /// OpenAI `language` (ISO-639-1); nil lets the server auto-detect.
@@ -141,8 +202,14 @@ final class RemoteWhisperEngine: ASREngine {
     private static let minimumPCMBytes = sampleRate * MemoryLayout<Int16>.size
 
     init(endpoint: String = RemoteWhisperSettings.selectedEndpoint) {
-        self.endpoint = endpoint
-        self.target = RemoteWhisperSettings.target(for: endpoint)
+        let selected = RemoteWhisperSettings.selectedTarget
+        if endpoint.isEmpty || endpoint == selected.endpoint {
+            self.endpoint = selected.endpoint
+            self.target = selected
+        } else {
+            self.endpoint = endpoint
+            self.target = RemoteASRTarget(endpoint: endpoint, protocolKind: .webuiIME, model: "", apiKey: "", auth: RemoteWhisperSettings.auth)
+        }
     }
 
     func load(completion: @escaping (ASREngineState) -> Void) {

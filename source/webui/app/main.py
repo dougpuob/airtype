@@ -2290,9 +2290,12 @@ async def download_obsidian_export(export_id: str, token: str = ""):
 
 @app.post("/api/obsidian-exports/{export_id}/complete")
 async def complete_obsidian_export(export_id: str, body: ObsidianExportCompleteBody, token: str = ""):
-    """Local App reports which notes were written; mark them saved in AirType."""
+    """Local App reports which notes were written; mark matching revisions saved.
+
+    The token is the capability credential and is never written to the service log.
+    """
     try:
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             obsidian_exports.complete,
             export_id,
             token,
@@ -2300,7 +2303,17 @@ async def complete_obsidian_export(export_id: str, body: ObsidianExportCompleteB
             failed_ids=body.failed_ids,
         )
     except KeyError as error:
+        safe_id = "".join(ch for ch in export_id if ch.isalnum() or ch in "-_")[:80] or "unknown"
+        append_service_log("webui", f"obsidian export complete rejected export_id={safe_id} reason=not_found")
         raise HTTPException(status_code=404, detail="Obsidian export not found") from error
+    rejected = result.get("rejected") or []
+    append_service_log(
+        "webui",
+        "obsidian export complete "
+        f"export_id={result.get('export_id')} ok={result.get('ok')} "
+        f"saved={result.get('saved')} failed={result.get('failed')} rejected={len(rejected)}",
+    )
+    return result
 
 
 @app.post("/api/clip-requests/{request_id}/save")

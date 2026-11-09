@@ -129,11 +129,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     /// Remote endpoint list / auth come from [localapp.backend-endpoint] + [webui.auth] of the app config
     /// (~/.airtype/config.json); AIRTYPE_REMOTE_ENDPOINT overrides.
     private func configureRemoteSettings() {
-        RemoteWhisperSettings.configure(
-            backend: configStore.config.backend,
-            auth: configStore.config.webui.auth,
-            remoteASR: configStore.config.remoteASR
-        )
+        RemoteWhisperSettings.configure(config: configStore.config)
     }
 
     private var recognitionLanguage: String {
@@ -802,22 +798,23 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         engineMenu.addItem(localItem)
 
         let remoteMenu = NSMenu()
-        let selectedRemote = RemoteWhisperSettings.selectedEndpoint
-        if RemoteWhisperSettings.endpoints.isEmpty {
+        let selectedRemote = RemoteWhisperSettings.selectedChoiceID
+        if RemoteWhisperSettings.choices.isEmpty {
             let empty = NSMenuItem(title: "No Server Configured", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             remoteMenu.addItem(empty)
         }
-        for endpoint in RemoteWhisperSettings.endpoints {
-            let item = NSMenuItem(title: endpoint, action: #selector(selectRemoteEndpoint(_:)), keyEquivalent: "")
+        for choice in RemoteWhisperSettings.choices {
+            let item = NSMenuItem(title: choice.title, action: #selector(selectRemoteEndpoint(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = endpoint
-            item.state = isRemote && endpoint == selectedRemote ? .on : .off
-            item.isEnabled = RemoteWhisperSettings.envEndpoint == nil || endpoint == RemoteWhisperSettings.envEndpoint
-            let target = RemoteWhisperSettings.target(for: endpoint)
-            item.toolTip = target.protocolKind == .openAITranscriptions
-                ? "\(target.protocolKind.title) · \(target.model)"
-                : target.protocolKind.title
+            item.representedObject = choice.id
+            item.state = isRemote && choice.id == selectedRemote ? .on : .off
+            let target = RemoteWhisperSettings.target(for: choice)
+            item.toolTip = target.endpoint.isEmpty
+                ? "No endpoint"
+                : (target.protocolKind == .openAITranscriptions
+                    ? "\(target.endpoint) · \(target.protocolKind.title) · \(target.model)"
+                    : "\(target.endpoint) · \(target.protocolKind.title)")
             remoteMenu.addItem(item)
         }
         remoteMenu.addItem(.separator())
@@ -826,7 +823,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         remoteMenu.addItem(configureItem)
         let testItem = NSMenuItem(title: "Test Connection", action: #selector(testRemoteConnection), keyEquivalent: "")
         testItem.target = self
-        testItem.isEnabled = !RemoteWhisperSettings.endpoints.isEmpty
+        testItem.isEnabled = !RemoteWhisperSettings.choices.isEmpty
         remoteMenu.addItem(testItem)
         let remoteItem = NSMenuItem(title: "Remote", action: nil, keyEquivalent: "")
         remoteItem.state = isRemote ? .on : .off
@@ -837,15 +834,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         engineMenuItem.submenu = engineMenu
         menu.addItem(engineMenuItem)
 
-        let languageMenu = NSMenu()
-        addLanguageItem(to: languageMenu, title: "Traditional Chinese", mode: "zh-tw")
-        addLanguageItem(to: languageMenu, title: "Simplified Chinese", mode: "zh-cn")
-        addLanguageItem(to: languageMenu, title: "English", mode: "en")
-        addLanguageItem(to: languageMenu, title: "Auto Detect – Traditional", mode: "auto-tw")
-        addLanguageItem(to: languageMenu, title: "Auto Detect – Simplified", mode: "auto-cn")
-        let languageItem = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
-        languageItem.submenu = languageMenu
-        menu.addItem(languageItem)
+        // Language lives in Settings ▸ Behavior. Recording reads chineseMode from config.json.
 
         // Microphone ▸ devices, separator, mode (rebuilt on open via menuNeedsUpdate).
         let microphoneMenu = NSMenu()
@@ -865,14 +854,6 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             menu.addItem(liveItem)
             menu.addItem(.separator())
         }
-        let saveAllItem = NSMenuItem(
-            title: "Save All to Obsidian",
-            action: #selector(saveAllToObsidian),
-            keyEquivalent: ""
-        )
-        saveAllItem.target = self
-        menu.addItem(saveAllItem)
-        menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         // AppKit auto-adds a gear for "Settings…"; clear it so labels stay left-aligned.
@@ -905,14 +886,6 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         menu.delegate = self
         statusMenu = menu
         statusItem?.menu = menu
-    }
-
-    private func addLanguageItem(to menu: NSMenu, title: String, mode: String) {
-        let item = NSMenuItem(title: title, action: #selector(selectLanguage(_:)), keyEquivalent: "")
-        item.target = self
-        item.representedObject = mode
-        item.state = configStore.config.chineseMode.mode == mode ? .on : .off
-        menu.addItem(item)
     }
 
     @discardableResult
@@ -1005,12 +978,13 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @objc private func selectRemoteEndpoint(_ sender: NSMenuItem) {
-        guard let endpoint = sender.representedObject as? String else { return }
+        guard let profileID = sender.representedObject as? String else { return }
         guard recordingState == .idle else {
             NSSound.beep()
             return
         }
-        RemoteWhisperSettings.select(endpoint)
+        configStore.selectRemoteProfile(profileID)
+        configureRemoteSettings()
         ASREngineKind.persistBackend(remote: true)
         switchEngine(to: .remoteWhisper, force: true)
     }
@@ -1021,7 +995,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             loadEngine() // refreshes the status line at the top of the menu
             return
         }
-        RemoteWhisperEngine.checkHealth(target: RemoteWhisperSettings.target(for: endpoint)) { ok, detail in
+        RemoteWhisperEngine.checkHealth(target: RemoteWhisperSettings.selectedTarget) { ok, detail in
             Logger.shared.log("Remote ASR test: endpoint=\(endpoint), ok=\(ok), detail=\(detail)")
             DispatchQueue.main.async {
                 NSApp.activate(ignoringOtherApps: true)
@@ -1047,12 +1021,6 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
 
     @objc private func toggleLiveTyping() {
         liveTypingEnabled.toggle()
-        rebuildMenu()
-    }
-
-    @objc private func selectLanguage(_ sender: NSMenuItem) {
-        guard let mode = sender.representedObject as? String else { return }
-        configStore.updateChineseMode(mode)
         rebuildMenu()
     }
 
@@ -1093,12 +1061,12 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     /// True when the running Remote engine no longer matches the selected endpoint / protocol / model / key.
     private var remoteEngineIsStale: Bool {
         guard let remote = engine as? RemoteWhisperEngine else { return false }
-        let selected = RemoteWhisperSettings.selectedEndpoint
-        let target = RemoteWhisperSettings.target(for: selected)
-        return remote.endpoint != selected
+        let target = RemoteWhisperSettings.selectedTarget
+        return remote.endpoint != target.endpoint
             || remote.target.protocolKind != target.protocolKind
             || remote.target.model != target.model
             || remote.target.apiKey != target.apiKey
+            || remote.target.beam != target.beam
     }
 
     @objc private func openSettings() {
@@ -1155,18 +1123,14 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         }
 
         if useRemote {
-            if RemoteWhisperSettings.selectedEndpoint.isEmpty,
-               let endpoint = RemoteWhisperSettings.normalize(newConfig.remoteASR.endpoint) {
-                RemoteWhisperSettings.select(endpoint)
-            }
             ASREngineKind.persistBackend(remote: true)
-            let selected = RemoteWhisperSettings.selectedEndpoint
-            let target = RemoteWhisperSettings.target(for: selected)
+            let target = RemoteWhisperSettings.selectedTarget
             let needsSwitch = !previousKind.isRemote
-                || previousRemote?.endpoint != selected
+                || previousRemote?.endpoint != target.endpoint
                 || previousRemote?.target.protocolKind != target.protocolKind
                 || previousRemote?.target.model != target.model
                 || previousRemote?.target.apiKey != target.apiKey
+                || previousRemote?.target.beam != target.beam
             if needsSwitch {
                 switchEngine(to: .remoteWhisper, force: true)
             } else {
@@ -1262,91 +1226,6 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     }
 
 
-    /// Pull unfinished Obsidian notes from the WebUI backend and write them into the local vault path.
-    @objc private func saveAllToObsidian() {
-        let endpoint = configStore.config.backend.selectedEndpoint
-        let auth = configStore.config.webui.auth
-        let obsidian = configStore.config.obsidian
-        if obsidian.vaultPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            NSApp.activate(ignoringOtherApps: true)
-            let alert = NSAlert()
-            alert.messageText = "Obsidian Vault Path Missing"
-            alert.informativeText = "Set Settings ▸ Obsidian ▸ Vault Path first (your vault folder on this Mac)."
-            alert.addButton(withTitle: "Open Settings")
-            alert.addButton(withTitle: "Cancel")
-            if alert.runModal() == .alertFirstButtonReturn {
-                openSettings()
-            }
-            return
-        }
-
-        Logger.shared.log("Save all to Obsidian: endpoint=\(endpoint), vault=\(obsidian.vaultPath)")
-        Task {
-            let client = BackendClient()
-            var saved = 0
-            var failed = 0
-            var skipped = 0
-            var firstError: String?
-            var historyItems: [(String, String, String, String, String?)] = []
-            do {
-                let summaries = try await client.listClipRequests(endpoint: endpoint, auth: auth)
-                for summary in summaries {
-                    let alreadySaved = (summary.obsidian_save ?? "") == "complete"
-                    let ready = summary.status == "completed" && (summary.has_note ?? false) && !alreadySaved
-                    guard ready else {
-                        skipped += 1
-                        continue
-                    }
-                    do {
-                        let detail = try await client.fetchClipRequest(id: summary.id, endpoint: endpoint, auth: auth)
-                        let note = (detail.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard detail.status == "completed", !note.isEmpty else {
-                            skipped += 1
-                            continue
-                        }
-                        let title = (detail.note_title?.isEmpty == false ? detail.note_title! : (detail.title ?? "Untitled"))
-                        let path = try ObsidianVault.writeNote(title: title, note: note, config: obsidian)
-                        try await client.markClipRequestSaved(id: summary.id, endpoint: endpoint, auth: auth)
-                        saved += 1
-                        historyItems.append((summary.id, title, path.path, "saved", nil))
-                        Logger.shared.log("Saved to Obsidian: id=\(summary.id) path=\(path.path)")
-                    } catch {
-                        failed += 1
-                        if firstError == nil { firstError = error.localizedDescription }
-                        historyItems.append((summary.id, summary.title ?? summary.id, "", "failed", error.localizedDescription))
-                        Logger.shared.log("Save to Obsidian failed: id=\(summary.id) error=\(error.localizedDescription)")
-                    }
-                }
-            } catch {
-                failed += 1
-                firstError = error.localizedDescription
-                Logger.shared.log("Save all to Obsidian list failed: \(error.localizedDescription)")
-            }
-
-            HistoryStore.shared.recordObsidianImportAsync(
-                sourceURL: endpoint,
-                sourceKind: "clip_requests_api",
-                savedCount: saved,
-                failedCount: failed,
-                skippedCount: skipped,
-                items: historyItems
-            )
-
-            await MainActor.run {
-                NSApp.activate(ignoringOtherApps: true)
-                let alert = NSAlert()
-                alert.messageText = failed == 0 ? "Saved to Obsidian" : "Save to Obsidian Finished with Errors"
-                var info = "Saved \(saved), failed \(failed), skipped \(skipped)."
-                if let firstError, !firstError.isEmpty {
-                    info += "\n\nFirst error: \(firstError)"
-                }
-                info += "\n\nVault: \(obsidian.vaultPath)"
-                alert.informativeText = info
-                alert.runModal()
-            }
-        }
-    }
-
     /// `airtype://obsidian-import?url=…` — download an Obsidian import manifest and write notes.
     func handleOpenURL(_ url: URL) {
         guard url.scheme?.lowercased() == "airtype" else { return }
@@ -1381,92 +1260,127 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
 
         let auth = configStore.config.webui.auth
         let backendEndpoint = configStore.config.backend.selectedEndpoint
+        let engine = makeObsidianImportEngine(obsidian: obsidian)
+        let secrets = ObsidianCompletion.secrets(downloadURL: manifestURL, callbackURL: nil, password: auth.password)
         Task {
-            var saved = 0
-            var failed = 0
-            var savedIDs: [String] = []
-            var failedIDs: [String] = []
-            var historyItems: [(String, String, String, String, String?)] = []
-            var firstError: String?
-            var batchComplete: ObsidianImportManifest.Callback?
             do {
                 var downloadRequest = URLRequest(url: manifestURL)
+                downloadRequest.timeoutInterval = 30
                 Self.applyBackendAuthIfMatching(auth, endpoint: backendEndpoint, to: &downloadRequest)
                 let (data, response) = try await URLSession.shared.data(for: downloadRequest)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 guard (200..<300).contains(status) else {
-                    throw NSError(domain: "AirType.ObsidianImport", code: status, userInfo: [NSLocalizedDescriptionKey: "HTTP \(status)"])
+                    throw NSError(
+                        domain: "AirType.ObsidianImport",
+                        code: status,
+                        userInfo: [NSLocalizedDescriptionKey: "The WebUI returned HTTP \(status) for the export download."]
+                    )
                 }
                 let manifest = try JSONDecoder().decode(ObsidianImportManifest.self, from: data)
                 guard manifest.kind == "airtype.obsidian_import" else {
-                    throw NSError(domain: "AirType.ObsidianImport", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unexpected kind \(manifest.kind)"])
+                    throw NSError(
+                        domain: "AirType.ObsidianImport",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Unexpected manifest kind."]
+                    )
                 }
-                batchComplete = manifest.complete
-                var writeConfig = obsidian
-                if let folder = manifest.vaultFolder, !folder.isEmpty {
-                    writeConfig.defaultFolder = folder
+                var report = await engine.importManifest(
+                    manifest: manifest,
+                    downloadURL: manifestURL,
+                    finalDownloadURL: response.url,
+                    configuredEndpoint: backendEndpoint,
+                    authEnabled: auth.enabled,
+                    username: auth.username,
+                    password: auth.password
+                )
+                var retry = await MainActor.run { self.presentObsidianImport(report) }
+                while retry && report.canRetryAcknowledgement {
+                    report = await engine.retryAcknowledgement(
+                        exportID: report.exportID,
+                        configuredEndpoint: backendEndpoint,
+                        authEnabled: auth.enabled,
+                        username: auth.username,
+                        password: auth.password
+                    )
+                    retry = await MainActor.run { self.presentObsidianImport(report) }
                 }
-                let useBatchComplete = batchComplete != nil
-                for note in manifest.notes {
-                    do {
-                        var noteConfig = writeConfig
-                        if let folder = note.folder, !folder.isEmpty {
-                            noteConfig.defaultFolder = folder
-                        }
-                        let path = try ObsidianVault.writeNote(title: note.title, note: note.markdown, config: noteConfig)
-                        if !useBatchComplete, let mark = note.markSaved, let markURL = URL(string: mark.url) {
-                            var request = URLRequest(url: markURL)
-                            request.httpMethod = mark.method ?? "POST"
-                            Self.applyBackendAuthIfMatching(auth, endpoint: backendEndpoint, to: &request)
-                            _ = try? await URLSession.shared.data(for: request)
-                        }
-                        saved += 1
-                        savedIDs.append(note.id)
-                        historyItems.append((note.id, note.title, path.path, "saved", nil))
-                    } catch {
-                        failed += 1
-                        failedIDs.append(note.id)
-                        if firstError == nil { firstError = error.localizedDescription }
-                        historyItems.append((note.id, note.title, "", "failed", error.localizedDescription))
-                    }
-                }
-                if let complete = batchComplete, let completeURL = URL(string: complete.url) {
-                    var request = URLRequest(url: completeURL)
-                    request.httpMethod = complete.method ?? "POST"
-                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    Self.applyBackendAuthIfMatching(auth, endpoint: backendEndpoint, to: &request)
-                    let payload: [String: [String]] = [
-                        "saved_ids": savedIDs,
-                        "failed_ids": failedIDs
-                    ]
-                    request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-                    _ = try? await URLSession.shared.data(for: request)
-                }
+                self.recordObsidianManifestHistory(report)
+                Logger.shared.log("Obsidian import \(report.diagnosticText)")
             } catch {
-                failed += 1
-                firstError = error.localizedDescription
-                Logger.shared.log("Obsidian manifest import failed: \(error.localizedDescription)")
-            }
-
-            HistoryStore.shared.recordObsidianImportAsync(
-                sourceURL: manifestURL.absoluteString,
-                sourceKind: "manifest_url",
-                savedCount: saved,
-                failedCount: failed,
-                skippedCount: 0,
-                items: historyItems
-            )
-
-            await MainActor.run {
-                NSApp.activate(ignoringOtherApps: true)
-                let alert = NSAlert()
-                alert.messageText = failed == 0 ? "Imported to Obsidian" : "Obsidian Import Finished with Errors"
-                var info = "Saved \(saved), failed \(failed)."
-                if let firstError, !firstError.isEmpty { info += "\n\nFirst error: \(firstError)" }
-                alert.informativeText = info
-                alert.runModal()
+                let message = ObsidianCompletion.redactSecrets(error.localizedDescription, extraSecrets: secrets)
+                Logger.shared.log("Obsidian manifest import failed: \(message)")
+                HistoryStore.shared.recordObsidianImportAsync(
+                    sourceURL: ObsidianCompletion.redactedURL(manifestURL),
+                    sourceKind: "manifest_url",
+                    savedCount: 0,
+                    failedCount: 1,
+                    skippedCount: 0,
+                    items: [("download", "manifest", "", "failed", message)]
+                )
+                await MainActor.run {
+                    self.presentObsidianDownloadFailure(message)
+                }
             }
         }
+    }
+
+    private func makeObsidianImportEngine(obsidian: ObsidianConfig) -> ObsidianImportEngine {
+        ObsidianImportEngine(
+            receipts: ObsidianImportReceiptStore(
+                directory: AirTypeHome.root.appendingPathComponent("obsidian-import-receipts", isDirectory: true)
+            ),
+            send: { request in
+                try await URLSessionObsidianCompletionSender.shared.send(request)
+            },
+            writeNote: { title, markdown, folder in
+                var config = obsidian
+                if let folder, !folder.isEmpty {
+                    config.defaultFolder = folder
+                }
+                return try ObsidianVault.writeNote(title: title, note: markdown, config: config, reuseIdentical: true)
+            },
+            readFile: { path in
+                FileManager.default.contents(atPath: path)
+            }
+        )
+    }
+
+    /// Returns true when the user asks to retry the WebUI acknowledgment.
+    private func presentObsidianImport(_ report: ObsidianImportReport) -> Bool {
+        let dialog = ObsidianImportDialog.make(report)
+        let alert = NSAlert()
+        alert.messageText = dialog.title
+        alert.informativeText = dialog.message
+        if dialog.offerRetry {
+            alert.addButton(withTitle: "Retry acknowledgment")
+            alert.addButton(withTitle: "Close")
+        } else {
+            alert.addButton(withTitle: "OK")
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        return dialog.offerRetry && response == .alertFirstButtonReturn
+    }
+
+    private func presentObsidianDownloadFailure(_ message: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Obsidian export could not be downloaded"
+        alert.informativeText = "\(message)\n\nNothing was written to the vault."
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func recordObsidianManifestHistory(_ report: ObsidianImportReport) {
+        let unconfirmed = report.writtenIDs.filter { !report.confirmedIDs.contains($0) }.count
+        HistoryStore.shared.recordObsidianImportAsync(
+            sourceURL: report.historySourceURL,
+            sourceKind: "manifest_url",
+            savedCount: report.confirmedIDs.count,
+            failedCount: report.writeFailures.count + unconfirmed,
+            skippedCount: 0,
+            items: report.items.map { ($0.id, $0.title, $0.path, $0.status, $0.message) }
+        )
     }
 
     /// Attach Basic auth when the URL host matches the configured WebUI backend.

@@ -227,11 +227,59 @@ def mark_saved(request_id: str) -> Optional[dict[str, Any]]:
             return None
         if record.get("status") != "completed":
             return dict(record)
+        if record.get("obsidian_save") == "complete":
+            return dict(record)
         record["obsidian_save"] = "complete"
         record["updated_at"] = _now()
         _write(record)
         _remove_pending_id(request_id)
         return dict(record)
+
+
+def export_fingerprint(record: dict[str, Any]) -> str:
+    """Hash the exported note fields. ``updated_at`` is only second-resolution."""
+    raw_tags = record.get("tags") if isinstance(record.get("tags"), list) else []
+    payload = {
+        "note": str(record.get("note") or ""),
+        "note_title": str(record.get("note_title") or ""),
+        "tags": [str(item) for item in raw_tags],
+        "title": str(record.get("title") or ""),
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def mark_exported_note(
+    request_id: str,
+    *,
+    updated_at: Optional[str],
+    content_sha256: Optional[str],
+) -> str:
+    """Mark one exported note saved when it still matches the export snapshot.
+
+    Returns ``saved``, ``missing``, ``not_completed``, or ``changed``.
+    Already-saved notes return ``saved`` without rewriting the record, so a
+    duplicate completion does not bump ``updated_at`` or touch other notes.
+    A ``None`` snapshot (exports created before revisions were stored) keeps
+    the older behavior: any completed note in that export may be marked.
+    """
+    with _lock:
+        record = _read(request_id)
+        if not record:
+            return "missing"
+        if record.get("obsidian_save") == "complete":
+            return "saved"
+        if record.get("status") != "completed":
+            return "not_completed"
+        if updated_at is not None and str(record.get("updated_at") or "") != updated_at:
+            return "changed"
+        if content_sha256 is not None and export_fingerprint(record) != content_sha256:
+            return "changed"
+        record["obsidian_save"] = "complete"
+        record["updated_at"] = _now()
+        _write(record)
+        _remove_pending_id(request_id)
+        return "saved"
 
 
 def request_cancel(request_id: str) -> Optional[dict[str, Any]]:

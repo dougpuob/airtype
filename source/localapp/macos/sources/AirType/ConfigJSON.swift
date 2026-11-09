@@ -16,6 +16,7 @@ enum ConfigJSON {
             var localWhisper: LocalWhisper?
             var remoteAsr: [RemoteASR]?
             var defaultRemoteAsrName: String?
+            var defaultRemoteProfile: String?
 
             enum CodingKeys: String, CodingKey {
                 case chineseMode = "chinese-mode"
@@ -27,6 +28,7 @@ enum ConfigJSON {
                 case localWhisper = "local-whisper"
                 case remoteAsr = "remote-asr"
                 case defaultRemoteAsrName = "default-remote-asr-name"
+                case defaultRemoteProfile = "default-remote-profile"
             }
         }
 
@@ -316,7 +318,8 @@ enum ConfigJSON {
             remoteAsr: (config.remoteASRProfiles.isEmpty ? [config.remoteASR] : config.remoteASRProfiles).map {
                 .init(name: $0.name, endpoint: $0.endpoint, protocolName: $0.protocolName, model: $0.model, apiKey: $0.apiKey)
             },
-            defaultRemoteAsrName: config.selectedRemoteASRName.isEmpty ? config.remoteASR.name : config.selectedRemoteASRName
+            defaultRemoteAsrName: config.selectedRemoteASRName.isEmpty ? config.remoteASR.name : config.selectedRemoteASRName,
+            defaultRemoteProfile: config.defaultRemoteProfile
         )
 
         let whisperProfiles = config.webui.whisperServers.isEmpty ? [config.webui.whisper] : config.webui.whisperServers
@@ -426,6 +429,9 @@ enum ConfigJSON {
                 let selected = la.defaultRemoteAsrName ?? config.remoteASRProfiles[0].name
                 config.selectedRemoteASRName = selected
                 config.remoteASR = config.remoteASRProfiles.first(where: { $0.name == selected }) ?? config.remoteASRProfiles[0]
+            }
+            if let profile = la.defaultRemoteProfile {
+                config.defaultRemoteProfile = profile
             }
         }
         if let wu = doc.webui {

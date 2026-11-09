@@ -52,8 +52,10 @@ final class HistorySettingsPaneController: NSObject, NSTableViewDataSource, NSTa
         filterRow.spacing = 8
         filterRow.alignment = .centerY
 
-        statusLabel.font = NSFont.systemFont(ofSize: 11)
-        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.font = NSFont.systemFont(ofSize: 12)
+        statusLabel.textColor = .labelColor
+        statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.maximumNumberOfLines = 1
 
         table.style = .plain
         table.headerView = NSTableHeaderView()
@@ -148,13 +150,13 @@ final class HistorySettingsPaneController: NSObject, NSTableViewDataSource, NSTa
             let page = HistoryStore.shared.queryVoice(query)
             if reset { voiceRows = page } else { voiceRows.append(contentsOf: page) }
             offset = voiceRows.count
-            statusLabel.stringValue = "Showing \(voiceRows.count) voice record(s)"
         case .obsidian:
             let page = HistoryStore.shared.queryObsidianImports(query)
             if reset { obsidianRows = page } else { obsidianRows.append(contentsOf: page) }
             offset = obsidianRows.count
-            statusLabel.stringValue = "Showing \(obsidianRows.count) import batch(es)"
         }
+        let counts = kind == .voice ? HistoryStore.shared.voiceCounts() : HistoryStore.shared.obsidianCounts()
+        statusLabel.stringValue = "Today \(counts.today) · Yesterday \(counts.yesterday) · This week \(counts.thisWeek) · All \(counts.all)"
         table.reloadData()
         detail.string = ""
     }
