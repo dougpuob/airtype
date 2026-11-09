@@ -9,6 +9,8 @@ struct AirTypeConfig {
     var remoteASRProfiles: [RemoteASRConfig] = []
     /// `[localapp] default-remote-asr-name`.
     var selectedRemoteASRName = ""
+    /// `[localapp] default-remote-profile`. `asr:<name>` or `whisper:<name>`.
+    var defaultRemoteProfile = ""
     var microphone = MicrophoneConfig()
     var floatingDialog = FloatingDialogConfig()
     var recording = RecordingConfig()
@@ -333,6 +335,12 @@ final class ConfigStore: ObservableObject {
     static func apply(section: String, key: String, value: String, to config: inout AirTypeConfig) {
         guard let field = schema.first(where: { $0.name == section })?.fields.first(where: { $0.key == key }) else { return }
         field.apply(&config, value.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func selectRemoteProfile(_ id: String) {
+        RemoteWhisperSettings.activate(id, in: &config)
+        save()
+        Logger.shared.log("Remote profile selected: \(id)")
     }
 
     func updateChineseMode(_ mode: String) {

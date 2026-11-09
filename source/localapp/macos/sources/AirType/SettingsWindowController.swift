@@ -253,14 +253,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
     private func buildWindow() {
         let window = EditableWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1020, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 992, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "AirType Settings"
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 920, height: 500)
+        window.minSize = NSSize(width: 892, height: 500)
         window.delegate = self
 
         buildCategories()
@@ -345,7 +345,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
             sidebar.topAnchor.constraint(equalTo: content.topAnchor),
             sidebar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             sidebar.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            sidebar.widthAnchor.constraint(equalToConstant: 260),
+            sidebar.widthAnchor.constraint(equalToConstant: 232),
             sidebarScroll.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 10),
             sidebarScroll.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor),
             sidebarScroll.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
@@ -1982,7 +1982,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     private func loadRecordingPrefs(config: AirTypeConfig, remoteActive: Bool) {
         selectPopup(recordingBackendPopup, represented: remoteActive ? "remote" : "local")
         selectPopup(recordingLocalModelPopup, represented: ASREngineKind.storedLocalModel.rawValue)
-        refreshRecordingRemoteEndpoints(selected: RemoteWhisperSettings.selectedEndpoint)
+        RemoteWhisperSettings.configure(config: config)
+        refreshRecordingRemoteEndpoints(selected: RemoteWhisperSettings.selectedChoiceID)
         let language = config.chineseMode.mode
         if recordingLanguagePopup.itemArray.contains(where: { ($0.representedObject as? String) == language }) {
             selectPopup(recordingLanguagePopup, represented: language)
@@ -2001,21 +2002,21 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
     private func refreshRecordingRemoteEndpoints(selected: String) {
         recordingRemoteEndpointPopup.removeAllItems()
-        let endpoints = RemoteWhisperSettings.endpoints
-        if endpoints.isEmpty {
+        let choices = RemoteWhisperSettings.choices
+        if choices.isEmpty {
             let empty = NSMenuItem(title: "No Server Configured", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             recordingRemoteEndpointPopup.menu?.addItem(empty)
-            recordingRemoteEndpointNote.stringValue = "Add an endpoint under Endpoint Profiles ▸ ASR Endpoints."
+            recordingRemoteEndpointNote.stringValue = "Add a profile under Endpoint Profiles."
         } else {
-            for endpoint in endpoints {
-                recordingRemoteEndpointPopup.addItem(withTitle: endpoint)
-                recordingRemoteEndpointPopup.lastItem?.representedObject = endpoint
+            for choice in choices {
+                recordingRemoteEndpointPopup.addItem(withTitle: choice.title)
+                recordingRemoteEndpointPopup.lastItem?.representedObject = choice.id
             }
             if !selected.isEmpty {
                 selectPopup(recordingRemoteEndpointPopup, represented: selected)
-            } else if let first = endpoints.first {
-                selectPopup(recordingRemoteEndpointPopup, represented: first)
+            } else if let first = choices.first {
+                selectPopup(recordingRemoteEndpointPopup, represented: first.id)
             }
             recordingRemoteEndpointNote.stringValue = ""
         }
@@ -2056,12 +2057,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         let remote = recordingBackendIsRemote
         remoteEngineActive = remote
         ASREngineKind.persistBackend(remote: remote)
-        if remote {
-            if let endpoint = recordingRemoteEndpointPopup.selectedItem?.representedObject as? String,
-               !endpoint.isEmpty {
-                RemoteWhisperSettings.select(endpoint)
-            }
-        } else if let raw = recordingLocalModelPopup.selectedItem?.representedObject as? String,
+        if !remote, let raw = recordingLocalModelPopup.selectedItem?.representedObject as? String,
                   let kind = ASREngineKind(rawValue: raw) {
             ASREngineKind.persistLocalModel(kind)
         }
@@ -2291,18 +2287,23 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
     @discardableResult
     private func commit() -> Bool {
-        let config = collectConfig()
-        let effectiveEndpoint = config.remoteASR.endpoint.isEmpty ? (RemoteWhisperSettings.normalize(config.backend.remoteEndpoint) ?? "") : config.remoteASR.endpoint
-        if remoteEngineActive, effectiveEndpoint.isEmpty {
-            select(section: Self.remoteTabID)
-            showTestResult("Active ASR profile “\(config.remoteASR.name)” has no endpoint. Fix it.", ok: false)
+        var config = collectConfig()
+        if remoteEngineActive, let profileID = recordingRemoteEndpointPopup.selectedItem?.representedObject as? String {
+            RemoteWhisperSettings.activate(profileID, in: &config)
+        }
+        RemoteWhisperSettings.configure(config: config)
+        let active = RemoteWhisperSettings.selectedTarget
+        if remoteEngineActive, active.endpoint.isEmpty {
+            let choice = RemoteWhisperSettings.selectedChoice
+            let page = choice?.kind == .whisper ? Self.whisperTabID : Self.remoteTabID
+            select(section: page)
+            showTestResult("Profile “\(choice?.title ?? "Remote")” has no endpoint. Fix it.", ok: false)
             NSSound.beep()
             return false
         }
-        if remoteEngineActive, config.remoteASR.protocolName == RemoteASRProtocol.openAITranscriptions.rawValue,
-           config.remoteASR.model.isEmpty {
+        if remoteEngineActive, active.protocolKind == .openAITranscriptions, active.model.isEmpty {
             select(section: Self.remoteTabID)
-            showTestResult("Active ASR profile “\(config.remoteASR.name)” uses OpenAI Compatible and needs a model.", ok: false)
+            showTestResult("Profile “\(RemoteWhisperSettings.selectedChoice?.title ?? "Remote")” uses OpenAI Compatible and needs a model.", ok: false)
             NSSound.beep()
             return false
         }
@@ -2310,8 +2311,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         persistRecordingRuntimePrefs()
         onSave?(config, remoteEngineActive)
         reloadSessions(from: config, keepSelection: true)
-        // Endpoint list may change after ASR profile Apply; keep Behavior in sync.
-        refreshRecordingRemoteEndpoints(selected: RemoteWhisperSettings.selectedEndpoint)
+        RemoteWhisperSettings.configure(config: config)
+        refreshRecordingRemoteEndpoints(selected: RemoteWhisperSettings.selectedChoiceID)
         updateRecordingBackendUI()
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"

@@ -5,7 +5,7 @@ struct TranscriptionResponse: Decodable {
 }
 
 final class BackendClient {
-    func transcribeIME(wavData: Data, endpoint: String, language: String, auth: WebUIAuthConfig, inputID: Int? = nil) async throws -> String {
+    func transcribeIME(wavData: Data, endpoint: String, language: String, auth: WebUIAuthConfig, beam: Int? = nil, inputID: Int? = nil) async throws -> String {
         let url = URL(string: endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/api/transcribe/ime")!
         let startedAt = Date()
         let logPrefix = inputID.map { "Input #\($0): " } ?? ""
@@ -17,7 +17,7 @@ final class BackendClient {
         request.httpBody = multipartBody(
             boundary: boundary,
             fields: [
-                "beam_size": "1",
+                "beam_size": String(beam ?? 1),
                 "record_type": "ime",
                 "language": language
             ],
@@ -78,7 +78,7 @@ final class BackendClient {
     func transcribe(wavData: Data, target: RemoteASRTarget, webuiLanguage: String, openAILanguage: String?) async throws -> String {
         switch target.protocolKind {
         case .webuiIME:
-            return try await transcribeIME(wavData: wavData, endpoint: target.endpoint, language: webuiLanguage, auth: target.auth)
+            return try await transcribeIME(wavData: wavData, endpoint: target.endpoint, language: webuiLanguage, auth: target.auth, beam: target.beam)
         case .openAITranscriptions:
             return try await transcribeOpenAI(wavData: wavData, target: target, language: openAILanguage)
         }

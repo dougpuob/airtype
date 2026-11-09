@@ -129,11 +129,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     /// Remote endpoint list / auth come from [localapp.backend-endpoint] + [webui.auth] of the app config
     /// (~/.airtype/config.json); AIRTYPE_REMOTE_ENDPOINT overrides.
     private func configureRemoteSettings() {
-        RemoteWhisperSettings.configure(
-            backend: configStore.config.backend,
-            auth: configStore.config.webui.auth,
-            remoteASR: configStore.config.remoteASR
-        )
+        RemoteWhisperSettings.configure(config: configStore.config)
     }
 
     private var recognitionLanguage: String {
@@ -802,22 +798,23 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         engineMenu.addItem(localItem)
 
         let remoteMenu = NSMenu()
-        let selectedRemote = RemoteWhisperSettings.selectedEndpoint
-        if RemoteWhisperSettings.endpoints.isEmpty {
+        let selectedRemote = RemoteWhisperSettings.selectedChoiceID
+        if RemoteWhisperSettings.choices.isEmpty {
             let empty = NSMenuItem(title: "No Server Configured", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             remoteMenu.addItem(empty)
         }
-        for endpoint in RemoteWhisperSettings.endpoints {
-            let item = NSMenuItem(title: endpoint, action: #selector(selectRemoteEndpoint(_:)), keyEquivalent: "")
+        for choice in RemoteWhisperSettings.choices {
+            let item = NSMenuItem(title: choice.title, action: #selector(selectRemoteEndpoint(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = endpoint
-            item.state = isRemote && endpoint == selectedRemote ? .on : .off
-            item.isEnabled = RemoteWhisperSettings.envEndpoint == nil || endpoint == RemoteWhisperSettings.envEndpoint
-            let target = RemoteWhisperSettings.target(for: endpoint)
-            item.toolTip = target.protocolKind == .openAITranscriptions
-                ? "\(target.protocolKind.title) · \(target.model)"
-                : target.protocolKind.title
+            item.representedObject = choice.id
+            item.state = isRemote && choice.id == selectedRemote ? .on : .off
+            let target = RemoteWhisperSettings.target(for: choice)
+            item.toolTip = target.endpoint.isEmpty
+                ? "No endpoint"
+                : (target.protocolKind == .openAITranscriptions
+                    ? "\(target.endpoint) · \(target.protocolKind.title) · \(target.model)"
+                    : "\(target.endpoint) · \(target.protocolKind.title)")
             remoteMenu.addItem(item)
         }
         remoteMenu.addItem(.separator())
@@ -826,7 +823,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         remoteMenu.addItem(configureItem)
         let testItem = NSMenuItem(title: "Test Connection", action: #selector(testRemoteConnection), keyEquivalent: "")
         testItem.target = self
-        testItem.isEnabled = !RemoteWhisperSettings.endpoints.isEmpty
+        testItem.isEnabled = !RemoteWhisperSettings.choices.isEmpty
         remoteMenu.addItem(testItem)
         let remoteItem = NSMenuItem(title: "Remote", action: nil, keyEquivalent: "")
         remoteItem.state = isRemote ? .on : .off
@@ -981,12 +978,13 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @objc private func selectRemoteEndpoint(_ sender: NSMenuItem) {
-        guard let endpoint = sender.representedObject as? String else { return }
+        guard let profileID = sender.representedObject as? String else { return }
         guard recordingState == .idle else {
             NSSound.beep()
             return
         }
-        RemoteWhisperSettings.select(endpoint)
+        configStore.selectRemoteProfile(profileID)
+        configureRemoteSettings()
         ASREngineKind.persistBackend(remote: true)
         switchEngine(to: .remoteWhisper, force: true)
     }
@@ -997,7 +995,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             loadEngine() // refreshes the status line at the top of the menu
             return
         }
-        RemoteWhisperEngine.checkHealth(target: RemoteWhisperSettings.target(for: endpoint)) { ok, detail in
+        RemoteWhisperEngine.checkHealth(target: RemoteWhisperSettings.selectedTarget) { ok, detail in
             Logger.shared.log("Remote ASR test: endpoint=\(endpoint), ok=\(ok), detail=\(detail)")
             DispatchQueue.main.async {
                 NSApp.activate(ignoringOtherApps: true)
@@ -1063,12 +1061,12 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     /// True when the running Remote engine no longer matches the selected endpoint / protocol / model / key.
     private var remoteEngineIsStale: Bool {
         guard let remote = engine as? RemoteWhisperEngine else { return false }
-        let selected = RemoteWhisperSettings.selectedEndpoint
-        let target = RemoteWhisperSettings.target(for: selected)
-        return remote.endpoint != selected
+        let target = RemoteWhisperSettings.selectedTarget
+        return remote.endpoint != target.endpoint
             || remote.target.protocolKind != target.protocolKind
             || remote.target.model != target.model
             || remote.target.apiKey != target.apiKey
+            || remote.target.beam != target.beam
     }
 
     @objc private func openSettings() {
@@ -1125,18 +1123,14 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         }
 
         if useRemote {
-            if RemoteWhisperSettings.selectedEndpoint.isEmpty,
-               let endpoint = RemoteWhisperSettings.normalize(newConfig.remoteASR.endpoint) {
-                RemoteWhisperSettings.select(endpoint)
-            }
             ASREngineKind.persistBackend(remote: true)
-            let selected = RemoteWhisperSettings.selectedEndpoint
-            let target = RemoteWhisperSettings.target(for: selected)
+            let target = RemoteWhisperSettings.selectedTarget
             let needsSwitch = !previousKind.isRemote
-                || previousRemote?.endpoint != selected
+                || previousRemote?.endpoint != target.endpoint
                 || previousRemote?.target.protocolKind != target.protocolKind
                 || previousRemote?.target.model != target.model
                 || previousRemote?.target.apiKey != target.apiKey
+                || previousRemote?.target.beam != target.beam
             if needsSwitch {
                 switchEngine(to: .remoteWhisper, force: true)
             } else {
