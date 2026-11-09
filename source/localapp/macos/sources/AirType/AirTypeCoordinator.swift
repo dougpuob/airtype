@@ -857,14 +857,6 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             menu.addItem(liveItem)
             menu.addItem(.separator())
         }
-        let saveAllItem = NSMenuItem(
-            title: "Save All to Obsidian",
-            action: #selector(saveAllToObsidian),
-            keyEquivalent: ""
-        )
-        saveAllItem.target = self
-        menu.addItem(saveAllItem)
-        menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         // AppKit auto-adds a gear for "Settings…"; clear it so labels stay left-aligned.
@@ -1239,91 +1231,6 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
-
-    /// Pull unfinished Obsidian notes from the WebUI backend and write them into the local vault path.
-    @objc private func saveAllToObsidian() {
-        let endpoint = configStore.config.backend.selectedEndpoint
-        let auth = configStore.config.webui.auth
-        let obsidian = configStore.config.obsidian
-        if obsidian.vaultPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            NSApp.activate(ignoringOtherApps: true)
-            let alert = NSAlert()
-            alert.messageText = "Obsidian Vault Path Missing"
-            alert.informativeText = "Set Settings ▸ Obsidian ▸ Vault Path first (your vault folder on this Mac)."
-            alert.addButton(withTitle: "Open Settings")
-            alert.addButton(withTitle: "Cancel")
-            if alert.runModal() == .alertFirstButtonReturn {
-                openSettings()
-            }
-            return
-        }
-
-        Logger.shared.log("Save all to Obsidian: endpoint=\(endpoint), vault=\(obsidian.vaultPath)")
-        Task {
-            let client = BackendClient()
-            var saved = 0
-            var failed = 0
-            var skipped = 0
-            var firstError: String?
-            var historyItems: [(String, String, String, String, String?)] = []
-            do {
-                let summaries = try await client.listClipRequests(endpoint: endpoint, auth: auth)
-                for summary in summaries {
-                    let alreadySaved = (summary.obsidian_save ?? "") == "complete"
-                    let ready = summary.status == "completed" && (summary.has_note ?? false) && !alreadySaved
-                    guard ready else {
-                        skipped += 1
-                        continue
-                    }
-                    do {
-                        let detail = try await client.fetchClipRequest(id: summary.id, endpoint: endpoint, auth: auth)
-                        let note = (detail.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard detail.status == "completed", !note.isEmpty else {
-                            skipped += 1
-                            continue
-                        }
-                        let title = (detail.note_title?.isEmpty == false ? detail.note_title! : (detail.title ?? "Untitled"))
-                        let path = try ObsidianVault.writeNote(title: title, note: note, config: obsidian)
-                        try await client.markClipRequestSaved(id: summary.id, endpoint: endpoint, auth: auth)
-                        saved += 1
-                        historyItems.append((summary.id, title, path.path, "saved", nil))
-                        Logger.shared.log("Saved to Obsidian: id=\(summary.id) path=\(path.path)")
-                    } catch {
-                        failed += 1
-                        if firstError == nil { firstError = error.localizedDescription }
-                        historyItems.append((summary.id, summary.title ?? summary.id, "", "failed", error.localizedDescription))
-                        Logger.shared.log("Save to Obsidian failed: id=\(summary.id) error=\(error.localizedDescription)")
-                    }
-                }
-            } catch {
-                failed += 1
-                firstError = error.localizedDescription
-                Logger.shared.log("Save all to Obsidian list failed: \(error.localizedDescription)")
-            }
-
-            HistoryStore.shared.recordObsidianImportAsync(
-                sourceURL: endpoint,
-                sourceKind: "clip_requests_api",
-                savedCount: saved,
-                failedCount: failed,
-                skippedCount: skipped,
-                items: historyItems
-            )
-
-            await MainActor.run {
-                NSApp.activate(ignoringOtherApps: true)
-                let alert = NSAlert()
-                alert.messageText = failed == 0 ? "Saved to Obsidian" : "Save to Obsidian Finished with Errors"
-                var info = "Saved \(saved), failed \(failed), skipped \(skipped)."
-                if let firstError, !firstError.isEmpty {
-                    info += "\n\nFirst error: \(firstError)"
-                }
-                info += "\n\nVault: \(obsidian.vaultPath)"
-                alert.informativeText = info
-                alert.runModal()
-            }
-        }
-    }
 
     /// `airtype://obsidian-import?url=…` — download an Obsidian import manifest and write notes.
     func handleOpenURL(_ url: URL) {
