@@ -837,15 +837,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         engineMenuItem.submenu = engineMenu
         menu.addItem(engineMenuItem)
 
-        let languageMenu = NSMenu()
-        addLanguageItem(to: languageMenu, title: "Traditional Chinese", mode: "zh-tw")
-        addLanguageItem(to: languageMenu, title: "Simplified Chinese", mode: "zh-cn")
-        addLanguageItem(to: languageMenu, title: "English", mode: "en")
-        addLanguageItem(to: languageMenu, title: "Auto Detect – Traditional", mode: "auto-tw")
-        addLanguageItem(to: languageMenu, title: "Auto Detect – Simplified", mode: "auto-cn")
-        let languageItem = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
-        languageItem.submenu = languageMenu
-        menu.addItem(languageItem)
+        // Language lives in Settings ▸ Behavior. Recording reads chineseMode from config.json.
 
         // Microphone ▸ devices, separator, mode (rebuilt on open via menuNeedsUpdate).
         let microphoneMenu = NSMenu()
@@ -905,14 +897,6 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         menu.delegate = self
         statusMenu = menu
         statusItem?.menu = menu
-    }
-
-    private func addLanguageItem(to menu: NSMenu, title: String, mode: String) {
-        let item = NSMenuItem(title: title, action: #selector(selectLanguage(_:)), keyEquivalent: "")
-        item.target = self
-        item.representedObject = mode
-        item.state = configStore.config.chineseMode.mode == mode ? .on : .off
-        menu.addItem(item)
     }
 
     @discardableResult
@@ -1047,12 +1031,6 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
 
     @objc private func toggleLiveTyping() {
         liveTypingEnabled.toggle()
-        rebuildMenu()
-    }
-
-    @objc private func selectLanguage(_ sender: NSMenuItem) {
-        guard let mode = sender.representedObject as? String else { return }
-        configStore.updateChineseMode(mode)
         rebuildMenu()
     }
 
