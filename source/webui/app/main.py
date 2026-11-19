@@ -1997,8 +1997,8 @@ def _record_duplicate_cancelled(url: str, notes: str, origin: str, existing: dic
         record["id"],
         status="duplicate_cancelled",
         progress=100,
-        message="重複-已取消",
-        error=f"UUID {guid} 已存在，這次沒有下載。",
+        message="Duplicate cancelled",
+        error=f"UUID {guid} already exists. This request was not downloaded.",
         guid=guid,
         duplicate="cancelled",
         duplicate_of=existing,
@@ -2025,9 +2025,9 @@ def _submit_clip_url(
     """Queue one URL in the Obsidian Clipper (shared by the API and Watching).
 
     A URL is normalized to its note GUID first. When that GUID is already on
-    today's list, a REST or command call is recorded as 「重複-已取消」 and does
-    not download. ``confirm_duplicate`` is the explicit "download anyway" choice;
-    that request is marked 「重複-仍執行」 and then runs.
+    today's list, a REST or command call is recorded as duplicate cancelled and
+    does not download. ``confirm_duplicate`` is the explicit "download anyway"
+    choice; that request is marked duplicate continued and then runs.
     """
     url = str(url or "").strip()
     parsed = urllib.parse.urlparse(url)
@@ -2078,7 +2078,7 @@ def _annotate_duplicate_proceeded(record: Dict[str, Any], existing: Optional[dic
         duplicate="proceeded",
         duplicate_of=existing,
         guid=str(existing.get("guid") or record.get("guid") or ""),
-        message="重複-仍執行",
+        message="Duplicate continued",
     )
     return updated or record
 
@@ -2087,7 +2087,7 @@ def _submit_watch_clip_url(url: str) -> Dict[str, Any]:
     """Queue a URL discovered by Watching.
 
     Watching is not the confirmation UI, so a UID already listed today is
-    recorded as 「重複-已取消」 and is not downloaded.
+    recorded as duplicate cancelled and is not downloaded.
     """
     return _submit_clip_url(url, origin="watching")
 

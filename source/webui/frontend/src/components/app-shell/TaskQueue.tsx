@@ -14,7 +14,7 @@ const statusLabel: Record<string, string> = {
   running: "In progress",
   completed: "Done",
   failed: "Failed",
-  duplicate_cancelled: "重複-已取消"
+  duplicate_cancelled: "Duplicate cancelled"
 };
 
 const statusColor: Record<string, string> = {
@@ -251,12 +251,16 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
                 ) : null}
                 {task.duplicate === "proceeded" ? (
                   <Typography variant="caption" sx={{ display: "block", mt: 0.5, color: "#B54708" }}>
-                    重複-仍執行
+                    Duplicate continued
                   </Typography>
                 ) : null}
-                {task.status === "duplicate_cancelled" ? (
-                  <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
-                    UUID {task.guid || task.duplicate_of?.guid}
+                {task.status === "duplicate_cancelled" && clipExistingGuid(task) ? (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: "block", mt: 0.5, overflowWrap: "anywhere" }}
+                  >
+                    {clipExistingGuid(task)}
                   </Typography>
                 ) : null}
                 {task.status === "failed" && task.error ? (
@@ -310,5 +314,10 @@ export function formatClipTime(id: string) {
 }
 
 export function clipStatusLabel(status: string) {
-  return statusLabel[status] || status;
+  return statusLabel[status] || status.replace(/_/g, " ");
+}
+
+/** The UID already on today's list, for a duplicate-cancelled request. */
+export function clipExistingGuid(task: Pick<ClipRequest, "guid" | "duplicate_of">) {
+  return task.duplicate_of?.guid || task.guid || "";
 }

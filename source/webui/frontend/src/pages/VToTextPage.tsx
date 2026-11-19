@@ -36,7 +36,7 @@ import {
   useTranscriptionRecordQuery,
   useUploadTranscriptionJobMutation
 } from "../api/transcription";
-import { clipKindLabel, clipOrigin, clipOriginLabel, clipStatusLabel, formatClipTime } from "../components/app-shell/TaskQueue";
+import { clipExistingGuid, clipKindLabel, clipOrigin, clipOriginLabel, clipStatusLabel, formatClipTime } from "../components/app-shell/TaskQueue";
 import { useClipRequestSelection } from "../components/app-shell/ClipRequestContext";
 import { LlmApiKeyDialog } from "../components/llm/LlmApiKeyDialog";
 import { ObsidianNotePreview } from "../components/obsidian/ObsidianNotePreview";
@@ -1034,13 +1034,22 @@ export function VToTextPage() {
                 <Stack className="clipper-progress" spacing={0.75}>
                   <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
                     <Typography variant="body2" color="text.secondary" fontWeight={700} noWrap>
-                      {selectedClip ? selectedClip.message || clipStatusLabel(selectedClip.status) : "Select a request, or submit a new one"}
+                      {selectedClip
+                        ? selectedClip.status === "duplicate_cancelled"
+                          ? clipStatusLabel(selectedClip.status)
+                          : selectedClip.message || clipStatusLabel(selectedClip.status)
+                        : "Select a request, or submit a new one"}
                     </Typography>
                     <Typography variant="body2" color="text.secondary" fontWeight={700} sx={{ flexShrink: 0 }}>
                       {Math.round(selectedClip?.progress || 0)}%
                     </Typography>
                   </Stack>
                   <LinearProgress value={Math.min(100, selectedClip?.progress || 0)} variant="determinate" />
+                  {selectedClip?.status === "duplicate_cancelled" && clipExistingGuid(selectedClip) ? (
+                    <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: "anywhere" }}>
+                      {clipExistingGuid(selectedClip)}
+                    </Typography>
+                  ) : null}
                 </Stack>
                 <Box className="clipper-action-buttons">
                   <Button
@@ -1132,8 +1141,13 @@ export function VToTextPage() {
             <Stack spacing={0.25} sx={{ minWidth: 0 }}>
               <Typography variant="h3">Obsidian Preview</Typography>
               {selectedClip ? (
-                <Typography variant="body2" color="text.secondary" noWrap>
-                  {clipOriginLabel(clipOrigin(selectedClip))} · {clipKindLabel(selectedClip.kind)} · {formatClipTime(selectedClip.id)} · {clipStatusLabel(selectedClip.status)} · {selectedClip.source}
+                <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: "anywhere" }}>
+                  {clipOriginLabel(clipOrigin(selectedClip))} · {clipKindLabel(selectedClip.kind)} · {formatClipTime(selectedClip.id)} · {clipStatusLabel(selectedClip.status)}
+                  {selectedClip.status === "duplicate_cancelled" && clipExistingGuid(selectedClip)
+                    ? ` · ${clipExistingGuid(selectedClip)}`
+                    : ""}
+                  {" · "}
+                  {selectedClip.source}
                 </Typography>
               ) : null}
             </Stack>
@@ -1172,36 +1186,36 @@ export function VToTextPage() {
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       />
       <Dialog open={Boolean(duplicatePrompt)} onClose={() => setDuplicatePrompt(null)} fullWidth maxWidth="sm">
-        <DialogTitle>這個網址今天已經擷取過</DialogTitle>
+        <DialogTitle>This URL was already captured today</DialogTitle>
         <DialogContent>
           <Stack spacing={1}>
             <Typography color="text.secondary">
-              正規化之後的 UID 已在今日清單。確定要再下載一次嗎？
+              This UID is already on today's list. Download it again?
             </Typography>
             <Typography sx={{ overflowWrap: "anywhere" }}>
-              UID：{duplicatePrompt?.guid || duplicatePrompt?.duplicate_of?.guid}
+              UID: {duplicatePrompt ? clipExistingGuid(duplicatePrompt) : ""}
             </Typography>
             {duplicatePrompt?.duplicate_of?.source_id ? (
               <Typography sx={{ overflowWrap: "anywhere" }}>
-                正規化來源：{duplicatePrompt.duplicate_of.source_id}
+                Normalized source: {duplicatePrompt.duplicate_of.source_id}
               </Typography>
             ) : null}
             {duplicatePrompt?.duplicate_of?.url ? (
               <Typography sx={{ overflowWrap: "anywhere" }}>
-                先前網址：{duplicatePrompt.duplicate_of.url}
+                Previous URL: {duplicatePrompt.duplicate_of.url}
               </Typography>
             ) : null}
             {duplicatePrompt?.duplicate_of?.captured_at ? (
-              <Typography>先前擷取時間：{duplicatePrompt.duplicate_of.captured_at}</Typography>
+              <Typography>Captured: {duplicatePrompt.duplicate_of.captured_at}</Typography>
             ) : null}
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDuplicatePrompt(null)} disabled={createClipRequest.isPending}>
-            取消
+            Cancel
           </Button>
           <Button variant="contained" onClick={() => void confirmDuplicateDownload()} disabled={createClipRequest.isPending}>
-            確定
+            Download
           </Button>
         </DialogActions>
       </Dialog>

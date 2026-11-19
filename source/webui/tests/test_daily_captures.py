@@ -44,7 +44,7 @@ class DailyCaptureTests(unittest.TestCase):
             record = _submit_clip_url(PAGE_WITH_TRACKING)
         executor.submit.assert_not_called()
         self.assertEqual(record["status"], "duplicate_cancelled")
-        self.assertEqual(record["message"], "重複-已取消")
+        self.assertEqual(record["message"], "Duplicate cancelled")
         self.assertEqual(record["duplicate"], "cancelled")
         self.assertEqual(record["guid"], note_guid_for_source(PAGE))
         self.assertIn(record["guid"], record["error"])
@@ -58,7 +58,7 @@ class DailyCaptureTests(unittest.TestCase):
             record = _submit_clip_url(PAGE, confirm_duplicate=True)
         executor.submit.assert_called_once()
         self.assertEqual(record["duplicate"], "proceeded")
-        self.assertEqual(record["message"], "重複-仍執行")
+        self.assertEqual(record["message"], "Duplicate continued")
         self.assertEqual(record["guid"], note_guid_for_source(PAGE))
         self.assertNotEqual(record["status"], "duplicate_cancelled")
 
@@ -80,7 +80,7 @@ class WatchDuplicateTests(unittest.TestCase):
                 "id": "20261119-210000",
                 "status": "duplicate_cancelled",
                 "duplicate": "cancelled",
-                "message": "重複-已取消",
+                "message": "Duplicate cancelled",
             },
             failures,
         )
@@ -88,4 +88,4 @@ class WatchDuplicateTests(unittest.TestCase):
         self.assertEqual(failures, [])
         self.assertEqual(entry["status"], "duplicate")
         self.assertEqual(entry["clip_request_id"], "20261119-210000")
-        self.assertIn("重複-已取消", entry["error"])
+        self.assertIn("Duplicate cancelled", entry["error"])

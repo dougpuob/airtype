@@ -473,7 +473,7 @@ def _queue_into(entry: dict[str, Any], queue_fn: Callable[[str], dict[str, Any]]
         return 0
     if record.get("status") == "duplicate_cancelled" or record.get("duplicate") == "cancelled":
         entry["status"] = "duplicate"
-        entry["error"] = str(record.get("message") or record.get("error") or "重複-已取消")[:300]
+        entry["error"] = str(record.get("message") or record.get("error") or "Duplicate cancelled")[:300]
         entry["clip_request_id"] = record.get("id")
         return 0
     entry["clip_request_id"] = record.get("id")
