@@ -49,6 +49,13 @@ export type ClipRequest = {
   tags: string[];
   datetime: string;
   guid: string;
+  duplicate?: "" | "cancelled" | "proceeded" | string;
+  duplicate_of?: {
+    guid?: string;
+    source_id?: string;
+    url?: string;
+    captured_at?: string;
+  };
   share_url: string;
   note_title: string;
   note?: string;
@@ -124,10 +131,14 @@ export async function loadFullClipRequest(queryClient: QueryClient, request: Cli
 export function useCreateClipRequestMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { url: string; notes?: string }) =>
+    mutationFn: (input: { url: string; notes?: string; confirmDuplicate?: boolean }) =>
       apiRequest<ClipRequest>("/api/clip-requests", {
         method: "POST",
-        body: JSON.stringify({ url: input.url, notes: input.notes || "" })
+        body: JSON.stringify({
+          url: input.url,
+          notes: input.notes || "",
+          confirm_duplicate: Boolean(input.confirmDuplicate)
+        })
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["clip-requests"] });

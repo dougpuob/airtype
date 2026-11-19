@@ -13,14 +13,16 @@ const statusLabel: Record<string, string> = {
   queued: "Queued",
   running: "In progress",
   completed: "Done",
-  failed: "Failed"
+  failed: "Failed",
+  duplicate_cancelled: "重複-已取消"
 };
 
 const statusColor: Record<string, string> = {
   queued: "#647084",
   running: "#4052BA",
   completed: "#1F7A4D",
-  failed: "#B42318"
+  failed: "#B42318",
+  duplicate_cancelled: "#B54708"
 };
 
 const kindLabel: Record<string, string> = {
@@ -246,6 +248,16 @@ export function TaskQueue({ onOpenRequest }: { onOpenRequest?: () => void } = {}
                       sx={{ mt: 0.5, height: 4, borderRadius: 99 }}
                     />
                   </Box>
+                ) : null}
+                {task.duplicate === "proceeded" ? (
+                  <Typography variant="caption" sx={{ display: "block", mt: 0.5, color: "#B54708" }}>
+                    重複-仍執行
+                  </Typography>
+                ) : null}
+                {task.status === "duplicate_cancelled" ? (
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
+                    UUID {task.guid || task.duplicate_of?.guid}
+                  </Typography>
                 ) : null}
                 {task.status === "failed" && task.error ? (
                   <Typography variant="caption" color="error" sx={{ display: "block", mt: 0.5 }}>

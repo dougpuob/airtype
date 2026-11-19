@@ -466,16 +466,21 @@ def _log_entry(post: dict[str, Any], stamp: str, *, baseline: bool) -> dict[str,
 def _queue_into(entry: dict[str, Any], queue_fn: Callable[[str], dict[str, Any]], failures: list[str]) -> int:
     try:
         record = queue_fn(entry["url"])
-        entry["clip_request_id"] = record.get("id")
-        entry["queued_at"] = record.get("created_at") or datetime.now().astimezone().isoformat(timespec="seconds")
-        entry["status"] = "queued"
-        entry["baseline"] = False
-        return 1
     except Exception as error:
         entry["status"] = "queue_failed"
         entry["error"] = str(error)[:300]
         failures.append(str(error)[:120])
         return 0
+    if record.get("status") == "duplicate_cancelled" or record.get("duplicate") == "cancelled":
+        entry["status"] = "duplicate"
+        entry["error"] = str(record.get("message") or record.get("error") or "重複-已取消")[:300]
+        entry["clip_request_id"] = record.get("id")
+        return 0
+    entry["clip_request_id"] = record.get("id")
+    entry["queued_at"] = record.get("created_at") or datetime.now().astimezone().isoformat(timespec="seconds")
+    entry["status"] = "queued"
+    entry["baseline"] = False
+    return 1
 
 
 def _finish(target: dict[str, Any], result: dict[str, Any], now: datetime, queue: bool) -> dict[str, Any]:

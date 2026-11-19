@@ -5,6 +5,10 @@ import {
   Box,
   Button,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   LinearProgress,
   Snackbar,
@@ -20,7 +24,7 @@ import { chatWithLocalLlm } from "../api/localLlm";
 import { uploadNoteMedia } from "../api/immich";
 import type { NoteMediaImage } from "../api/immich";
 import { chainWarningsFromPayload, useImportPostMutation } from "../api/postWeaver";
-import { clipHasNote, loadFullClipRequest, useCreateClipRequestMutation, useSaveClipRequestMutation } from "../api/clipRequests";
+import { clipHasNote, loadFullClipRequest, useCreateClipRequestMutation, useSaveClipRequestMutation, type ClipRequest } from "../api/clipRequests";
 import { useObsidianExportMutation } from "../api/obsidianExports";
 import { useSettingsQuery } from "../api/settings";
 import { fetchClipId, fetchWebArticleJob, startWebArticleJob } from "../api/webArticle";
@@ -124,6 +128,8 @@ export function VToTextPage() {
   const [articleJob, setArticleJob] = useState<WebArticleJob | null>(null);
   const [articleImages, setArticleImages] = useState<WebArticleImage[]>(restoredState.articleImages);
   const [toast, setToast] = useState("");
+  const [clipError, setClipError] = useState("");
+  const [duplicatePrompt, setDuplicatePrompt] = useState<ClipRequest | null>(null);
   const [captureNotes, setCaptureNotes] = useState(readPersistedCaptureNotes);
   const captureSeqRef = useRef(0);
   const postStepRef = useRef(restoredState.postStep);
@@ -517,15 +523,42 @@ export function VToTextPage() {
       setToast("Paste a URL first");
       return;
     }
+    setClipError("");
     try {
       const created = await createClipRequest.mutateAsync({ url, notes: captureNotes });
+      if (created.status === "duplicate_cancelled") {
+        clipSelection.select(created.id);
+        setDuplicatePrompt(created);
+        return;
+      }
       clipSelection.select(created.id);
       setSourceUrl("");
       setCaptureNotes("");
       setActiveRoute(routeForUrl(url));
       setToast("Added to the list on the left");
     } catch (caught) {
-      setToast(caught instanceof Error ? caught.message : "Could not start this request");
+      setClipError(caught instanceof Error ? caught.message : "Could not start this request");
+    }
+  }
+
+  async function confirmDuplicateDownload() {
+    const prompt = duplicatePrompt;
+    if (!prompt?.source) return;
+    setClipError("");
+    try {
+      const created = await createClipRequest.mutateAsync({
+        url: prompt.source,
+        notes: captureNotes,
+        confirmDuplicate: true
+      });
+      setDuplicatePrompt(null);
+      clipSelection.select(created.id);
+      setSourceUrl("");
+      setCaptureNotes("");
+      setActiveRoute(routeForUrl(prompt.source));
+      setToast("Added to the list on the left");
+    } catch (caught) {
+      setClipError(caught instanceof Error ? caught.message : "Could not start this request");
     }
   }
 
@@ -922,6 +955,7 @@ export function VToTextPage() {
   }
 
   const showError =
+    clipError ||
     postError ||
     createUrlJob.isError ||
     uploadJob.isError ||
@@ -989,6 +1023,7 @@ export function VToTextPage() {
                 onChange={(event) => {
                   setSourceUrl(event.target.value);
                   setActiveRoute("auto");
+                  setClipError("");
                 }}
                 placeholder="Paste a post, article, video, or audio URL"
                 InputProps={{
@@ -1055,7 +1090,7 @@ export function VToTextPage() {
           <Divider />
           {showError ? (
             <Alert severity="error">
-              {postError || errorMessage(createUrlJob.error || uploadJob.error || (!selectedRecord ? jobQuery.error : null) || recordQuery.error)}
+              {clipError || postError || errorMessage(createUrlJob.error || uploadJob.error || (!selectedRecord ? jobQuery.error : null) || recordQuery.error)}
             </Alert>
           ) : null}
           {posts.length > 0 && captureKind === "post" && visibleRoute !== "voice" ? (
@@ -1136,6 +1171,40 @@ export function VToTextPage() {
         message={toast}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       />
+      <Dialog open={Boolean(duplicatePrompt)} onClose={() => setDuplicatePrompt(null)} fullWidth maxWidth="sm">
+        <DialogTitle>這個網址今天已經擷取過</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1}>
+            <Typography color="text.secondary">
+              正規化之後的 UID 已在今日清單。確定要再下載一次嗎？
+            </Typography>
+            <Typography sx={{ overflowWrap: "anywhere" }}>
+              UID：{duplicatePrompt?.guid || duplicatePrompt?.duplicate_of?.guid}
+            </Typography>
+            {duplicatePrompt?.duplicate_of?.source_id ? (
+              <Typography sx={{ overflowWrap: "anywhere" }}>
+                正規化來源：{duplicatePrompt.duplicate_of.source_id}
+              </Typography>
+            ) : null}
+            {duplicatePrompt?.duplicate_of?.url ? (
+              <Typography sx={{ overflowWrap: "anywhere" }}>
+                先前網址：{duplicatePrompt.duplicate_of.url}
+              </Typography>
+            ) : null}
+            {duplicatePrompt?.duplicate_of?.captured_at ? (
+              <Typography>先前擷取時間：{duplicatePrompt.duplicate_of.captured_at}</Typography>
+            ) : null}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDuplicatePrompt(null)} disabled={createClipRequest.isPending}>
+            取消
+          </Button>
+          <Button variant="contained" onClick={() => void confirmDuplicateDownload()} disabled={createClipRequest.isPending}>
+            確定
+          </Button>
+        </DialogActions>
+      </Dialog>
       <LlmApiKeyDialog
         open={Boolean(llmApiKey.pendingRequest)}
         endpoint={llmApiKey.pendingRequest?.endpoint}

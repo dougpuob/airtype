@@ -53,6 +53,7 @@ from .whisper import WhisperCppNotConfigured, transcriber
 from . import apple_podcast
 from . import clip_pipeline
 from . import clip_requests
+from . import daily_captures
 from . import obsidian_exports
 from . import ai_routes
 from . import cli_routes
@@ -404,6 +405,7 @@ def startup_managed_processes() -> None:
     llm = settings.get("llm", {})
     llm_servers = settings.get("llm_servers", [])
     clip_requests.configure(WEBUI_DATA_DIR)
+    daily_captures.configure(WEBUI_DATA_DIR)
     obsidian_exports.configure(WEBUI_DATA_DIR)
     threading.Thread(target=clip_requests.warm_cache, name="clip-requests-warm", daemon=True).start()
     append_service_log(
@@ -533,6 +535,7 @@ class WebArticleJobRequest(BaseModel):
 class ClipCreateRequest(BaseModel):
     url: str
     notes: str = ""
+    confirm_duplicate: bool = False
 
 
 class WatchCreateRequest(BaseModel):
@@ -1977,17 +1980,69 @@ async def get_clip_request(request_id: str):
 @app.post("/api/clip-requests")
 async def create_clip_request(request: ClipCreateRequest):
     try:
-        return _submit_clip_url(request.url, notes=request.notes)
+        return _submit_clip_url(
+            request.url,
+            notes=request.notes,
+            confirm_duplicate=request.confirm_duplicate,
+        )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-def _submit_clip_url(url: str, notes: str = "", origin: str = "manual") -> Dict[str, Any]:
-    """Queue one URL in the Obsidian Clipper (shared by the API and Watching)."""
+def _record_duplicate_cancelled(url: str, notes: str, origin: str, existing: dict) -> Dict[str, Any]:
+    """Write a request that did not download because this UID was already listed today."""
+    record = clip_requests.create(kind=_clip_kind_for_url(url), source=url, notes=notes, origin=origin)
+    guid = str(existing.get("guid") or "")
+    updated = clip_requests.update(
+        record["id"],
+        status="duplicate_cancelled",
+        progress=100,
+        message="重複-已取消",
+        error=f"UUID {guid} 已存在，這次沒有下載。",
+        guid=guid,
+        duplicate="cancelled",
+        duplicate_of=existing,
+        published=True,
+    )
+    return updated or record
+
+
+def _clip_kind_for_url(url: str) -> str:
+    pipeline = known_sources.route_for_url(url)
+    if pipeline == "v-to-text":
+        return "voice"
+    if pipeline == "capture-post":
+        return "post"
+    return "article"
+
+
+def _submit_clip_url(
+    url: str,
+    notes: str = "",
+    origin: str = "manual",
+    confirm_duplicate: bool = False,
+) -> Dict[str, Any]:
+    """Queue one URL in the Obsidian Clipper (shared by the API and Watching).
+
+    A URL is normalized to its note GUID first. When that GUID is already on
+    today's list, a REST or command call is recorded as 「重複-已取消」 and does
+    not download. ``confirm_duplicate`` is the explicit "download anyway" choice;
+    that request is marked 「重複-仍執行」 and then runs.
+    """
     url = str(url or "").strip()
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("URL must start with http:// or https://.")
+    existing = daily_captures.lookup(url)
+    if existing and not confirm_duplicate:
+        return _record_duplicate_cancelled(url, notes, origin, existing)
+    if not existing:
+        try:
+            daily_captures.claim(url)
+        except daily_captures.DuplicateCapture as error:
+            if not confirm_duplicate:
+                return _record_duplicate_cancelled(url, notes, origin, error.existing)
+            existing = error.existing
     pipeline = known_sources.route_for_url(url)
     if pipeline == "v-to-text":
         options = _settings_transcribe_options(None, None, None, None, None)
@@ -2000,20 +2055,40 @@ def _submit_clip_url(url: str, notes: str = "", origin: str = "manual") -> Dict[
         temp_path = os.path.join(_job_dir(job_id), f"source{os.path.splitext(parsed.path)[1] or '.media'}")
         _update_job_source(job_id, temp_path)
         clip_request_id = _attach_clip_request(job_id, "voice", url, notes=notes, origin=origin)
+        record = _annotate_duplicate_proceeded(clip_requests.get(clip_request_id) or {"id": clip_request_id}, existing)
         executor.submit(_run_url_transcription_job, job_id, url, temp_path, options)
-        record = clip_requests.get(clip_request_id)
         return record
     if pipeline == "capture-post":
         record = clip_requests.create(kind="post", source=url, notes=notes, origin=origin)
+        record = _annotate_duplicate_proceeded(record, existing)
         clip_executor.submit(_run_post_clip, record["id"], url)
         return record
     record = clip_requests.create(kind="article", source=url, notes=notes, origin=origin)
+    record = _annotate_duplicate_proceeded(record, existing)
     clip_executor.submit(_run_article_clip, record["id"], url)
     return record
 
 
+def _annotate_duplicate_proceeded(record: Dict[str, Any], existing: Optional[dict]) -> Dict[str, Any]:
+    """Mark a request that the caller chose to download even though the UID exists."""
+    if not existing:
+        return record
+    updated = clip_requests.update(
+        record["id"],
+        duplicate="proceeded",
+        duplicate_of=existing,
+        guid=str(existing.get("guid") or record.get("guid") or ""),
+        message="重複-仍執行",
+    )
+    return updated or record
+
+
 def _submit_watch_clip_url(url: str) -> Dict[str, Any]:
-    """Queue a URL discovered by Watching."""
+    """Queue a URL discovered by Watching.
+
+    Watching is not the confirmation UI, so a UID already listed today is
+    recorded as 「重複-已取消」 and is not downloaded.
+    """
     return _submit_clip_url(url, origin="watching")
 
 
