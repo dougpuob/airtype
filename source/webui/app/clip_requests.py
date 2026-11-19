@@ -27,6 +27,8 @@ from pathlib import Path
 import threading
 from typing import Any, Optional
 
+from . import download_history
+
 
 _lock = threading.RLock()
 _directory: Optional[Path] = None
@@ -72,6 +74,7 @@ def configure(data_dir: str) -> None:
                 record["error"] = record.get("error") or "Interrupted when the server restarted"
                 record["updated_at"] = _now()
                 _write(record)
+                _note_history(record)
 
 
 def create(*, kind: str, source: str, notes: str = "", origin: str = "manual", now: Optional[datetime] = None) -> dict[str, Any]:
@@ -216,6 +219,7 @@ def update(request_id: str, **changes: Any) -> Optional[dict[str, Any]]:
             _remove_pending_id(request_id)
         else:
             _add_pending_id(request_id)
+        _note_history(record)
         return dict(record)
 
 
@@ -253,6 +257,7 @@ def request_cancel(request_id: str) -> Optional[dict[str, Any]]:
             record["published"] = True
             record["updated_at"] = _now()
             _write(record)
+            _note_history(record)
         return dict(record)
 
 
@@ -336,6 +341,14 @@ def _path(request_id: str) -> Path:
 
 def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _note_history(record: dict[str, Any]) -> None:
+    """History is a side log. A database problem must not fail the clip itself."""
+    try:
+        download_history.note(record)
+    except Exception:
+        pass
 
 
 def _clean_notes(value: str) -> str:

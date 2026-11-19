@@ -295,6 +295,27 @@
           "type": "string",
           "default": "oMLX",
           "description": "Name of the default LLM server (matches the `name` field in [[webui.llm-server]]."
+        },
+        "watches": {
+          "type": "array",
+          "default": [],
+          "description": "Watch targets (channel, user, or page). Written by the Web UI so the list is still there after the service restarts. Seen posts stay under the data directory.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "site": { "type": "string", "default": "threads" },
+              "username": { "type": "string" },
+              "profile_url": { "type": "string" },
+              "label": { "type": "string" },
+              "interval_minutes": { "type": "integer", "minimum": 15, "default": 60 },
+              "enabled": { "type": "boolean", "default": true },
+              "initial_queue_latest": { "type": "integer", "minimum": 0, "maximum": 10, "default": 0 },
+              "created_at": { "type": "string" }
+            },
+            "required": ["id", "username"]
+          }
         }
       }
     }

@@ -140,6 +140,7 @@ enum ConfigJSON {
             var webToMarkdown: WebToMarkdown?
             var immich: Immich?
             var capturePost: CapturePost?
+            var watches: [Watch]?
             // Preserve unknown webui keys by round-tripping via extra bag if needed later.
 
             enum CodingKeys: String, CodingKey {
@@ -154,6 +155,26 @@ enum ConfigJSON {
                 case webToMarkdown = "web-to-markdown"
                 case immich
                 case capturePost = "capture-post"
+                case watches
+            }
+
+            struct Watch: Codable {
+                var id: String?
+                var site: String?
+                var username: String?
+                var profileURL: String?
+                var label: String?
+                var intervalMinutes: Int?
+                var enabled: Bool?
+                var initialQueueLatest: Int?
+                var createdAt: String?
+                enum CodingKeys: String, CodingKey {
+                    case id, site, username, label, enabled
+                    case profileURL = "profile_url"
+                    case intervalMinutes = "interval_minutes"
+                    case initialQueueLatest = "initial_queue_latest"
+                    case createdAt = "created_at"
+                }
             }
         }
 
@@ -361,7 +382,20 @@ enum ConfigJSON {
             obsidian: nil,
             webToMarkdown: nil,
             immich: nil,
-            capturePost: nil
+            capturePost: nil,
+            watches: config.webui.watches.map {
+                .init(
+                    id: $0.id,
+                    site: $0.site,
+                    username: $0.username,
+                    profileURL: $0.profileURL,
+                    label: $0.label,
+                    intervalMinutes: $0.intervalMinutes,
+                    enabled: $0.enabled,
+                    initialQueueLatest: $0.initialQueueLatest,
+                    createdAt: $0.createdAt
+                )
+            }
         )
         return doc
     }
@@ -475,6 +509,21 @@ enum ConfigJSON {
                 config.webui.selectedServerName = selected
                 config.webui.llm = config.webui.llmServers.first(where: { $0.name == selected }) ?? config.webui.llmServers[0]
                 config.webui.selectedModelName = config.webui.llm.selectedModel
+            }
+            if let watches = wu.watches {
+                config.webui.watches = watches.map {
+                    WatchTargetConfig(
+                        id: $0.id ?? "",
+                        site: $0.site ?? "threads",
+                        username: $0.username ?? "",
+                        profileURL: $0.profileURL ?? "",
+                        label: $0.label ?? "",
+                        intervalMinutes: $0.intervalMinutes ?? 60,
+                        enabled: $0.enabled ?? true,
+                        initialQueueLatest: $0.initialQueueLatest ?? 0,
+                        createdAt: $0.createdAt ?? ""
+                    )
+                }
             }
         }
         return config

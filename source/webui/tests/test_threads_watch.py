@@ -155,5 +155,67 @@ class CheckTests(unittest.TestCase):
                 store.get("../etc")
 
 
+class WatchConfigPersistenceTests(unittest.TestCase):
+    def setUp(self):
+        self.now = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+
+    def test_settings_survive_a_new_data_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            from pathlib import Path
+            data = Path(tmp) / "data"
+            config = Path(tmp) / "config.json"
+            config.write_text(json.dumps({"localapp": {"microphone": {}}, "webui": {"storage": {"data_dir": str(data)}}}), encoding="utf-8")
+            store = tw.WatchStore(data, config)
+            saved = store.save(tw.new_target("n.ina3373", label="Nina", interval_minutes=30, enabled=True, queue_latest=2, now=self.now))
+            document = json.loads(config.read_text(encoding="utf-8"))
+            self.assertEqual(document["localapp"]["microphone"], {})
+            entry = document["webui"]["watches"][0]
+            self.assertEqual(entry["username"], "n.ina3373")
+            self.assertEqual(entry["label"], "Nina")
+            self.assertEqual(entry["interval_minutes"], 30)
+            self.assertEqual(entry["initial_queue_latest"], 2)
+            self.assertNotIn("posts", entry)
+
+            restarted = tw.WatchStore(Path(tmp) / "other-data", config)
+            loaded = restarted.list()
+            self.assertEqual(len(loaded), 1)
+            self.assertEqual(loaded[0]["id"], saved["id"])
+            self.assertEqual(loaded[0]["username"], "n.ina3373")
+            self.assertEqual(loaded[0]["label"], "Nina")
+            self.assertEqual(loaded[0]["interval_minutes"], 30)
+            self.assertFalse(loaded[0]["baseline_done"])
+            self.assertEqual(restarted.get(saved["id"])["enabled"], True)
+
+    def test_existing_data_files_are_copied_into_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            from pathlib import Path
+            data = Path(tmp) / "data"
+            config = Path(tmp) / "config.json"
+            config.write_text("{}\n", encoding="utf-8")
+            first = tw.WatchStore(data)
+            target = first.save(tw.new_target("keep.me", now=self.now))
+            target["posts"] = [{"code": "ABC"}]
+            target["baseline_done"] = True
+            first.save(target)
+
+            restarted = tw.WatchStore(data, config)
+            loaded = restarted.list()
+            self.assertEqual(len(loaded), 1)
+            self.assertTrue(loaded[0]["baseline_done"])
+            self.assertEqual(loaded[0]["posts"], [{"code": "ABC"}])
+            document = json.loads(config.read_text(encoding="utf-8"))
+            self.assertEqual(document["webui"]["watches"][0]["username"], "keep.me")
+
+    def test_delete_removes_the_config_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            from pathlib import Path
+            config = Path(tmp) / "config.json"
+            store = tw.WatchStore(Path(tmp) / "data", config)
+            target = store.save(tw.new_target("gone.user", now=self.now))
+            self.assertTrue(store.delete(target["id"]))
+            self.assertEqual(json.loads(config.read_text(encoding="utf-8"))["webui"]["watches"], [])
+            self.assertIsNone(store.get(target["id"]))
+
+
 if __name__ == "__main__":
     unittest.main()

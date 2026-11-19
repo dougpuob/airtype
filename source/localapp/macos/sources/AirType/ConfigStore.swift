@@ -115,6 +115,19 @@ struct ObsidianConfig {
     var defaultFolder = ""
 }
 
+/// One `[webui.watches]` entry. The Web UI owns this list; the Mac app only keeps it when it rewrites config.json.
+struct WatchTargetConfig: Equatable {
+    var id = ""
+    var site = "threads"
+    var username = ""
+    var profileURL = ""
+    var label = ""
+    var intervalMinutes = 60
+    var enabled = true
+    var initialQueueLatest = 0
+    var createdAt = ""
+}
+
 struct WebUIConfig {
     /// Active whisper-server profile. Mirrors the entry named `selectedWhisperServerName`.
     var whisper = WhisperServerConfig()
@@ -127,6 +140,8 @@ struct WebUIConfig {
     var llmServers: [LLMServerConfig] = []
     var selectedServerName = ""
     var selectedModelName = ""
+    /// `[webui.watches]`. Round-tripped so a Settings save does not drop monitors the Web UI stored.
+    var watches: [WatchTargetConfig] = []
 }
 
 struct LLMServerEntry {

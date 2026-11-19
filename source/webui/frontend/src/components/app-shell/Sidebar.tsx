@@ -1,5 +1,6 @@
 import DashboardOutlinedIcon from "@mui/icons-material/DashboardOutlined";
 import GraphicEqOutlinedIcon from "@mui/icons-material/GraphicEqOutlined";
+import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import NotificationsActiveOutlinedIcon from "@mui/icons-material/NotificationsActiveOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import { Box, List, ListItemButton, ListItemIcon, ListItemText, Typography } from "@mui/material";
@@ -17,7 +18,8 @@ type NavItem = {
 export const navItems: NavItem[] = [
   { label: "Dashboard", path: "/", icon: <DashboardOutlinedIcon /> },
   { label: "Obsidian Clipper", path: "/v-to-text", icon: <GraphicEqOutlinedIcon /> },
-  { label: "Watching", path: "/watch", icon: <NotificationsActiveOutlinedIcon /> }
+  { label: "Watching", path: "/watch", icon: <NotificationsActiveOutlinedIcon /> },
+  { label: "History", path: "/history", icon: <HistoryOutlinedIcon /> }
 ];
 
 export const settingsNavItem: NavItem = { label: "Settings", path: "/settings", icon: <SettingsOutlinedIcon /> };

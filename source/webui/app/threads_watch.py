@@ -1,10 +1,12 @@
 """Scheduled checks of Threads profiles ("Watching" tab).
 
-Each watch target lives in ``<data_dir>/watches/<target-id>.json`` with its
-config, last check result and a log of every post it has seen (no post body,
-only metadata). The scheduler in main.py calls :func:`run_check` for due
-targets; new posts are handed to a ``queue_fn`` that submits them to the
-Obsidian Clipper queue.
+The watch list (who to monitor, how often, and whether it is enabled) is stored
+in ``config.json`` under ``webui.watches`` so it survives a process restart
+even when the data directory is new. Each target also has a runtime file in
+``<data_dir>/watches/<target-id>.json``: the last check and the posts already
+seen (metadata only, no post body). The scheduler in main.py calls
+:func:`run_check` for due targets; new posts are handed to a ``queue_fn`` that
+submits them to the Obsidian Clipper queue.
 
 Fetching uses the public profile page: Threads server-renders the first page
 of the profile timeline as JSON in ``script[data-sjs]`` blocks. That is only
@@ -270,36 +272,165 @@ def find_new_posts(fetched: list[dict[str, Any]], seen: set[str]) -> list[dict[s
 # Storage
 # --------------------------------------------------------------------------- #
 
+# Settings that must survive a restart. Runtime fields (posts, last check,
+# baseline) stay in the data-dir file and are rebuilt if that file is gone.
+WATCH_CONFIG_FIELDS = (
+    "id",
+    "site",
+    "username",
+    "profile_url",
+    "label",
+    "interval_minutes",
+    "enabled",
+    "initial_queue_latest",
+    "created_at",
+)
+
+
+def watch_config_entry(target: dict[str, Any]) -> dict[str, Any]:
+    """The part of a watch that belongs in config.json."""
+    return {
+        "id": str(target.get("id") or ""),
+        "site": str(target.get("site") or "threads"),
+        "username": str(target.get("username") or ""),
+        "profile_url": str(target.get("profile_url") or ""),
+        "label": str(target.get("label") or ""),
+        "interval_minutes": clamp_interval(target.get("interval_minutes")),
+        "enabled": bool(target.get("enabled")),
+        "initial_queue_latest": max(0, min(int(target.get("initial_queue_latest") or 0), 10)),
+        "created_at": str(target.get("created_at") or ""),
+    }
+
+
+def _target_from_config(entry: dict[str, Any]) -> dict[str, Any]:
+    """A watch restored from config, with no remembered posts yet."""
+    target = new_target(
+        str(entry.get("username") or ""),
+        label=str(entry.get("label") or ""),
+        interval_minutes=entry.get("interval_minutes"),
+        enabled=bool(entry.get("enabled", True)),
+        queue_latest=int(entry.get("initial_queue_latest") or 0),
+    )
+    target["id"] = str(entry.get("id") or target["id"])
+    if entry.get("site"):
+        target["site"] = str(entry["site"])
+    if entry.get("profile_url"):
+        target["profile_url"] = str(entry["profile_url"])
+    if entry.get("created_at"):
+        target["created_at"] = str(entry["created_at"])
+    return target
+
+
+def _apply_config(target: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
+    """Settings in config win. Empty text in an older config does not wipe the runtime file."""
+    overlay = {key: value for key, value in entry.items() if value not in ("", None)}
+    return {**target, **watch_config_entry({**target, **overlay})}
+
+
 class WatchStore:
-    def __init__(self, data_dir: str) -> None:
+    def __init__(self, data_dir: str, config_path: str | Path | None = None) -> None:
         self.dir = Path(data_dir) / "watches"
+        self.config_path = Path(config_path) if config_path else None
 
     def _path(self, target_id: str) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", target_id or ""):
             raise ValueError("Invalid watch id")
         return self.dir / f"{target_id}.json"
 
+    def _read_files(self) -> list[dict[str, Any]]:
+        if not self.dir.exists():
+            return []
+        items = []
+        for path in sorted(self.dir.glob("*.json")):
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(loaded, dict) and loaded.get("id"):
+                items.append(loaded)
+        return items
+
+    def _read_document(self) -> dict[str, Any]:
+        if self.config_path is None or not self.config_path.exists():
+            return {}
+        try:
+            loaded = json.loads(self.config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return loaded if isinstance(loaded, dict) else {}
+
+    def _read_config_entries(self) -> list[dict[str, Any]]:
+        if self.config_path is None:
+            return []
+        webui = self._read_document().get("webui")
+        watches = webui.get("watches") if isinstance(webui, dict) else None
+        if not isinstance(watches, list):
+            return []
+        entries = []
+        for item in watches:
+            if isinstance(item, dict) and item.get("id") and item.get("username"):
+                entries.append(watch_config_entry(item))
+        return entries
+
+    def _write_config_entries(self, entries: list[dict[str, Any]]) -> None:
+        if self.config_path is None:
+            return
+        document = self._read_document()
+        webui = document.get("webui")
+        if not isinstance(webui, dict):
+            webui = {}
+            document["webui"] = webui
+        webui["watches"] = [watch_config_entry(entry) for entry in entries if entry.get("id")]
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.config_path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(temporary, self.config_path)
+
+    def _merged(self, files: list[dict[str, Any]], entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if self.config_path is None:
+            return sorted(files, key=lambda t: t.get("created_at") or "")
+        by_id = {str(item.get("id")): item for item in files}
+        merged: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for entry in entries:
+            target_id = str(entry["id"])
+            seen.add(target_id)
+            runtime = by_id.get(target_id)
+            merged.append(_apply_config(runtime, entry) if runtime else _target_from_config(entry))
+        # A file written before config support is adopted into the list.
+        adopted = False
+        for runtime in files:
+            target_id = str(runtime.get("id") or "")
+            if target_id and target_id not in seen:
+                merged.append(runtime)
+                entries.append(watch_config_entry(runtime))
+                adopted = True
+        if adopted:
+            self._write_config_entries(entries)
+        return sorted(merged, key=lambda t: t.get("created_at") or "")
+
     def list(self) -> list[dict[str, Any]]:
         with _lock:
-            if not self.dir.exists():
-                return []
-            items = []
-            for path in sorted(self.dir.glob("*.json")):
-                try:
-                    items.append(json.loads(path.read_text(encoding="utf-8")))
-                except (OSError, ValueError):
-                    continue
-            return sorted(items, key=lambda t: t.get("created_at") or "")
+            return self._merged(self._read_files(), self._read_config_entries())
 
     def get(self, target_id: str) -> Optional[dict[str, Any]]:
         with _lock:
             path = self._path(target_id)
-            if not path.exists():
-                return None
-            try:
-                return json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                return None
+            runtime = None
+            if path.exists():
+                try:
+                    loaded = json.loads(path.read_text(encoding="utf-8"))
+                    runtime = loaded if isinstance(loaded, dict) else None
+                except (OSError, ValueError):
+                    runtime = None
+            entry = next((item for item in self._read_config_entries() if item.get("id") == target_id), None)
+            if runtime and entry:
+                return _apply_config(runtime, entry)
+            if runtime:
+                return runtime
+            if entry:
+                return _target_from_config(entry)
+            return None
 
     def save(self, target: dict[str, Any]) -> dict[str, Any]:
         with _lock:
@@ -308,15 +439,30 @@ class WatchStore:
             tmp = path.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(target, ensure_ascii=False, indent=2), encoding="utf-8")
             os.replace(tmp, path)
+            if self.config_path is not None:
+                entry = watch_config_entry(target)
+                entries = self._read_config_entries()
+                current = next((item for item in entries if item.get("id") == target["id"]), None)
+                if current != entry:
+                    entries = [item for item in entries if item.get("id") != target["id"]]
+                    entries.append(entry)
+                    self._write_config_entries(entries)
             return target
 
     def delete(self, target_id: str) -> bool:
         with _lock:
             path = self._path(target_id)
-            if not path.exists():
-                return False
-            path.unlink()
-            return True
+            existed = path.exists()
+            if existed:
+                path.unlink()
+            if self.config_path is None:
+                return existed
+            entries = self._read_config_entries()
+            kept = [item for item in entries if item.get("id") != target_id]
+            removed = len(kept) != len(entries)
+            if removed:
+                self._write_config_entries(kept)
+            return existed or removed
 
     def find_by_username(self, username: str) -> Optional[dict[str, Any]]:
         for target in self.list():

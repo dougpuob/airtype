@@ -62,6 +62,7 @@ from . import known_sources
 from . import linkedin_post
 from . import web_article
 from . import usage_stats
+from . import download_history
 from . import threads_watch
 from .ai_tags import AI_TAGS_SYSTEM_PROMPT, build_ai_tags_prompt, normalize_ai_tags
 from .note_id import canonical_source_id, note_guid_for_source
@@ -404,7 +405,13 @@ def startup_managed_processes() -> None:
     whisper_settings = settings.get("whisper", {})
     llm = settings.get("llm", {})
     llm_servers = settings.get("llm_servers", [])
+    download_history.configure(WEBUI_DATA_DIR)
     clip_requests.configure(WEBUI_DATA_DIR)
+    threading.Thread(
+        target=lambda: download_history.backfill_requests(os.path.join(WEBUI_DATA_DIR, "requests")),
+        name="history-backfill",
+        daemon=True,
+    ).start()
     daily_captures.configure(WEBUI_DATA_DIR)
     obsidian_exports.configure(WEBUI_DATA_DIR)
     threading.Thread(target=clip_requests.warm_cache, name="clip-requests-warm", daemon=True).start()
@@ -1969,6 +1976,12 @@ def list_clip_requests(request: Request):
     return Response(content=body, media_type="application/json", headers=headers)
 
 
+@app.get("/api/history")
+async def list_download_history(q: str = "", page: int = 1, page_size: int = 100):
+    """Finished downloads from SQLite. ``q`` is a space-separated keyword filter."""
+    return await asyncio.to_thread(download_history.search, q, page=page, page_size=page_size)
+
+
 @app.get("/api/clip-requests/{request_id}")
 async def get_clip_request(request_id: str):
     record = clip_requests.get(request_id)
@@ -2096,7 +2109,7 @@ def _submit_watch_clip_url(url: str) -> Dict[str, Any]:
 # Watching: scheduled checks of Threads profiles
 # --------------------------------------------------------------------------- #
 
-_watch_store = threads_watch.WatchStore(WEBUI_DATA_DIR)
+_watch_store = threads_watch.WatchStore(WEBUI_DATA_DIR, CONFIG_PATH)
 _watch_check_lock = threading.Lock()
 _watch_stop = threading.Event()
 _watch_thread: Optional[threading.Thread] = None
