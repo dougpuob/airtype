@@ -344,6 +344,169 @@ class Job104Tests(unittest.TestCase):
         self.assertIn("104 job API returned 404", str(ctx.exception))
 
 
+SALE_591_PAYLOAD = {
+    "status": 1,
+    "data": {
+        "title": "景觀三房車位",
+        "price": "1,428萬元",
+        "unitprice": "31.27萬/坪",
+        "region": "桃園市",
+        "section": "八德區",
+        "street": "建德路",
+        "addr_number": "x",
+        "edit_addr_number": "40",
+        "hide_addr_detail": "1",
+        "casesname": "麗寶豐洲",
+        "layout": "3房2廳2衛2陽臺",
+        "floor": "11F/13F",
+        "age": "7年",
+        "shape": "電梯大樓",
+        "fitment": "簡易裝潢",
+        "managefee": "2350元/月",
+        "parking_new": "12.04坪，平面式，已含售金內",
+        "purpose": "住家用",
+        "ratioRate": "31%",
+        "linkman": "張小姐",
+        "identity": "仲介",
+        "company_name": "測試不動產",
+        "sub_company_name": "測試加盟店",
+        "econ_name": "測試經紀業",
+        "mobile": "0900-000-000",
+        "email": "agent@example.com",
+        "remark": "高樓層景觀，座北朝南。",
+        "info": [
+            {"name": "樓層", "value": "11F/13F"},
+            {"name": "屋齡", "value": "7年"},
+            {"name": "空值", "value": ""},
+        ],
+        "area_intro_arr": [
+            {"name": "登記總面積", "value": "45.67坪"},
+            {"name": "土地坪數", "value": "-"},
+        ],
+        "photoinfo": [
+            {"type": "4", "photo": "https://img.example/house/a.jpeg!1000x.water2.jpeg"},
+            {"type": "3", "photo": "https://img.example/house/plan.jpeg!1000x.water2.jpeg"},
+            {"type": "1", "photo": "", "video": "https://video.example/tour.mp4"},
+            {"type": "4", "photo": "https://img.example/house/a.jpeg!1000x.water2.jpeg"},
+        ],
+    },
+}
+
+
+class Sale591Tests(unittest.TestCase):
+    def test_sale_id_parsing(self) -> None:
+        self.assertEqual(
+            web_article.sale_591_id(
+                "https://sale.591.com.tw/home/house/detail/2/21222842.html?from=list"
+            ),
+            "21222842",
+        )
+        self.assertEqual(
+            web_article.sale_591_id("https://sale.591.com.tw/home/house/detail/2/21222842"),
+            "21222842",
+        )
+        self.assertEqual(
+            web_article.sale_591_id("https://www.591.com.tw/home/house/detail/2/99.html#photos"),
+            "99",
+        )
+        self.assertEqual(web_article.sale_591_id("https://rent.591.com.tw/21222842"), "")
+        self.assertEqual(
+            web_article.sale_591_id("https://sale.591.com.tw/home/house/detail/1/21222842.html"),
+            "",
+        )
+        self.assertEqual(web_article.sale_591_id("https://not591.com.tw/home/house/detail/2/1.html"), "")
+
+    def test_payload_renders_markdown(self) -> None:
+        markdown = web_article.sale_591_markdown(SALE_591_PAYLOAD, house_id="21222842")
+        self.assertTrue(markdown.startswith("# 景觀三房車位\n"))
+        self.assertIn("- 售價：1,428萬元", markdown)
+        self.assertIn("- 單價：31.27萬/坪", markdown)
+        self.assertIn("- 地區：桃園市八德區建德路", markdown)
+        self.assertNotIn("40", markdown)
+        self.assertIn("- 社區：麗寶豐洲", markdown)
+        self.assertIn("- 格局：3房2廳2衛2陽臺", markdown)
+        self.assertIn("- 樓層：11F/13F", markdown)
+        self.assertIn("- 屋齡：7年", markdown)
+        self.assertIn("- 車位：12.04坪，平面式，已含售金內", markdown)
+        self.assertIn("- 仲介：張小姐（仲介）", markdown)
+        self.assertIn("- 公司：測試不動產 測試加盟店", markdown)
+        self.assertIn("- 經紀業：測試經紀業", markdown)
+        self.assertIn("- 電話：0900-000-000", markdown)
+        self.assertNotIn("agent@example.com", markdown)
+        self.assertIn(
+            "- 物件連結：https://sale.591.com.tw/home/house/detail/2/21222842.html",
+            markdown,
+        )
+        self.assertIn("## 房屋資料", markdown)
+        self.assertIn("- 登記總面積：45.67坪", markdown)
+        self.assertNotIn("土地坪數", markdown)
+        self.assertIn("## 屋況特色", markdown)
+        self.assertIn("高樓層景觀，座北朝南。", markdown)
+        self.assertIn("## 照片", markdown)
+        self.assertEqual(
+            web_article.extract_image_urls(markdown),
+            [
+                "https://img.example/house/a.jpeg!1000x.water2.jpeg",
+                "https://img.example/house/plan.jpeg!1000x.water2.jpeg",
+            ],
+        )
+        self.assertNotIn("tour.mp4", markdown)
+        self.assertEqual(web_article.extract_title(markdown), "景觀三房車位")
+        self.assertGreater(web_article.article_body_chars(markdown), 50)
+
+    def test_payload_without_title_raises(self) -> None:
+        with self.assertRaises(RuntimeError):
+            web_article.sale_591_markdown({"status": 1, "data": {"price": "1萬元"}})
+
+    def test_status_failure_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            web_article.sale_591_markdown({"status": 0, "msg": "物件不存在", "data": {}}, house_id="1")
+        self.assertIn("status 0", str(ctx.exception))
+        self.assertIn("物件不存在", str(ctx.exception))
+
+    def test_fetch_markdown_uses_591_api_not_html(self) -> None:
+        import json
+
+        captured: dict = {}
+
+        def fake_urlopen(request, timeout=None):
+            captured["url"] = request.full_url
+            captured["headers"] = {k.lower(): v for k, v in request.header_items()}
+            return _FakeUrlopenResponse(json.dumps(SALE_591_PAYLOAD).encode("utf-8"))
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen), patch(
+            "curl_cffi.requests.get", side_effect=AssertionError("HTML fetch must not run")
+        ):
+            markdown = web_article.fetch_markdown(
+                "https://sale.591.com.tw/home/house/detail/2/21222842.html"
+            )
+        self.assertEqual(
+            captured["url"],
+            "https://bff-house.591.com.tw/v1/touch/sale/detail?"
+            "id=S21222842&is_business=0&device_id=airtype&__v__=1&region_id=1&device=touch",
+        )
+        self.assertEqual(captured["headers"]["accept"], "application/json")
+        self.assertEqual(
+            captured["headers"]["referer"],
+            "https://sale.591.com.tw/home/house/detail/2/21222842.html",
+        )
+        self.assertEqual(captured["headers"]["origin"], "https://sale.591.com.tw")
+        self.assertIn("Chrome/", captured["headers"]["user-agent"])
+        self.assertIn("## 屋況特色", markdown)
+        self.assertIn("## 照片", markdown)
+
+    def test_591_http_error_is_clear(self) -> None:
+        import urllib.error
+
+        error = urllib.error.HTTPError(
+            "https://bff-house.591.com.tw/v1/touch/sale/detail", 404, "Not Found", {}, None
+        )
+        with patch("urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(RuntimeError) as ctx:
+                web_article.fetch_markdown("https://sale.591.com.tw/home/house/detail/2/999.html")
+        self.assertIn("591 sale API returned 404", str(ctx.exception))
+
+
 class JavaScriptShellTests(unittest.TestCase):
     def test_noscript_shell_is_detected(self) -> None:
         self.assertTrue(

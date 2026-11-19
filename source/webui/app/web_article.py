@@ -409,6 +409,187 @@ def _fetch_104_job(job_id: str, *, timeout_seconds: int = 60) -> str:
     return job_104_markdown(payload, job_id=job_id)
 
 
+SALE_591_API = "https://bff-house.591.com.tw/v1/touch/sale/detail"
+SALE_591_PATTERN = re.compile(
+    r"^https?://(?:[a-z0-9-]+\.)*591\.com\.tw/home/house/detail/2/(\d+)(?:\.html)?(?:\?[^#]*)?(?:#.*)?$",
+    re.IGNORECASE,
+)
+_SALE_591_EMPTY_VALUES = {"-", "—", "－"}
+
+
+def sale_591_id(url: str) -> str:
+    """The 591 sale id in ``url`` (``.../home/house/detail/2/<id>``), or ""."""
+    match = SALE_591_PATTERN.match((url or "").strip())
+    return match.group(1) if match else ""
+
+
+def _sale_591_text(value: Any) -> str:
+    text = str(value or "").strip()
+    if text in _SALE_591_EMPTY_VALUES:
+        return ""
+    return text
+
+
+def _sale_591_pairs(items: Any) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        name = _sale_591_text(item.get("name"))
+        value = _sale_591_text(item.get("value"))
+        if name and value:
+            pairs.append((name, value))
+    return pairs
+
+
+def _sale_591_photo_urls(data: dict) -> list[str]:
+    """Large photo URLs from ``photoinfo``, including floor plans.
+
+    Video and VR slots have no ``photo`` URL and are skipped.
+    """
+    urls: list[str] = []
+    seen: set[str] = set()
+    for item in data.get("photoinfo") or []:
+        if not isinstance(item, dict):
+            continue
+        photo = str(item.get("photo") or "").strip()
+        if not photo.lower().startswith(("http://", "https://")) or photo in seen:
+            continue
+        seen.add(photo)
+        urls.append(photo)
+    return urls
+
+
+def sale_591_markdown(payload: dict, *, house_id: str = "") -> str:
+    """Render a 591 sale-detail JSON response as Markdown."""
+    if not isinstance(payload, dict) or payload.get("status") not in (1, "1"):
+        message = _sale_591_text(payload.get("msg")) if isinstance(payload, dict) else ""
+        detail = f" ({message})" if message else ""
+        status = payload.get("status") if isinstance(payload, dict) else None
+        raise RuntimeError(
+            f"591 sale API returned status {status} for listing {house_id}{detail}."
+        )
+    data = payload.get("data") or {}
+    if not isinstance(data, dict) or not data:
+        raise RuntimeError(f"591 sale API returned no listing data for listing {house_id}.")
+
+    title = _sale_591_text(data.get("title"))
+    if not title:
+        raise RuntimeError(f"591 sale API returned no listing title for listing {house_id}.")
+
+    lines: list[str] = [f"# {title}", ""]
+
+    def add_field(label: str, value: Any) -> None:
+        text = _sale_591_text(value)
+        if text:
+            lines.append(f"- {label}：{text}")
+
+    add_field("售價", data.get("price"))
+    add_field("單價", data.get("unitprice"))
+    location = "".join(
+        _sale_591_text(data.get(key)) for key in ("region", "section", "street")
+    )
+    add_field("地區", location)
+    add_field("社區", data.get("casesname") or data.get("community"))
+    add_field("格局", data.get("layout"))
+    add_field("樓層", data.get("floor"))
+    add_field("屋齡", data.get("age"))
+    add_field("型態", data.get("shape"))
+    add_field("裝潢", data.get("fitment"))
+    add_field("管理費", data.get("managefee"))
+    add_field("車位", data.get("parking_new") or data.get("parking"))
+    add_field("法定用途", data.get("purpose"))
+    add_field("公設比", data.get("ratioRate"))
+
+    linkman = _sale_591_text(data.get("linkman"))
+    identity = _sale_591_text(data.get("identity"))
+    if linkman and identity:
+        linkman = f"{linkman}（{identity}）"
+    add_field("仲介", linkman)
+    company = _sale_591_text(data.get("company_name"))
+    branch = _sale_591_text(data.get("sub_company_name"))
+    if company and branch:
+        company = f"{company} {branch}"
+    elif branch:
+        company = branch
+    add_field("公司", company)
+    brokerage = _sale_591_text(data.get("econ_name"))
+    if brokerage and brokerage != _sale_591_text(data.get("company_name")):
+        add_field("經紀業", brokerage)
+    add_field("電話", data.get("mobile"))
+    if house_id:
+        add_field(
+            "物件連結",
+            f"https://sale.591.com.tw/home/house/detail/2/{house_id}.html",
+        )
+    lines.append("")
+
+    rows = _sale_591_pairs(data.get("info")) + _sale_591_pairs(data.get("area_intro_arr"))
+    if rows:
+        lines.extend(["## 房屋資料", ""])
+        for name, value in rows:
+            lines.append(f"- {name}：{value}")
+        lines.append("")
+
+    remark = _sale_591_text(data.get("remark"))
+    if remark:
+        lines.extend(["## 屋況特色", "", remark, ""])
+
+    photo_urls = _sale_591_photo_urls(data)
+    if photo_urls:
+        lines.extend(["## 照片", ""])
+        lines.extend(f"![]({photo_url})" for photo_url in photo_urls)
+        lines.append("")
+
+    return "\n".join(lines).strip() + "\n"
+
+
+def _fetch_591_sale(house_id: str, *, timeout_seconds: int = 60) -> str:
+    """Fetch a 591 sale listing through its public JSON API and render Markdown.
+
+    The sale page is a Vue SPA. Title, price, and the photo gallery are not
+    in the server HTML, so Trafilatura only recovers fragments of the remark.
+    """
+    import json
+
+    query = urllib.parse.urlencode(
+        [
+            ("id", f"S{house_id}"),
+            ("is_business", "0"),
+            ("device_id", "airtype"),
+            ("__v__", "1"),
+            ("region_id", "1"),
+            ("device", "touch"),
+        ]
+    )
+    api_url = f"{SALE_591_API}?{query}"
+    headers = {
+        "User-Agent": BROWSER_USER_AGENT,
+        "Accept": "application/json",
+        "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+        "Referer": f"https://sale.591.com.tw/home/house/detail/2/{house_id}.html",
+        "Origin": "https://sale.591.com.tw",
+    }
+    try:
+        request = urllib.request.Request(api_url, headers=headers)
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            status = getattr(response, "status", 200)
+            if status != 200:
+                raise RuntimeError(f"591 sale API returned {status} for listing {house_id}.")
+            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(
+            f"591 sale API returned {error.code} for listing {house_id}; the listing may be closed or removed."
+        ) from error
+    except urllib.error.URLError as error:
+        raise RuntimeError(f"Could not reach 591 sale API: {error.reason}") from error
+    except ValueError as error:
+        raise RuntimeError(f"591 sale API returned invalid JSON for listing {house_id}.") from error
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"591 sale API returned unexpected data for listing {house_id}.")
+    return sale_591_markdown(payload, house_id=house_id)
+
+
 def html_to_markdown(html: str, *, url: str = "") -> str:
     """Turn page HTML into article Markdown, including images and links."""
     try:
@@ -447,12 +628,16 @@ def fetch_markdown(url: str, *, api_key: str = "", timeout_seconds: int = 60) ->
     """Fetch ``url`` and convert the article to Markdown with Trafilatura.
 
     ``api_key`` is ignored. It remains in the signature so older callers keep
-    working after the md.genedai.me extractor was replaced.
+    working after the md.genedai.me extractor was replaced. 104 job pages and
+    591 sale listings are fetched from their JSON APIs instead of the HTML shell.
     """
     del api_key
     job_id = job_104_id(url)
     if job_id:
         return _fetch_104_job(job_id, timeout_seconds=timeout_seconds)
+    house_id = sale_591_id(url)
+    if house_id:
+        return _fetch_591_sale(house_id, timeout_seconds=timeout_seconds)
     html = fetch_html(url, timeout_seconds=timeout_seconds)
     return html_to_markdown(html, url=url)
 
