@@ -4,14 +4,15 @@ import SwiftUI
 
 @MainActor
 final class FloatingPanelController {
-    private let normalSize = NSSize(width: 144, height: 32)
-    private let errorSize = NSSize(width: 220, height: 32)
+    // Tall enough that a quiet mic still draws a readable wave (the meter is only ~18pt in the old pill).
+    private let normalSize = NSSize(width: 220, height: 56)
+    private let errorSize = NSSize(width: 300, height: 56)
     // localapp: wider panel that shows the streaming (partial) transcript under the timer row.
-    private let textSize = NSSize(width: 380, height: 66)
+    private let textSize = NSSize(width: 380, height: 90)
     // Overlay text: up to `FloatingPanelModel.maxTextLines` lines. Past two lines the panel grows
     // upward (its bottom edge stays where the two-line panel ended) so the newest text stays visible.
     private let textFont = NSFont.systemFont(ofSize: 13, weight: .medium)
-    private let textWidth: CGFloat = 380 - 24
+    private let textWidth: CGFloat = 380 - 28
     private var textAnchorTop: CGFloat?
     private let configStore: ConfigStore
     private let onMove: (Double, Double) -> Void
@@ -262,7 +263,7 @@ final class FloatingPanelController {
 final class FloatingPanelModel: ObservableObject {
     @Published var elapsedText = "00:00"
     @Published var transcribingDots = ""
-    @Published var levels = Array(repeating: 0.08, count: 24)
+    @Published var levels = Array(repeating: 0.02, count: 24)
     @Published var errorText: String?
     @Published var isTranscribing = false
     @Published var partialText = ""
@@ -291,7 +292,7 @@ final class FloatingPanelModel: ObservableObject {
         timer?.invalidate()
         timer = nil
         elapsedText = "..."
-        levels = Array(repeating: 0.08, count: 24)
+        levels = Array(repeating: 0.02, count: 24)
     }
 
     func transcribe() {
@@ -300,7 +301,7 @@ final class FloatingPanelModel: ObservableObject {
         transcribingDots = "..."
         timer?.invalidate()
         elapsedText = "Transcribing"
-        levels = Array(repeating: 0.08, count: 24)
+        levels = Array(repeating: 0.02, count: 24)
         timer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in
             dotCount = (dotCount % 3) + 1
             self?.transcribingDots = String(repeating: ".", count: dotCount)
@@ -313,7 +314,7 @@ final class FloatingPanelModel: ObservableObject {
         timer?.invalidate()
         timer = nil
         errorText = message
-        levels = Array(repeating: 0.08, count: 24)
+        levels = Array(repeating: 0.02, count: 24)
     }
 
     func stop() {
@@ -336,7 +337,7 @@ final class FloatingPanelModel: ObservableObject {
         transcribingDots = ""
         errorText = nil
         elapsedText = "00:00"
-        levels = Array(repeating: 0.08, count: 24)
+        levels = Array(repeating: 0.02, count: 24)
     }
 
     func setLevel(_ level: Double) {
@@ -384,7 +385,7 @@ struct FloatingPanelView: View {
 
                     if !model.isTranscribing {
                         WaveformView(levels: model.levels)
-                            .frame(width: 70, height: 18)
+                            .frame(width: 140, height: 38)
                     }
                 }
                 if !model.partialText.isEmpty {
@@ -399,15 +400,15 @@ struct FloatingPanelView: View {
               }
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 28)
                 .fill(Color(red: 0.09, green: 0.11, blue: 0.13))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 28)
                 .stroke(
                     model.errorText == nil
                         ? Color(red: 0.33, green: 0.91, blue: 0.60)
@@ -423,15 +424,25 @@ struct WaveformView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            HStack(alignment: .center, spacing: 1) {
+            let count = max(levels.count, 1)
+            let spacing: CGFloat = 2
+            let barWidth = max(2, (geometry.size.width - spacing * CGFloat(count - 1)) / CGFloat(count))
+            HStack(alignment: .center, spacing: spacing) {
                 ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
-                    RoundedRectangle(cornerRadius: 1)
+                    RoundedRectangle(cornerRadius: 1.5)
                         .fill(Color(red: 0.33, green: 0.91, blue: 0.60).opacity(0.9))
-                        .frame(width: 2, height: max(2, geometry.size.height * level))
+                        .frame(width: barWidth, height: barHeight(level, maxHeight: geometry.size.height))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
+    }
+
+    /// Quiet mics sit near the bottom of the 0...1 meter. Square-root stretches that
+    /// range so the bars move without changing the level used for recording.
+    private func barHeight(_ level: Double, maxHeight: CGFloat) -> CGFloat {
+        let clamped = min(1, max(0, level))
+        return max(3, maxHeight * CGFloat(pow(clamped, 0.5)))
     }
 }
 
