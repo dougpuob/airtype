@@ -43,6 +43,8 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     private var sessionCueGate = RecordingSessionCueGate()
     private var settingsWindow: SettingsWindowController?
     private let localWhisperServer = LocalWhisperServerManager()
+    /// PCM captured at stop, keyed by input id, until that input's history row is written.
+    private var pendingVoicePCM: [Int: Data] = [:]
 
     func start() {
         do {
@@ -540,7 +542,12 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             return
         }
 
-        audioRecorder.stopStreaming()
+        let recordedPCM = audioRecorder.stopStreaming()
+        let archiveDirectory = configStore.config.recording.voiceAudioDirectory
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !archiveDirectory.isEmpty, let inputID, !recordedPCM.isEmpty {
+            pendingVoicePCM[inputID] = recordedPCM
+        }
         if configStore.config.microphone.mode == "on_demand" {
             audioRecorder.stop()
         }
@@ -554,6 +561,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                 guard let self else { return }
                 if let inputID, self.sessionCueGate.isClosed(inputID) {
                     Logger.shared.log("\(self.inputLogPrefix(inputID))stale ASR finish ignored after session closed")
+                    self.discardPendingVoiceAudio(inputID)
                     return
                 }
                 let asrText = TranscriptFormatter.format(raw, mode: mode)
@@ -576,6 +584,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                         guard let self else { return }
                         if let inputID, self.sessionCueGate.isClosed(inputID) {
                             Logger.shared.log("\(self.inputLogPrefix(inputID))stale LLM polish ignored after session closed")
+                            self.discardPendingVoiceAudio(inputID)
                             return
                         }
                         let llmText = polished.map { TranscriptFormatter.format($0, mode: mode, fixEnglishCase: false) }
@@ -606,6 +615,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     ) {
         if let inputID, sessionCueGate.isClosed(inputID) {
             Logger.shared.log("\(inputLogPrefix(inputID))stale deliverFinal ignored")
+            discardPendingVoiceAudio(inputID)
             return
         }
         Logger.shared.log("\(inputLogPrefix(inputID))final transcript chars=\(finalText.count)")
@@ -615,7 +625,8 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                 llmText: llmUsed ? llmText : nil,
                 llmUsed: llmUsed,
                 result: result,
-                startedAt: startedAt
+                startedAt: startedAt,
+                inputID: inputID
             )
         }
         if liveTypingActive, targetIsFrontmost, AXIsProcessTrusted() {
@@ -641,6 +652,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             guard let self else { return }
             if let inputID, self.sessionCueGate.isClosed(inputID) {
                 Logger.shared.log("\(self.inputLogPrefix(inputID))stale paste result ignored")
+                self.discardPendingVoiceAudio(inputID)
                 return
             }
             self.floatingPanel?.hide()
@@ -660,8 +672,10 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         llmText: String?,
         llmUsed: Bool,
         result: String,
-        startedAt: Date?
+        startedAt: Date?,
+        inputID: Int?
     ) {
+        let audioPCM = inputID.flatMap { pendingVoicePCM.removeValue(forKey: $0) }
         let kind = engine.kind
         let llm = configStore.config.webui.llm
         let durationMs = startedAt.map { Int(Date().timeIntervalSince($0) * 1000) }
@@ -685,8 +699,16 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             llmModel: llmUsed ? (ProcessInfo.processInfo.environment["AIRTYPE_LLM_POLISH_MODEL"] ?? TextPolisher.defaultModel) : nil,
             llmEndpoint: llmUsed ? llm.endpoint : nil,
             result: result,
-            durationMs: durationMs
+            durationMs: durationMs,
+            audioPCM: audioPCM,
+            audioDirectory: configStore.config.recording.voiceAudioDirectory,
+            recordedAt: startedAt ?? Date()
         )
+    }
+
+    private func discardPendingVoiceAudio(_ inputID: Int?) {
+        guard let inputID else { return }
+        pendingVoicePCM.removeValue(forKey: inputID)
     }
 
     private func cancelRecording() {

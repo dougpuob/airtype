@@ -15,6 +15,19 @@ struct VoiceHistoryRecord: Identifiable, Equatable {
     var llmEndpoint: String?
     var result: String
     var durationMs: Int?
+    var audioPath: String?
+}
+
+/// How many history rows were added in each window. The windows overlap:
+/// today is included in this week, this week in this month, and so on.
+struct HistorySummary: Equatable {
+    var today = 0
+    var thisWeek = 0
+    var thisMonth = 0
+    var threeMonths = 0
+    var sixMonths = 0
+    var oneYear = 0
+    var total = 0
 }
 
 struct ObsidianImportRecord: Identifiable, Equatable {
@@ -97,6 +110,31 @@ final class HistoryStore {
           skipped_count INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_obs_created ON obsidian_imports(created_at DESC);
+        """)
+        addColumnIfMissing(table: "voice_inputs", column: "audio_path", definition: "TEXT")
+        openSchemaTail()
+    }
+
+    /// `CREATE TABLE IF NOT EXISTS` does not add columns to a database created before this build.
+    private func addColumnIfMissing(table: String, column: String, definition: String) {
+        guard let db else { return }
+        let pragma = "PRAGMA table_info(\(table))"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, pragma, -1, &stmt, nil) == SQLITE_OK, let stmt else { return }
+        var found = false
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let name = sqlite3_column_text(stmt, 1), String(cString: name) == column {
+                found = true
+                break
+            }
+        }
+        sqlite3_finalize(stmt)
+        guard !found else { return }
+        exec("ALTER TABLE \(table) ADD COLUMN \(column) \(definition)")
+    }
+
+    private func openSchemaTail() {
+        exec("""
         CREATE TABLE IF NOT EXISTS obsidian_import_items (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           import_id INTEGER NOT NULL,
@@ -134,9 +172,18 @@ final class HistoryStore {
         llmModel: String?,
         llmEndpoint: String?,
         result: String,
-        durationMs: Int?
+        durationMs: Int?,
+        audioPCM: Data? = nil,
+        audioDirectory: String = "",
+        recordedAt: Date = Date()
     ) {
         queue.async { [weak self] in
+            let audioPath = Self.archiveVoiceAudio(
+                pcm: audioPCM,
+                transcript: asrText,
+                directory: audioDirectory,
+                date: recordedAt
+            )
             self?.recordVoice(
                 asrText: asrText,
                 llmText: llmText,
@@ -148,8 +195,25 @@ final class HistoryStore {
                 llmModel: llmModel,
                 llmEndpoint: llmEndpoint,
                 result: result,
-                durationMs: durationMs
+                durationMs: durationMs,
+                audioPath: audioPath,
+                createdAt: recordedAt
             )
+        }
+    }
+
+    /// Writes the Opus file before the row is inserted so the stored path matches a file that exists.
+    private static func archiveVoiceAudio(pcm: Data?, transcript: String, directory: String, date: Date) -> String? {
+        guard let pcm, !pcm.isEmpty else { return nil }
+        let folder = directory.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !folder.isEmpty else { return nil }
+        do {
+            let url = try VoiceAudioArchive.save(pcm: pcm, transcript: transcript, directory: folder, date: date)
+            Logger.shared.log("Voice audio saved: \(url.path)")
+            return url.path
+        } catch {
+            Logger.shared.log("Voice audio save failed: \(error)")
+            return nil
         }
     }
 
@@ -164,19 +228,21 @@ final class HistoryStore {
         llmModel: String?,
         llmEndpoint: String?,
         result: String,
-        durationMs: Int?
+        durationMs: Int?,
+        audioPath: String?,
+        createdAt: Date
     ) {
         guard let db else { return }
         let sql = """
         INSERT INTO voice_inputs
         (created_at, asr_text, llm_text, asr_backend, asr_engine, asr_model, asr_endpoint,
-         llm_enabled, llm_model, llm_endpoint, result, duration_ms)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+         llm_enabled, llm_model, llm_endpoint, result, duration_ms, audio_path)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else { return }
         defer { sqlite3_finalize(stmt) }
-        bindText(stmt, 1, iso.string(from: Date()))
+        bindText(stmt, 1, iso.string(from: createdAt))
         bindText(stmt, 2, asrText)
         bindText(stmt, 3, llmText)
         bindText(stmt, 4, asrBackend)
@@ -192,6 +258,7 @@ final class HistoryStore {
         } else {
             sqlite3_bind_null(stmt, 12)
         }
+        bindText(stmt, 13, audioPath)
         if sqlite3_step(stmt) != SQLITE_DONE {
             Logger.shared.log("HistoryStore: voice insert failed")
         }
@@ -200,7 +267,7 @@ final class HistoryStore {
     func queryVoice(_ query: HistoryQuery) -> [VoiceHistoryRecord] {
         queue.sync {
             guard let db else { return [] }
-            var sql = "SELECT id, created_at, asr_text, llm_text, asr_backend, asr_engine, asr_model, asr_endpoint, llm_enabled, llm_model, llm_endpoint, result, duration_ms FROM voice_inputs WHERE 1=1"
+            var sql = "SELECT id, created_at, asr_text, llm_text, asr_backend, asr_engine, asr_model, asr_endpoint, llm_enabled, llm_model, llm_endpoint, result, duration_ms, audio_path FROM voice_inputs WHERE 1=1"
             var args: [Any?] = []
             appendDateFilters(to: &sql, args: &args, query: query, column: "created_at")
             if let content = query.content?.trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty {
@@ -232,10 +299,60 @@ final class HistoryStore {
                     llmModel: text(stmt, 9),
                     llmEndpoint: text(stmt, 10),
                     result: text(stmt, 11) ?? "",
-                    durationMs: sqlite3_column_type(stmt, 12) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 12))
+                    durationMs: sqlite3_column_type(stmt, 12) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 12)),
+                    audioPath: text(stmt, 13)
                 ))
             }
             return rows
+        }
+    }
+
+    func voiceSummary(now: Date = Date()) -> HistorySummary {
+        summary(table: "voice_inputs", now: now)
+    }
+
+    func obsidianSummary(now: Date = Date()) -> HistorySummary {
+        summary(table: "obsidian_imports", now: now)
+    }
+
+    private func summary(table: String, now: Date) -> HistorySummary {
+        queue.sync {
+            guard let db else { return HistorySummary() }
+            let calendar = Calendar.current
+            let today = calendar.startOfDay(for: now)
+            let week = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? today
+            let month = calendar.dateInterval(of: .month, for: now)?.start ?? today
+            let threeMonths = calendar.date(byAdding: .month, value: -3, to: now) ?? today
+            let sixMonths = calendar.date(byAdding: .month, value: -6, to: now) ?? today
+            let oneYear = calendar.date(byAdding: .year, value: -1, to: now) ?? today
+            let bounds = [today, week, month, threeMonths, sixMonths, oneYear].map { iso.string(from: $0) }
+            let sql = """
+            SELECT
+              COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0),
+              COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0),
+              COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0),
+              COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0),
+              COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0),
+              COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0),
+              COUNT(*)
+            FROM \(table)
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else { return HistorySummary() }
+            defer { sqlite3_finalize(stmt) }
+            for (index, bound) in bounds.enumerated() {
+                bindText(stmt, Int32(index + 1), bound)
+            }
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return HistorySummary() }
+            return HistorySummary(
+                today: Int(sqlite3_column_int(stmt, 0)),
+                thisWeek: Int(sqlite3_column_int(stmt, 1)),
+                thisMonth: Int(sqlite3_column_int(stmt, 2)),
+                threeMonths: Int(sqlite3_column_int(stmt, 3)),
+                sixMonths: Int(sqlite3_column_int(stmt, 4)),
+                oneYear: Int(sqlite3_column_int(stmt, 5)),
+                total: Int(sqlite3_column_int(stmt, 6))
+            )
         }
     }
 

@@ -68,10 +68,12 @@ enum ConfigJSON {
             var hotkeyPressCount: String?
             var hotkeyTrigger: String?
             var playCues: Bool?
+            var voiceAudioDir: String?
             enum CodingKeys: String, CodingKey {
                 case hotkeyPressCount = "hotkey_press_count"
                 case hotkeyTrigger = "hotkey_trigger"
                 case playCues = "play_cues"
+                case voiceAudioDir = "voice_audio_dir"
             }
         }
         struct Obsidian: Codable {
@@ -311,7 +313,8 @@ enum ConfigJSON {
             recording: .init(
                 hotkeyPressCount: config.recording.hotkeyPressCount,
                 hotkeyTrigger: config.recording.hotkeyTrigger,
-                playCues: config.recording.playCues
+                playCues: config.recording.playCues,
+                voiceAudioDir: config.recording.voiceAudioDirectory
             ),
             obsidian: .init(
                 vaultPath: config.obsidian.vaultPath,
@@ -439,6 +442,7 @@ enum ConfigJSON {
                     }
                 }
                 if let v = r.playCues { config.recording.playCues = v }
+                if let v = r.voiceAudioDir { config.recording.voiceAudioDirectory = v }
             }
             if let o = la.obsidian {
                 if let v = o.vaultPath { config.obsidian.vaultPath = v }

@@ -105,6 +105,8 @@ struct RecordingConfig {
     var hotkeyTrigger = "auto"
     /// Quiet system sounds when capture actually starts / after capture stops.
     var playCues = true
+    /// Folder where each voice input is saved as Opus. Empty skips saving. Set from Voice Input ▸ History.
+    var voiceAudioDirectory = ""
 }
 
 /// [localapp.obsidian]: where the local app writes captured notes as Markdown files.
@@ -286,7 +288,8 @@ final class ConfigStore: ObservableObject {
         Logger.shared.log(
             "Config localapp.recording: hotkey_press_count=\(config.recording.hotkeyPressCount), "
             + "hotkey_trigger=\(config.recording.hotkeyTrigger), "
-            + "play_cues=\(config.recording.playCues)"
+            + "play_cues=\(config.recording.playCues), "
+            + "voice_audio_dir=\(config.recording.voiceAudioDirectory.isEmpty ? "(empty)" : config.recording.voiceAudioDirectory)"
         )
         Logger.shared.log(
             "Config localapp.obsidian: vault_path=\(config.obsidian.vaultPath.isEmpty ? "(empty)" : config.obsidian.vaultPath), "
@@ -568,7 +571,11 @@ final class ConfigStore: ObservableObject {
                 boolField("localapp.recording", "play_cues",
                           comment: "Play quiet system sounds when recording capture starts and after it stops.",
                           apply: { $0.recording.playCues = parseBool($1, defaultValue: true) },
-                          render: { $0.recording.playCues ? "true" : "false" })
+                          render: { $0.recording.playCues ? "true" : "false" }),
+                stringField("localapp.recording", "voice_audio_dir",
+                            comment: "Folder where each voice input is saved as Opus. Empty skips saving. Edited on Voice Input ▸ History.",
+                            apply: { $0.recording.voiceAudioDirectory = $1.trimmingCharacters(in: .whitespacesAndNewlines) },
+                            render: { $0.recording.voiceAudioDirectory })
             ]
         ),
         ConfigSectionSchema(

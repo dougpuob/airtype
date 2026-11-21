@@ -492,6 +492,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         if leaf.sections.contains(Self.localWhisperTabID) {
             refreshLocalWhisperServerControls()
         }
+        if leaf.sections.contains("voice.history") {
+            voiceHistoryPane?.refresh()
+        }
+        if leaf.sections.contains("obsidian.history") {
+            obsidianHistoryPane?.refresh()
+        }
     }
 
     // MARK: - Sidebar outline
@@ -1970,7 +1976,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
                 arabicNumeralsRow,
                 taiwanPhrasesRow
             ],
-            skipKeys: ["hotkey_trigger", "play_cues"],
+            skipKeys: ["hotkey_trigger", "play_cues", "voice_audio_dir"],
             // Title already shows `[localapp.recording]` via leaf.configPath.
             showSectionHeader: false
         )
@@ -2210,7 +2216,17 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     private func buildVoiceHistoryTab() -> NSView {
         let pane = HistorySettingsPaneController(kind: .voice)
         voiceHistoryPane = pane
-        return pane.makeView()
+        let view = pane.makeView()
+        if let field = ConfigStore.sectionDescriptors
+            .first(where: { $0.name == "localapp.recording" })?
+            .fields.first(where: { $0.key == "voice_audio_dir" }) {
+            sectionBindings.append(FieldBinding(
+                descriptor: field,
+                get: { [weak pane] in pane?.audioDirectoryField.stringValue ?? "" },
+                set: { [weak pane] value in pane?.audioDirectoryField.stringValue = value }
+            ))
+        }
+        return view
     }
 
     private func buildObsidianHistoryTab() -> NSView {

@@ -131,17 +131,20 @@ final class AudioRecorder: @unchecked Sendable {
         Logger.shared.log("Audio recorder stopped and pre-roll cleared")
     }
 
-    /// localapp: stop forwarding audio to the streaming recognizer (no WAV is built).
-    func stopStreaming() {
+    /// Stop forwarding audio to the streaming recognizer and return the captured 16 kHz Int16 PCM.
+    /// Pre-roll is left in place for the next utterance. The buffer is cleared either way.
+    @discardableResult
+    func stopStreaming() -> Data {
         audioLock.lock()
         isRecording = false
         onLevel = nil
         onPCM = nil
         recordingStartedAt = nil
-        let recordedBytes = pcm.count
+        let recordedPCM = pcm
         pcm = Data()
         audioLock.unlock()
-        Logger.shared.log("Audio recorder streaming stopped: pcm_bytes=\(recordedBytes)")
+        Logger.shared.log("Audio recorder streaming stopped: pcm_bytes=\(recordedPCM.count)")
+        return recordedPCM
     }
 
     func discardRecording(clearPreRoll: Bool) {
