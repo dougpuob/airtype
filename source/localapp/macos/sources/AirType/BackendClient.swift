@@ -5,7 +5,7 @@ struct TranscriptionResponse: Decodable {
 }
 
 final class BackendClient {
-    func transcribeIME(wavData: Data, endpoint: String, language: String, auth: WebUIAuthConfig, inputID: Int? = nil) async throws -> String {
+    func transcribeIME(wavData: Data, endpoint: String, language: String, auth: WebUIAuthConfig, beam: Int? = nil, inputID: Int? = nil) async throws -> String {
         let url = URL(string: endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/api/transcribe/ime")!
         let startedAt = Date()
         let logPrefix = inputID.map { "Input #\($0): " } ?? ""
@@ -17,7 +17,7 @@ final class BackendClient {
         request.httpBody = multipartBody(
             boundary: boundary,
             fields: [
-                "beam_size": "1",
+                "beam_size": String(beam ?? 1),
                 "record_type": "ime",
                 "language": language
             ],
@@ -78,7 +78,7 @@ final class BackendClient {
     func transcribe(wavData: Data, target: RemoteASRTarget, webuiLanguage: String, openAILanguage: String?) async throws -> String {
         switch target.protocolKind {
         case .webuiIME:
-            return try await transcribeIME(wavData: wavData, endpoint: target.endpoint, language: webuiLanguage, auth: target.auth)
+            return try await transcribeIME(wavData: wavData, endpoint: target.endpoint, language: webuiLanguage, auth: target.auth, beam: target.beam)
         case .openAITranscriptions:
             return try await transcribeOpenAI(wavData: wavData, target: target, language: openAILanguage)
         }
@@ -187,82 +187,6 @@ final class BackendClient {
         request.setValue("Basic \(data.base64EncodedString())", forHTTPHeaderField: "Authorization")
     }
 
-
-    // MARK: - Clip requests → Obsidian (local write)
-
-    struct ClipRequestsListResponse: Decodable {
-        let requests: [ClipRequestSummary]
-    }
-
-    struct ClipRequestSummary: Decodable {
-        let id: String
-        let status: String
-        let obsidian_save: String?
-        let has_note: Bool?
-        let note_title: String?
-        let title: String?
-    }
-
-    struct ClipRequestDetail: Decodable {
-        let id: String
-        let status: String
-        let note_title: String?
-        let title: String?
-        let note: String?
-        let obsidian_save: String?
-    }
-
-    func listClipRequests(endpoint: String, auth: WebUIAuthConfig) async throws -> [ClipRequestSummary] {
-        let base = endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: base + "/api/clip-requests") else {
-            throw NSError(domain: "AirType.Backend", code: 10, userInfo: [NSLocalizedDescriptionKey: "Invalid backend endpoint"])
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        applyAuth(auth, to: &request)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status) else {
-            let detail = String(data: data, encoding: .utf8) ?? "unknown error"
-            throw NSError(domain: "AirType.Backend", code: status, userInfo: [NSLocalizedDescriptionKey: "list clip-requests failed (\(status)): \(detail)"])
-        }
-        return try JSONDecoder().decode(ClipRequestsListResponse.self, from: data).requests
-    }
-
-    func fetchClipRequest(id: String, endpoint: String, auth: WebUIAuthConfig) async throws -> ClipRequestDetail {
-        let base = endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        guard let url = URL(string: base + "/api/clip-requests/\(encoded)") else {
-            throw NSError(domain: "AirType.Backend", code: 11, userInfo: [NSLocalizedDescriptionKey: "Invalid clip request URL"])
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        applyAuth(auth, to: &request)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status) else {
-            let detail = String(data: data, encoding: .utf8) ?? "unknown error"
-            throw NSError(domain: "AirType.Backend", code: status, userInfo: [NSLocalizedDescriptionKey: "fetch clip-request failed (\(status)): \(detail)"])
-        }
-        return try JSONDecoder().decode(ClipRequestDetail.self, from: data)
-    }
-
-    func markClipRequestSaved(id: String, endpoint: String, auth: WebUIAuthConfig) async throws {
-        let base = endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        guard let url = URL(string: base + "/api/clip-requests/\(encoded)/save") else {
-            throw NSError(domain: "AirType.Backend", code: 12, userInfo: [NSLocalizedDescriptionKey: "Invalid save URL"])
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        applyAuth(auth, to: &request)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status) else {
-            let detail = String(data: data, encoding: .utf8) ?? "unknown error"
-            throw NSError(domain: "AirType.Backend", code: status, userInfo: [NSLocalizedDescriptionKey: "mark saved failed (\(status)): \(detail)"])
-        }
-    }
 
     private func applyAuth(_ auth: WebUIAuthConfig, to request: inout URLRequest) {
         guard auth.enabled, !auth.username.isEmpty, !auth.password.isEmpty else { return }

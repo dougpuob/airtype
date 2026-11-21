@@ -45,6 +45,13 @@ struct HistoryQuery {
     var offset: Int = 0
 }
 
+struct HistorySpanCounts: Equatable {
+    var today = 0
+    var yesterday = 0
+    var thisWeek = 0
+    var all = 0
+}
+
 /// SQLite-backed Voice Input + Obsidian import history under `~/.airtype/history.sqlite`.
 final class HistoryStore {
     static let shared = HistoryStore()
@@ -372,7 +379,52 @@ final class HistoryStore {
         return items
     }
 
+    func voiceCounts(now: Date = Date()) -> HistorySpanCounts {
+        counts(table: "voice_inputs", now: now)
+    }
+
+    func obsidianCounts(now: Date = Date()) -> HistorySpanCounts {
+        counts(table: "obsidian_imports", now: now)
+    }
+
     // MARK: - Helpers
+
+    private func counts(table: String, now: Date) -> HistorySpanCounts {
+        queue.sync {
+            let calendar = Calendar.current
+            let startOfToday = calendar.startOfDay(for: now)
+            let startOfTomorrow = calendar.date(byAdding: .day, value: 1, to: startOfToday) ?? now
+            let startOfYesterday = calendar.date(byAdding: .day, value: -1, to: startOfToday) ?? startOfToday
+            let startOfWeek = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? startOfToday
+            return HistorySpanCounts(
+                today: countRows(table: table, from: startOfToday, to: startOfTomorrow),
+                yesterday: countRows(table: table, from: startOfYesterday, to: startOfToday),
+                thisWeek: countRows(table: table, from: startOfWeek, to: startOfTomorrow),
+                all: countRows(table: table, from: nil, to: nil)
+            )
+        }
+    }
+
+    private func countRows(table: String, from start: Date?, to end: Date?) -> Int {
+        guard let db, table == "voice_inputs" || table == "obsidian_imports" else { return 0 }
+        var sql = "SELECT COUNT(*) FROM \(table) WHERE 1=1"
+        var args: [Any?] = []
+        if let start {
+            sql += " AND created_at >= ?"
+            args.append(iso.string(from: start))
+        }
+        if let end {
+            sql += " AND created_at < ?"
+            args.append(iso.string(from: end))
+        }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else { return 0 }
+        defer { sqlite3_finalize(stmt) }
+        bindArgs(stmt, args)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int(stmt, 0))
+    }
+
 
     private func appendDateFilters(to sql: inout String, args: inout [Any?], query: HistoryQuery, column: String) {
         if let from = query.dateFrom {

@@ -20,14 +20,7 @@ enum ObsidianVaultError: LocalizedError {
 enum ObsidianVault {
     /// Sanitize a note title for use as a filename.
     static func safeName(_ text: String) -> String {
-        let cleaned = text.replacingOccurrences(
-            of: #"[\\/:*?"<>|;；：\x00-\x1f]"#,
-            with: " ",
-            options: .regularExpression
-        )
-        return cleaned
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        ObsidianNoteFiles.safeName(text)
     }
 
     /// Expand `~` and return the folder where notes should be written.
@@ -53,21 +46,16 @@ enum ObsidianVault {
     }
 
     /// Write `note` as `{title}.md` (or `{title} N.md` if taken). Returns the file URL.
+    ///
+    /// When `reuseIdentical` is true, an existing file in that name sequence whose
+    /// contents already equal `note` is returned instead of creating another file.
     @discardableResult
-    static func writeNote(title: String, note: String, config: ObsidianConfig) throws -> URL {
+    static func writeNote(title: String, note: String, config: ObsidianConfig, reuseIdentical: Bool = false) throws -> URL {
         let dir = try targetDirectory(config: config)
-        let base = safeName(title).isEmpty ? "Untitled" : safeName(title)
-        var url = dir.appendingPathComponent("\(base).md")
-        var counter = 2
-        while FileManager.default.fileExists(atPath: url.path) {
-            url = dir.appendingPathComponent("\(base) \(counter).md")
-            counter += 1
-        }
         do {
-            try note.write(to: url, atomically: true, encoding: .utf8)
+            return try ObsidianNoteFiles.place(markdown: note, title: title, directory: dir, reuseIdentical: reuseIdentical)
         } catch {
             throw ObsidianVaultError.writeFailed(error.localizedDescription)
         }
-        return url
     }
 }

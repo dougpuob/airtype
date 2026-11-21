@@ -765,12 +765,67 @@ def _merge_entries(existing: list[_ThreadEntry], incoming: list[_ThreadEntry]) -
         if key not in seen:
             entries.append(entry)
 
-    if sum(1 for entry in entries if entry.taken_at) >= 2:
-        return sorted(entries, key=lambda entry: (entry.taken_at, entry.post.id))
+    return _order_thread_entries(entries)
 
+
+def _order_thread_entries(entries: list[_ThreadEntry]) -> list[_ThreadEntry]:
+    """Keep a self-thread in the order the author wrote it.
+
+    Threads gives a burst of self-replies almost the same ``taken_at``, and
+    the media ids are not that writing order. Sorting by those two fields
+    moves the opening post behind the continuations. The payload spine is
+    already in reading order: the opening post, then each self-reply as it
+    appeared. Parent links are used when they connect the whole spine.
+    """
+    chained = _order_by_parent_links(entries)
+    if chained is not None:
+        return chained
     roots = [entry for entry in entries if not entry.is_reply]
     replies = [entry for entry in entries if entry.is_reply]
-    return roots + replies
+    if roots and replies:
+        return roots + replies
+    return list(entries)
+
+
+def _order_by_parent_links(entries: list[_ThreadEntry]) -> list[_ThreadEntry] | None:
+    by_code: dict[str, _ThreadEntry] = {}
+    for entry in entries:
+        code = _entry_code(entry)
+        if code and code not in by_code:
+            by_code[code] = entry
+    if len(by_code) < 2:
+        return None
+
+    children: dict[str, list[_ThreadEntry]] = {code: [] for code in by_code}
+    has_parent: set[str] = set()
+    for entry in entries:
+        code = _entry_code(entry)
+        parent = entry.parent_code
+        if not code or code in has_parent or not parent or parent not in by_code or parent == code:
+            continue
+        children[parent].append(entry)
+        has_parent.add(code)
+    if len(has_parent) < len(by_code) - 1:
+        return None
+
+    ordered: list[_ThreadEntry] = []
+    seen: set[str] = set()
+
+    def walk(entry: _ThreadEntry) -> None:
+        code = _entry_code(entry)
+        if not code or code in seen:
+            return
+        seen.add(code)
+        ordered.append(entry)
+        for child in children.get(code, []):
+            walk(child)
+
+    for entry in entries:
+        if _entry_code(entry) not in has_parent:
+            walk(entry)
+    for entry in entries:
+        walk(entry)
+    return ordered if len(ordered) == len(by_code) else None
 
 
 def _is_reply_to_other(entry: _ThreadEntry, author: str) -> bool:

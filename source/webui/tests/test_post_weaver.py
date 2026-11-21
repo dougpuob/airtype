@@ -190,6 +190,57 @@ class ThreadsPostWeaverTests(unittest.TestCase):
         )
         self.assertEqual(output["warnings"], [])
 
+    def test_burst_self_thread_keeps_reading_order_when_timestamps_tie(self) -> None:
+        """A self-thread posted together shares one timestamp.
+
+        The opening post can have the latest ``taken_at`` and the highest
+        media id, while an earlier continuation has a smaller id than the
+        post after it. Reading order is the spine order, not that sort.
+        """
+        page = _page(
+            {
+                "thread": {
+                    "thread_items": [
+                        _item("400", "alice", "1 first", is_reply=False, taken_at=101),
+                    ]
+                },
+                "replies": {
+                    "thread_items": [
+                        _item("200", "alice", "2 second", is_reply=True, reply_to="alice", taken_at=100),
+                        _item("100", "alice", "3 third", is_reply=True, reply_to="alice", taken_at=100),
+                        _item("300", "alice", "4 fourth", is_reply=True, reply_to="alice", taken_at=101),
+                    ]
+                },
+            }
+        )
+        output = ThreadsChainCollector().collect_page(
+            "https://www.threads.com/@alice/post/400",
+            page,
+        )
+        self.assertEqual(
+            [post["text"] for post in output["posts"]],
+            ["1 first", "2 second", "3 third", "4 fourth"],
+        )
+
+    def test_parent_links_order_a_thread_opened_from_the_middle(self) -> None:
+        page = _page(
+            {
+                "thread_items": [
+                    _item("p3", "alice", "3 third", is_reply=True, reply_to="alice", parent_code="p2", taken_at=300),
+                    _item("p1", "alice", "1 first", is_reply=False, taken_at=100),
+                    _item("p2", "alice", "2 second", is_reply=True, reply_to="alice", parent_code="p1", taken_at=200),
+                ]
+            }
+        )
+        output = ThreadsChainCollector().collect_page(
+            "https://www.threads.com/@alice/post/p2",
+            page,
+        )
+        self.assertEqual(
+            [post["text"] for post in output["posts"]],
+            ["1 first", "2 second", "3 third"],
+        )
+
     def test_threads_share_url_resolves_before_fetching(self) -> None:
         case = json.loads(CASE_PATH.read_text())
 

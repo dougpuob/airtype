@@ -4,6 +4,7 @@ import Foundation
 struct ObsidianImportManifest: Decodable {
     var schemaVersion: Int
     var kind: String
+    var exportID: String?
     var exportedAt: String?
     var source: Source?
     var vaultFolder: String?
@@ -14,6 +15,7 @@ struct ObsidianImportManifest: Decodable {
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case kind
+        case exportID = "export_id"
         case exportedAt = "exported_at"
         case source
         case vaultFolder = "vault_folder"

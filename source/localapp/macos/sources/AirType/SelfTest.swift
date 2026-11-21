@@ -52,8 +52,8 @@ enum SelfTest {
         if kind.isRemote {
             let store = ConfigStore()
             try? store.load()
-            RemoteWhisperSettings.configure(backend: store.config.backend, auth: store.config.webui.auth, remoteASR: store.config.remoteASR)
-            let target = RemoteWhisperSettings.target(for: RemoteWhisperSettings.selectedEndpoint)
+            RemoteWhisperSettings.configure(config: store.config)
+            let target = RemoteWhisperSettings.selectedTarget
             print("remote endpoint: \(target.endpoint) protocol=\(target.protocolKind.rawValue) model=\(target.model)")
         }
         let engine = kind.makeEngine()
