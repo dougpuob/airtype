@@ -39,6 +39,16 @@ BROWSER_USER_AGENT = (
 )
 CURL_IMPERSONATE = "chrome131"
 
+# How fetch_html talks to a site. Chrome TLS impersonation is the default
+# because many sites fingerprint the client. A WAF that rejects that
+# fingerprint (CSDN / Yundun returns HTTP 521) is listed here and fetched
+# with a normal request instead.
+HTML_FETCH_CHROME = "chrome"
+HTML_FETCH_PLAIN = "plain"
+_HTML_FETCH_BY_HOST_SUFFIX = (
+    ("csdn.net", HTML_FETCH_PLAIN),
+)
+
 # Hosts the generic pipeline must never fetch: the retired converter host
 # and local/private network addresses. (User-visible known sources live in
 # known_sources; this is the extra safety boundary for the fallback route.)
@@ -149,14 +159,30 @@ def _html_request_headers() -> dict[str, str]:
     }
 
 
+def html_fetch_strategy(url: str) -> str:
+    """Which request style to use for this article URL.
+
+    The match is the registrable host or one of its subdomains, so
+    ``blog.csdn.net`` follows the ``csdn.net`` rule. Anything not listed
+    keeps Chrome impersonation.
+    """
+    host = (urllib.parse.urlparse(url).hostname or "").lower().rstrip(".")
+    for suffix, strategy in _HTML_FETCH_BY_HOST_SUFFIX:
+        if host == suffix or host.endswith("." + suffix):
+            return strategy
+    return HTML_FETCH_CHROME
+
+
 def fetch_html(url: str, *, timeout_seconds: int = 60) -> str:
     """Download the page HTML for Trafilatura.
 
-    Prefer curl_cffi with Chrome TLS impersonation so sites that fingerprint
-    the client still return the article. The fragment is dropped first.
+    The fragment is dropped first. The request style comes from
+    :func:`html_fetch_strategy`: Chrome TLS impersonation by default, a
+    normal request for hosts whose WAF rejects that fingerprint.
     """
     target = url.split("#", 1)[0]
     headers = _html_request_headers()
+    plain = html_fetch_strategy(target) == HTML_FETCH_PLAIN
     try:
         curl_requests = _curl_requests()
         try:
@@ -165,7 +191,7 @@ def fetch_html(url: str, *, timeout_seconds: int = 60) -> str:
                 headers=headers,
                 timeout=timeout_seconds,
                 allow_redirects=True,
-                impersonate=CURL_IMPERSONATE,
+                **({} if plain else {"impersonate": CURL_IMPERSONATE}),
             )
         except TypeError:
             response = curl_requests.get(

@@ -213,6 +213,29 @@ class FetchMarkdownTests(unittest.TestCase):
         self.assertNotIn("Authorization", captured["headers"])
         self.assertIn("第一段內文", markdown)
 
+    def test_csdn_uses_a_plain_request(self) -> None:
+        self.assertEqual(web_article.html_fetch_strategy("https://blog.csdn.net/a/article/details/1"), "plain")
+        self.assertEqual(web_article.html_fetch_strategy("https://csdn.net/x"), "plain")
+        self.assertEqual(web_article.html_fetch_strategy("https://www.csdn.net/x"), "plain")
+        self.assertEqual(web_article.html_fetch_strategy("https://notcsdn.net/x"), "chrome")
+        self.assertEqual(web_article.html_fetch_strategy("https://example.com/p"), "chrome")
+
+        captured: dict = {}
+
+        class _FakeClient:
+            @staticmethod
+            def get(url, headers=None, timeout=None, allow_redirects=False, **kwargs):
+                captured["url"] = url
+                captured["kwargs"] = kwargs
+                return _FakeResponse(200, "<html><body>ok</body></html>")
+
+        with patch.object(web_article, "_curl_requests", return_value=_FakeClient):
+            web_article.fetch_html("https://blog.csdn.net/DAzhutizi_a/article/details/126618986#top")
+            self.assertNotIn("impersonate", captured["kwargs"])
+            self.assertEqual(captured["url"], "https://blog.csdn.net/DAzhutizi_a/article/details/126618986")
+            web_article.fetch_html("https://example.com/p")
+            self.assertEqual(captured["kwargs"].get("impersonate"), "chrome131")
+
     def test_http_error_becomes_runtime_error(self) -> None:
         with patch("curl_cffi.requests.get", return_value=_FakeResponse(403, "forbidden")):
             with self.assertRaises(RuntimeError) as ctx:
