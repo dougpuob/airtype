@@ -2164,12 +2164,23 @@ def _watch_run_check(target_id: str, *, queue: bool) -> Dict[str, Any]:
         return {"target": _watch_public(checked), "result": result}
 
 
+_watch_paused_logged = False
+
+
 def _run_due_watches() -> None:
+    global _watch_paused_logged
+    watching_enabled = _watch_store.watching_enabled()
+    if not watching_enabled:
+        if not _watch_paused_logged:
+            append_service_log("webui", "watch scheduler paused because watching is disabled")
+            _watch_paused_logged = True
+        return
+    _watch_paused_logged = False
     now = datetime.now(timezone.utc).astimezone()
     for target in _watch_store.list():
         if _watch_stop.is_set():
             return
-        if threads_watch.is_due(target, now):
+        if threads_watch.should_poll(target, now, watching_enabled=True):
             try:
                 _watch_run_check(str(target["id"]), queue=True)
             except Exception as error:
@@ -2230,11 +2241,28 @@ def shutdown_watch_scheduler() -> None:
 @app.get("/api/watches")
 async def list_watches():
     targets = await asyncio.to_thread(_watch_store.list)
+    watching_enabled = await asyncio.to_thread(_watch_store.watching_enabled)
     return {
         "watches": [_watch_public(target) for target in targets],
+        "watching_enabled": watching_enabled,
         "min_interval_minutes": threads_watch.MIN_INTERVAL_MINUTES,
         "scheduler_running": bool(_watch_thread and _watch_thread.is_alive()),
     }
+
+
+class WatchingEnabledRequest(BaseModel):
+    enabled: bool
+
+
+@app.patch("/api/watching")
+async def update_watching_enabled(request: WatchingEnabledRequest):
+    """Persist the master switch. Off means the scheduler does not poll."""
+    try:
+        enabled = await asyncio.to_thread(_watch_store.set_watching_enabled, request.enabled)
+    except RuntimeError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    append_service_log("webui", f"watching_enabled={str(enabled).lower()}")
+    return {"watching_enabled": enabled}
 
 
 @app.post("/api/watches/probe")
@@ -2297,6 +2325,8 @@ async def update_watch(target_id: str, request: WatchUpdateRequest):
             target["enabled"] = bool(request.enabled)
             if target["enabled"] and not was_enabled:
                 target["next_check_at"] = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+            if target["enabled"] != was_enabled:
+                append_service_log("webui", f"watch @{target.get('username')} enabled={str(target['enabled']).lower()}")
         target["updated_at"] = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
         _watch_store.save(target)
     return {"target": _watch_public(target)}

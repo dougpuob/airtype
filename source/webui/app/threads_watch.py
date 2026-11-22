@@ -381,10 +381,40 @@ class WatchStore:
             webui = {}
             document["webui"] = webui
         webui["watches"] = [watch_config_entry(entry) for entry in entries if entry.get("id")]
+        self._write_document(document)
+
+    def _write_document(self, document: dict[str, Any]) -> None:
+        if self.config_path is None:
+            return
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.config_path.with_suffix(".json.tmp")
         temporary.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         os.replace(temporary, self.config_path)
+
+    def watching_enabled(self) -> bool:
+        """True only when config.json explicitly enables scheduled polling.
+
+        A missing flag stays off. Turning the switch off has to survive a
+        restart, and an older file that never recorded the choice must not
+        start polling on its own.
+        """
+        webui = self._read_document().get("webui")
+        if not isinstance(webui, dict) or "watching_enabled" not in webui:
+            return False
+        return bool(webui.get("watching_enabled"))
+
+    def set_watching_enabled(self, enabled: bool) -> bool:
+        with _lock:
+            if self.config_path is None:
+                raise RuntimeError("Watch settings are stored in config.json, which is not configured.")
+            document = self._read_document()
+            webui = document.get("webui")
+            if not isinstance(webui, dict):
+                webui = {}
+                document["webui"] = webui
+            webui["watching_enabled"] = bool(enabled)
+            self._write_document(document)
+            return bool(enabled)
 
     def _merged(self, files: list[dict[str, Any]], entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if self.config_path is None:
@@ -507,6 +537,11 @@ def is_due(target: dict[str, Any], now: datetime) -> bool:
         return datetime.fromisoformat(str(due)) <= now
     except ValueError:
         return True
+
+
+def should_poll(target: dict[str, Any], now: datetime, *, watching_enabled: bool) -> bool:
+    """Scheduled polling runs only when the master switch and this target are both on."""
+    return bool(watching_enabled) and is_due(target, now)
 
 
 # --------------------------------------------------------------------------- #

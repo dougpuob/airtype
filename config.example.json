@@ -86,6 +86,7 @@
     ],
     "default-llm-server-name": "oMLX",
     "default-whisper-server-name": "default",
+    "watching_enabled": false,
     "watches": []
   }
 }

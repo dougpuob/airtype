@@ -296,6 +296,11 @@
           "default": "oMLX",
           "description": "Name of the default LLM server (matches the `name` field in [[webui.llm-server]]."
         },
+        "watching_enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Master switch for Watching. Scheduled polling runs only while this is true. The watch list is kept when it is false. Missing means off."
+        },
         "watches": {
           "type": "array",
           "default": [],

@@ -54,7 +54,12 @@ export type WatchTarget = {
   queued_count: number;
 };
 
-type WatchList = { watches: WatchTarget[]; min_interval_minutes: number; scheduler_running: boolean };
+type WatchList = {
+  watches: WatchTarget[];
+  watching_enabled: boolean;
+  min_interval_minutes: number;
+  scheduler_running: boolean;
+};
 type CheckResponse = { target: WatchTarget | null; result: WatchCheckResult | null };
 
 export function useWatchesQuery() {
@@ -88,6 +93,18 @@ export function useCreateWatchMutation() {
   return useMutation({
     mutationFn: (body: { target: string; label: string; interval_minutes: number; enabled: boolean; queue_latest: number }) =>
       apiRequest<CheckResponse>("/api/watches", { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: invalidate
+  });
+}
+
+export function useSetWatchingEnabledMutation() {
+  const invalidate = useInvalidateWatches();
+  return useMutation({
+    mutationFn: (enabled: boolean) =>
+      apiRequest<{ watching_enabled: boolean }>("/api/watching", {
+        method: "PATCH",
+        body: JSON.stringify({ enabled })
+      }),
     onSuccess: invalidate
   });
 }

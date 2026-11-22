@@ -37,6 +37,7 @@ import {
   useDeleteWatchMutation,
   useProbeWatchMutation,
   useRunWatchMutation,
+  useSetWatchingEnabledMutation,
   useUpdateWatchMutation,
   useWatchesQuery,
   type WatchCheckResult,
@@ -427,9 +428,32 @@ function WatchCard({ target, minInterval }: { target: WatchTarget; minInterval: 
 
 export function WatchPage() {
   const watches = useWatchesQuery();
+  const setWatching = useSetWatchingEnabledMutation();
   const minInterval = watches.data?.min_interval_minutes ?? 15;
+  const watchingEnabled = Boolean(watches.data?.watching_enabled);
   return (
     <PageScaffold title="Watching" eyebrow="Scheduled checks">
+      <WorkspacePanel>
+        <Stack spacing={0.5}>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={watchingEnabled}
+                disabled={!watches.data || setWatching.isPending}
+                onChange={(event) => setWatching.mutate(event.target.checked)}
+              />
+            }
+            label="Enable watching"
+          />
+          <Typography variant="caption" color="text.secondary">
+            Scheduled checks run only while this is on. Turning it off is saved in config and stops polling. The account list stays.
+          </Typography>
+          {setWatching.isError ? <Alert severity="error">{errorText(setWatching.error)}</Alert> : null}
+        </Stack>
+      </WorkspacePanel>
+      {!watchingEnabled && watches.data ? (
+        <Alert severity="info">Watching is off, so these accounts are not being polled.</Alert>
+      ) : null}
       <AddWatchPanel minInterval={minInterval} />
       {watches.isError ? <Alert severity="error">Could not load watches: {errorText(watches.error)}</Alert> : null}
       {watches.data && !watches.data.scheduler_running ? (

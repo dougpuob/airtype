@@ -150,6 +150,8 @@ struct WebUIConfig {
     var selectedModelName = ""
     /// `[webui.watches]`. Round-tripped so a Settings save does not drop monitors the Web UI stored.
     var watches: [WatchTargetConfig] = []
+    /// `[webui] watching_enabled`. Master switch for scheduled polling. Missing or false means off.
+    var watchingEnabled = false
 }
 
 struct LLMServerEntry {
@@ -460,7 +462,17 @@ final class ConfigStore: ObservableObject {
         }
     }
 
+    /// Watching is edited in the Web UI. Re-read it so Save cannot write back
+    /// the copy loaded at launch and turn polling on again.
+    private func refreshServerOwnedWebUISettings() {
+        guard let data = try? Data(contentsOf: path),
+              let decoded = try? ConfigJSON.decode(data) else { return }
+        config.webui.watches = decoded.webui.watches
+        config.webui.watchingEnabled = decoded.webui.watchingEnabled
+    }
+
     private func save() {
+        refreshServerOwnedWebUISettings()
         let jsonPath = AirTypeHome.configJSON
         try? FileManager.default.createDirectory(
             at: jsonPath.deletingLastPathComponent(),

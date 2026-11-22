@@ -147,6 +147,7 @@ enum ConfigJSON {
             var webToMarkdown: WebToMarkdown?
             var immich: Immich?
             var capturePost: CapturePost?
+            var watchingEnabled: Bool?
             var watches: [Watch]?
             // Preserve unknown webui keys by round-tripping via extra bag if needed later.
 
@@ -162,6 +163,7 @@ enum ConfigJSON {
                 case webToMarkdown = "web-to-markdown"
                 case immich
                 case capturePost = "capture-post"
+                case watchingEnabled = "watching_enabled"
                 case watches
             }
 
@@ -393,6 +395,7 @@ enum ConfigJSON {
             webToMarkdown: nil,
             immich: nil,
             capturePost: nil,
+            watchingEnabled: config.webui.watchingEnabled,
             watches: config.webui.watches.map {
                 .init(
                     id: $0.id,
@@ -524,6 +527,7 @@ enum ConfigJSON {
                 config.webui.llm = config.webui.llmServers.first(where: { $0.name == selected }) ?? config.webui.llmServers[0]
                 config.webui.selectedModelName = config.webui.llm.selectedModel
             }
+            config.webui.watchingEnabled = wu.watchingEnabled ?? false
             if let watches = wu.watches {
                 config.webui.watches = watches.map {
                     WatchTargetConfig(

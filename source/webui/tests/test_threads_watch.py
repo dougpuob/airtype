@@ -216,6 +216,47 @@ class WatchConfigPersistenceTests(unittest.TestCase):
             self.assertEqual(json.loads(config.read_text(encoding="utf-8"))["webui"]["watches"], [])
             self.assertIsNone(store.get(target["id"]))
 
+    def test_watching_enabled_is_off_until_recorded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            from pathlib import Path
+            config = Path(tmp) / "config.json"
+            config.write_text(json.dumps({"webui": {"watches": [{"id": "threads-keep-aaaaaa", "username": "keep.me", "enabled": True}]}}), encoding="utf-8")
+            store = tw.WatchStore(Path(tmp) / "data", config)
+            self.assertFalse(store.watching_enabled())
+            now = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+            target = {"enabled": True, "next_check_at": "2026-07-01T11:00:00+00:00"}
+            self.assertFalse(tw.should_poll(target, now, watching_enabled=store.watching_enabled()))
+
+            self.assertTrue(store.set_watching_enabled(True))
+            restarted = tw.WatchStore(Path(tmp) / "other-data", config)
+            self.assertTrue(restarted.watching_enabled())
+            self.assertTrue(tw.should_poll(target, now, watching_enabled=restarted.watching_enabled()))
+            self.assertEqual(json.loads(config.read_text(encoding="utf-8"))["webui"]["watches"][0]["username"], "keep.me")
+
+            self.assertFalse(store.set_watching_enabled(False))
+            self.assertFalse(tw.WatchStore(Path(tmp) / "data", config).watching_enabled())
+            self.assertFalse(tw.should_poll(target, now, watching_enabled=False))
+
+    def test_disabled_config_wins_over_an_enabled_runtime_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            from pathlib import Path
+            data = Path(tmp) / "data"
+            config = Path(tmp) / "config.json"
+            config.write_text("{}\n", encoding="utf-8")
+            store = tw.WatchStore(data, config)
+            saved = store.save(tw.new_target("keep.me", enabled=True, now=self.now))
+            saved["enabled"] = False
+            store.save(saved)
+            runtime = json.loads((data / "watches" / f"{saved['id']}.json").read_text(encoding="utf-8"))
+            runtime["enabled"] = True
+            (data / "watches" / f"{saved['id']}.json").write_text(json.dumps(runtime), encoding="utf-8")
+
+            loaded = store.get(saved["id"])
+            self.assertFalse(loaded["enabled"])
+            document = json.loads(config.read_text(encoding="utf-8"))
+            self.assertFalse(document["webui"]["watches"][0]["enabled"])
+            self.assertFalse(tw.should_poll(loaded, self.now + timedelta(days=1), watching_enabled=True))
+
 
 if __name__ == "__main__":
     unittest.main()
