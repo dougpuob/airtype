@@ -134,7 +134,8 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         RemoteWhisperSettings.configure(
             backend: configStore.config.backend,
             auth: configStore.config.webui.auth,
-            remoteASR: configStore.config.remoteASR
+            remoteASR: configStore.config.remoteASR,
+            profiles: configStore.config.remoteASRProfiles
         )
     }
 
@@ -578,8 +579,13 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
                     return
                 }
                 // 停錄後 LLM 整理. On any failure paste the original ASR text.
-                Logger.shared.log("\(self.inputLogPrefix(inputID))LLM polish requested chars=\(asrText.count)")
-                TextPolisher.polish(asrText, llm: self.configStore.config.webui.llm) { [weak self] polished in
+                let llm = self.polishServer()
+                Logger.shared.log("\(self.inputLogPrefix(inputID))LLM polish requested chars=\(asrText.count) profile=\(llm.name) model=\(TextPolisher.resolvedModel(for: llm))")
+                TextPolisher.polish(
+                    asrText,
+                    llm: llm,
+                    systemPromptOverride: self.configStore.config.recording.llmPolishPrompt
+                ) { [weak self] polished in
                     DispatchQueue.main.async {
                         guard let self else { return }
                         if let inputID, self.sessionCueGate.isClosed(inputID) {
@@ -667,6 +673,19 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
+    /// LLM Endpoints profile selected for Voice Input ▸ LLM Polish.
+    private func polishServer() -> LLMServerConfig {
+        TextPolisher.resolvedServer(
+            named: configStore.config.recording.llmPolishProfile,
+            webui: configStore.config.webui
+        )
+    }
+
+    private func discardPendingVoiceAudio(_ inputID: Int?) {
+        guard let inputID else { return }
+        pendingVoicePCM.removeValue(forKey: inputID)
+    }
+
     private func recordVoiceHistory(
         asrText: String,
         llmText: String?,
@@ -675,19 +694,20 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         startedAt: Date?,
         inputID: Int?
     ) {
-        let audioPCM = inputID.flatMap { pendingVoicePCM.removeValue(forKey: $0) }
         let kind = engine.kind
-        let llm = configStore.config.webui.llm
+        let llm = polishServer()
         let durationMs = startedAt.map { Int(Date().timeIntervalSince($0) * 1000) }
         let asrModel: String
         let asrEndpoint: String?
         if kind.isRemote {
-            asrModel = RemoteWhisperSettings.selectedEndpoint
+            let profile = RemoteWhisperSettings.selectedProfile
+            asrModel = profile.model.isEmpty ? RemoteWhisperSettings.title(for: profile) : profile.model
             asrEndpoint = RemoteWhisperSettings.selectedEndpoint
         } else {
             asrModel = kind.rawValue
             asrEndpoint = nil
         }
+        let audioPCM = inputID.flatMap { pendingVoicePCM.removeValue(forKey: $0) }
         HistoryStore.shared.recordVoiceAsync(
             asrText: asrText,
             llmText: llmText,
@@ -696,7 +716,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             asrModel: asrModel,
             asrEndpoint: asrEndpoint,
             llmEnabled: llmUsed,
-            llmModel: llmUsed ? (ProcessInfo.processInfo.environment["AIRTYPE_LLM_POLISH_MODEL"] ?? TextPolisher.defaultModel) : nil,
+            llmModel: llmUsed ? TextPolisher.resolvedModel(for: llm) : nil,
             llmEndpoint: llmUsed ? llm.endpoint : nil,
             result: result,
             durationMs: durationMs,
@@ -704,11 +724,6 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             audioDirectory: configStore.config.recording.voiceAudioDirectory,
             recordedAt: startedAt ?? Date()
         )
-    }
-
-    private func discardPendingVoiceAudio(_ inputID: Int?) {
-        guard let inputID else { return }
-        pendingVoicePCM.removeValue(forKey: inputID)
     }
 
     private func cancelRecording() {
@@ -810,7 +825,8 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         let engineMenu = NSMenu()
         let localMenu = NSMenu()
         let storedLocal = ASREngineKind.storedLocalModel
-        for kind in ASREngineKind.localCases {
+        for model in LocalASRCatalog.models {
+            let kind = model.kind
             let item = NSMenuItem(title: kind.title, action: #selector(selectEngine(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = kind.rawValue
@@ -824,22 +840,25 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         engineMenu.addItem(localItem)
 
         let remoteMenu = NSMenu()
-        let selectedRemote = RemoteWhisperSettings.selectedEndpoint
-        if RemoteWhisperSettings.endpoints.isEmpty {
+        let selectedProfile = RemoteWhisperSettings.selectedProfile
+        let menuProfiles = RemoteWhisperSettings.menuProfiles
+        if menuProfiles.isEmpty {
             let empty = NSMenuItem(title: "No Server Configured", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             remoteMenu.addItem(empty)
         }
-        for endpoint in RemoteWhisperSettings.endpoints {
-            let item = NSMenuItem(title: endpoint, action: #selector(selectRemoteEndpoint(_:)), keyEquivalent: "")
+        for profile in menuProfiles {
+            let item = NSMenuItem(title: RemoteWhisperSettings.title(for: profile), action: #selector(selectRemoteEndpoint(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = endpoint
-            item.state = isRemote && endpoint == selectedRemote ? .on : .off
+            item.representedObject = profile.name
+            item.state = isRemote && profile.name == selectedProfile.name ? .on : .off
+            let endpoint = RemoteWhisperSettings.normalize(profile.endpoint)
             item.isEnabled = RemoteWhisperSettings.envEndpoint == nil || endpoint == RemoteWhisperSettings.envEndpoint
-            let target = RemoteWhisperSettings.target(for: endpoint)
-            item.toolTip = target.protocolKind == .openAITranscriptions
-                ? "\(target.protocolKind.title) · \(target.model)"
-                : target.protocolKind.title
+            let target = RemoteWhisperSettings.target(for: profile)
+            var tip = profile.endpoint
+            tip += " · \(target.protocolKind.title)"
+            if !target.model.isEmpty { tip += " · \(target.model)" }
+            item.toolTip = tip
             remoteMenu.addItem(item)
         }
         remoteMenu.addItem(.separator())
@@ -848,7 +867,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         remoteMenu.addItem(configureItem)
         let testItem = NSMenuItem(title: "Test Connection", action: #selector(testRemoteConnection), keyEquivalent: "")
         testItem.target = self
-        testItem.isEnabled = !RemoteWhisperSettings.endpoints.isEmpty
+        testItem.isEnabled = !RemoteWhisperSettings.menuProfiles.isEmpty
         remoteMenu.addItem(testItem)
         let remoteItem = NSMenuItem(title: "Remote", action: nil, keyEquivalent: "")
         remoteItem.state = isRemote ? .on : .off
@@ -1027,12 +1046,12 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @objc private func selectRemoteEndpoint(_ sender: NSMenuItem) {
-        guard let endpoint = sender.representedObject as? String else { return }
+        guard let name = sender.representedObject as? String, !name.isEmpty else { return }
         guard recordingState == .idle else {
             NSSound.beep()
             return
         }
-        RemoteWhisperSettings.select(endpoint)
+        RemoteWhisperSettings.select(profile: name)
         ASREngineKind.persistBackend(remote: true)
         switchEngine(to: .remoteWhisper, force: true)
     }
@@ -1177,9 +1196,11 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         }
 
         if useRemote {
-            if RemoteWhisperSettings.selectedEndpoint.isEmpty,
-               let endpoint = RemoteWhisperSettings.normalize(newConfig.remoteASR.endpoint) {
-                RemoteWhisperSettings.select(endpoint)
+            if RemoteWhisperSettings.selectedProfile.name.isEmpty {
+                let name = newConfig.selectedRemoteASRName.isEmpty ? newConfig.remoteASR.name : newConfig.selectedRemoteASRName
+                if !name.isEmpty {
+                    RemoteWhisperSettings.select(profile: name)
+                }
             }
             ASREngineKind.persistBackend(remote: true)
             let selected = RemoteWhisperSettings.selectedEndpoint

@@ -31,6 +31,8 @@ struct RemoteASRTarget {
     var model: String
     var apiKey: String
     var auth: WebUIAuthConfig
+    /// Optional OpenAI transcriptions `prompt` (empty = omit).
+    var prompt: String = ""
 }
 
 /// Remote endpoint choices + auth, populated by the coordinator from the config
@@ -45,15 +47,29 @@ enum RemoteWhisperSettings {
         return raw.isEmpty ? nil : normalize(raw)
     }
 
+    static let profileDefaultsKey = "asrRemoteProfile"
     static var endpoints: [String] = []
     static var defaultEndpoint = ""
     static var auth = WebUIAuthConfig()
-    /// [localapp.remote-asr] (Settings ▸ Remote ASR). Its endpoint is listed first and owns protocol/model/api_key;
-    /// the [localapp.backend-endpoint] endpoints always use the WebUI protocol.
+    /// Named profiles from [[localapp.remote-asr]]. The menu shows `name`, not the URL.
+    static var profiles: [RemoteASRConfig] = []
+    /// Active profile from config (`default-remote-asr-name`) before the menu overrides it.
     static var remoteASR = RemoteASRConfig()
 
-    static func configure(backend: BackendConfig, auth: WebUIAuthConfig, remoteASR: RemoteASRConfig = RemoteASRConfig()) {
+    static func configure(
+        backend: BackendConfig,
+        auth: WebUIAuthConfig,
+        remoteASR: RemoteASRConfig = RemoteASRConfig(),
+        profiles: [RemoteASRConfig] = []
+    ) {
         self.remoteASR = remoteASR
+        let named = profiles.filter { normalize($0.endpoint) != nil }
+        if named.isEmpty, normalize(remoteASR.endpoint) != nil {
+            self.profiles = [remoteASR]
+        } else {
+            self.profiles = named
+        }
+        // Legacy URL list, used only when there is no named profile.
         var list: [String] = []
         for candidate in [envEndpoint, normalize(remoteASR.endpoint), normalize(backend.remoteEndpoint), normalize(backend.localEndpoint)] {
             guard let value = candidate, !value.isEmpty, !list.contains(value) else { continue }
@@ -66,32 +82,101 @@ enum RemoteWhisperSettings {
         self.auth = auth
     }
 
+    /// Menu / Behavior rows. Named profiles win; bare backend URLs are only a fallback.
+    static var menuProfiles: [RemoteASRConfig] {
+        if !profiles.isEmpty { return profiles }
+        return endpoints.map { endpoint in
+            var profile = RemoteASRConfig()
+            profile.name = endpoint
+            profile.endpoint = endpoint
+            return profile
+        }
+    }
+
+    static func title(for profile: RemoteASRConfig) -> String {
+        let name = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? (normalize(profile.endpoint) ?? "") : name
+    }
+
+    /// Env override > menu profile name > legacy stored URL > config's active profile.
+    static var selectedProfile: RemoteASRConfig {
+        if let env = envEndpoint {
+            if let match = profiles.first(where: { normalize($0.endpoint) == env && $0.name == storedProfileName }) {
+                return match
+            }
+            if let match = profiles.first(where: { normalize($0.endpoint) == env }) {
+                return match
+            }
+            var synthetic = RemoteASRConfig()
+            synthetic.name = env
+            synthetic.endpoint = env
+            return synthetic
+        }
+        if let name = storedProfileName, let match = profiles.first(where: { $0.name == name }) {
+            return match
+        }
+        if let stored = UserDefaults.standard.string(forKey: endpointDefaultsKey),
+           let endpoint = normalize(stored) {
+            if let match = profiles.first(where: { $0.name == remoteASR.name && normalize($0.endpoint) == endpoint }) {
+                return match
+            }
+            if let match = profiles.first(where: { normalize($0.endpoint) == endpoint }) {
+                return match
+            }
+        }
+        if let match = profiles.first(where: { $0.name == remoteASR.name }) {
+            return match
+        }
+        return profiles.first ?? remoteASR
+    }
+
     /// Env override > menu choice (UserDefaults, if still configured) > config remote_endpoint.
     static var selectedEndpoint: String {
-        if let env = envEndpoint { return env }
-        if let stored = UserDefaults.standard.string(forKey: endpointDefaultsKey), endpoints.contains(stored) {
-            return stored
-        }
-        return defaultEndpoint
+        normalize(selectedProfile.endpoint) ?? defaultEndpoint
     }
 
     static func select(_ endpoint: String) {
         UserDefaults.standard.set(endpoint, forKey: endpointDefaultsKey)
+        if let match = profiles.first(where: { normalize($0.endpoint) == normalize(endpoint) }) {
+            UserDefaults.standard.set(match.name, forKey: profileDefaultsKey)
+        }
     }
 
-    /// Protocol / model / key for an endpoint: the [localapp.remote-asr] endpoint uses its own settings,
-    /// any other endpoint is an AirType WebUI.
+    static func select(profile name: String) {
+        UserDefaults.standard.set(name, forKey: profileDefaultsKey)
+        if let match = menuProfiles.first(where: { $0.name == name }),
+           let endpoint = normalize(match.endpoint) {
+            UserDefaults.standard.set(endpoint, forKey: endpointDefaultsKey)
+        }
+    }
+
+    static func target(for profile: RemoteASRConfig) -> RemoteASRTarget {
+        let endpoint = normalize(profile.endpoint) ?? profile.endpoint
+        return RemoteASRTarget(
+            endpoint: endpoint,
+            protocolKind: RemoteASRProtocol(rawValue: profile.protocolName) ?? .webuiIME,
+            model: profile.model,
+            apiKey: profile.apiKey,
+            auth: auth,
+            prompt: profile.prompt
+        )
+    }
+
+    /// Protocol / model / key for an endpoint. The selected profile wins when several share one URL.
     static func target(for endpoint: String) -> RemoteASRTarget {
-        if let configured = normalize(remoteASR.endpoint), configured == endpoint {
-            return RemoteASRTarget(
-                endpoint: endpoint,
-                protocolKind: RemoteASRProtocol(rawValue: remoteASR.protocolName) ?? .webuiIME,
-                model: remoteASR.model,
-                apiKey: remoteASR.apiKey,
-                auth: auth
-            )
+        if let configured = normalize(selectedProfile.endpoint), configured == normalize(endpoint) {
+            return target(for: selectedProfile)
+        }
+        if let profile = profiles.first(where: { normalize($0.endpoint) == normalize(endpoint) }) {
+            return target(for: profile)
         }
         return RemoteASRTarget(endpoint: endpoint, protocolKind: .webuiIME, model: "", apiKey: "", auth: auth)
+    }
+
+    private static var storedProfileName: String? {
+        let raw = UserDefaults.standard.string(forKey: profileDefaultsKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return raw.isEmpty ? nil : raw
     }
 
     /// OpenAI `language` (ISO-639-1); nil lets the server auto-detect.

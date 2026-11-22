@@ -61,6 +61,8 @@ struct RemoteASRConfig: Equatable {
     var protocolName = "webui-ime"
     var model = ""
     var apiKey = ""
+    /// Optional prompt sent with OpenAI-compatible `/v1/audio/transcriptions` (ignored by webui-ime).
+    var prompt = ""
 }
 
 /// Field metadata exposed to the Settings window (mirrors the JSON schema sections).
@@ -105,6 +107,10 @@ struct RecordingConfig {
     var hotkeyTrigger = "auto"
     /// Quiet system sounds when capture actually starts / after capture stops.
     var playCues = true
+    /// Optional system prompt for Voice Input ▸ LLM Polish. Empty uses TextPolisher's built-in default.
+    var llmPolishPrompt = ""
+    /// `[[webui.llm-server]]` profile name used by Voice Input ▸ LLM Polish. Empty uses the default LLM profile.
+    var llmPolishProfile = ""
     /// Folder where each voice input is saved as Opus. Empty skips saving. Set from Voice Input ▸ History.
     var voiceAudioDirectory = ""
 }
@@ -289,6 +295,7 @@ final class ConfigStore: ObservableObject {
             "Config localapp.recording: hotkey_press_count=\(config.recording.hotkeyPressCount), "
             + "hotkey_trigger=\(config.recording.hotkeyTrigger), "
             + "play_cues=\(config.recording.playCues), "
+            + "llm_polish_profile=\(config.recording.llmPolishProfile.isEmpty ? "(default)" : config.recording.llmPolishProfile), "
             + "voice_audio_dir=\(config.recording.voiceAudioDirectory.isEmpty ? "(empty)" : config.recording.voiceAudioDirectory)"
         )
         Logger.shared.log(
@@ -531,7 +538,11 @@ final class ConfigStore: ObservableObject {
                 stringField("localapp.remote-asr", "api_key", kind: .secret,
                             comment: "Bearer token for the openai protocol. webui-ime uses [webui.auth].",
                             apply: { $0.remoteASR.apiKey = $1 },
-                            render: { $0.remoteASR.apiKey })
+                            render: { $0.remoteASR.apiKey }),
+                stringField("localapp.remote-asr", "prompt",
+                            comment: "Optional prompt for the openai protocol (/v1/audio/transcriptions). Ignored by webui-ime.",
+                            apply: { $0.remoteASR.prompt = $1 },
+                            render: { $0.remoteASR.prompt })
             ]
         ),
         ConfigSectionSchema(
@@ -572,6 +583,14 @@ final class ConfigStore: ObservableObject {
                           comment: "Play quiet system sounds when recording capture starts and after it stops.",
                           apply: { $0.recording.playCues = parseBool($1, defaultValue: true) },
                           render: { $0.recording.playCues ? "true" : "false" }),
+                stringField("localapp.recording", "llm_polish_prompt",
+                            comment: "Optional system prompt for Voice Input ▸ LLM Polish. Empty uses the built-in TextPolisher default.",
+                            apply: { $0.recording.llmPolishPrompt = $1 },
+                            render: { $0.recording.llmPolishPrompt }),
+                stringField("localapp.recording", "llm_polish_profile",
+                            comment: "LLM Endpoints profile name for Voice Input ▸ LLM Polish. Empty uses the default LLM profile.",
+                            apply: { $0.recording.llmPolishProfile = $1.trimmingCharacters(in: .whitespacesAndNewlines) },
+                            render: { $0.recording.llmPolishProfile }),
                 stringField("localapp.recording", "voice_audio_dir",
                             comment: "Folder where each voice input is saved as Opus. Empty skips saving. Edited on Voice Input ▸ History.",
                             apply: { $0.recording.voiceAudioDirectory = $1.trimmingCharacters(in: .whitespacesAndNewlines) },

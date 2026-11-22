@@ -68,11 +68,15 @@ enum ConfigJSON {
             var hotkeyPressCount: String?
             var hotkeyTrigger: String?
             var playCues: Bool?
+            var llmPolishPrompt: String?
+            var llmPolishProfile: String?
             var voiceAudioDir: String?
             enum CodingKeys: String, CodingKey {
                 case hotkeyPressCount = "hotkey_press_count"
                 case hotkeyTrigger = "hotkey_trigger"
                 case playCues = "play_cues"
+                case llmPolishPrompt = "llm_polish_prompt"
+                case llmPolishProfile = "llm_polish_profile"
                 case voiceAudioDir = "voice_audio_dir"
             }
         }
@@ -122,8 +126,9 @@ enum ConfigJSON {
             var protocolName: String?
             var model: String?
             var apiKey: String?
+            var prompt: String?
             enum CodingKeys: String, CodingKey {
-                case name, endpoint, model
+                case name, endpoint, model, prompt
                 case protocolName = "protocol"
                 case apiKey = "api_key"
             }
@@ -314,6 +319,8 @@ enum ConfigJSON {
                 hotkeyPressCount: config.recording.hotkeyPressCount,
                 hotkeyTrigger: config.recording.hotkeyTrigger,
                 playCues: config.recording.playCues,
+                llmPolishPrompt: config.recording.llmPolishPrompt,
+                llmPolishProfile: config.recording.llmPolishProfile,
                 voiceAudioDir: config.recording.voiceAudioDirectory
             ),
             obsidian: .init(
@@ -338,7 +345,7 @@ enum ConfigJSON {
                 temperature: config.localWhisper.temperature
             ),
             remoteAsr: (config.remoteASRProfiles.isEmpty ? [config.remoteASR] : config.remoteASRProfiles).map {
-                .init(name: $0.name, endpoint: $0.endpoint, protocolName: $0.protocolName, model: $0.model, apiKey: $0.apiKey)
+                .init(name: $0.name, endpoint: $0.endpoint, protocolName: $0.protocolName, model: $0.model, apiKey: $0.apiKey, prompt: $0.prompt)
             },
             defaultRemoteAsrName: config.selectedRemoteASRName.isEmpty ? config.remoteASR.name : config.selectedRemoteASRName
         )
@@ -442,6 +449,8 @@ enum ConfigJSON {
                     }
                 }
                 if let v = r.playCues { config.recording.playCues = v }
+                if let v = r.llmPolishPrompt { config.recording.llmPolishPrompt = v }
+                if let v = r.llmPolishProfile { config.recording.llmPolishProfile = v }
                 if let v = r.voiceAudioDir { config.recording.voiceAudioDirectory = v }
             }
             if let o = la.obsidian {
@@ -458,7 +467,8 @@ enum ConfigJSON {
                         endpoint: $0.endpoint ?? "",
                         protocolName: $0.protocolName ?? "webui-ime",
                         model: $0.model ?? "",
-                        apiKey: $0.apiKey ?? ""
+                        apiKey: $0.apiKey ?? "",
+                        prompt: $0.prompt ?? ""
                     )
                 }
                 let selected = la.defaultRemoteAsrName ?? config.remoteASRProfiles[0].name

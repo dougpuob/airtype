@@ -1,8 +1,8 @@
 import Foundation
 
-/// localapp: optional "停錄後 LLM 整理" — after recording stops, send the final ASR text to the user's
-/// local OpenAI-compatible LLM (oMLX, from ~/.airtype/config.json webui.llm-server default server)
-/// for typo / punctuation / proper-noun cleanup. Thinking is forced OFF for speed.
+/// localapp: optional "停錄後 LLM 整理" — after recording stops, send the final ASR text to the
+/// LLM Endpoints profile chosen in Voice Input ▸ Behavior (or the default LLM profile when unset)
+/// for typo / punctuation / proper-noun cleanup. Thinking follows that profile.
 /// Any failure (network, timeout, empty / suspicious output) returns nil so the caller pastes the original ASR text.
 enum TextPolisher {
     static let defaultsKey = "llmPolishEnabled"
@@ -13,8 +13,33 @@ enum TextPolisher {
         return UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
     }
 
-    /// 停錄後整理固定用這顆（oMLX model id，6bit）；AIRTYPE_LLM_POLISH_MODEL 可覆寫。不跟 WebUI selected-model 走。
+    /// Used when the chosen profile has no selected-model. AIRTYPE_LLM_POLISH_MODEL overrides either.
     static let defaultModel = "Qwen3.6-35B-A3B-MLX-6bit"
+
+    /// Profile named in Voice Input ▸ Behavior.
+    /// An empty or unknown name keeps the default LLM profile's endpoint and key, but clears
+    /// `selectedModel` so polish stays on `defaultModel` until a profile is chosen.
+    static func resolvedServer(named profileName: String, webui: WebUIConfig) -> LLMServerConfig {
+        let servers = webui.llmServers.isEmpty ? [webui.llm] : webui.llmServers
+        let wanted = profileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !wanted.isEmpty, let match = servers.first(where: { $0.name == wanted }) {
+            return match
+        }
+        let fallbackName = webui.selectedServerName.isEmpty ? webui.llm.name : webui.selectedServerName
+        var fallback = servers.first(where: { $0.name == fallbackName }) ?? servers.first ?? webui.llm
+        fallback.selectedModel = ""
+        return fallback
+    }
+
+    /// Env override, then the profile's selected-model, then `defaultModel`.
+    static func resolvedModel(for llm: LLMServerConfig) -> String {
+        if let raw = ProcessInfo.processInfo.environment["AIRTYPE_LLM_POLISH_MODEL"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            return raw
+        }
+        let selected = llm.selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return selected.isEmpty ? defaultModel : selected
+    }
 
     static let systemPrompt = "你是中文語音輸入後處理。只修正明顯錯字、標點、專有名詞；若說話者提到「有幾點／幾項」、「第一、第二…」或「一是…二是…」等列舉，請在每一項前斷行，改成條列，每項一行，格式為「1. …」「2. …」，列表前的引言保留為獨立一行；沒有列舉就不要硬改成條列。口述常有重說、改口或換句話重講同一件事（例如「我想要你去。我想讓你去幫我做一件事情。」），遇到前後句意思相同或重疊時，請合併成一句自然的話（例：「我想讓你去幫我做一件事情。」），不要重複保留；以較完整、較後面的說法為主，若前句有後句沒有的細節則併入；不同的意思不可刪除，只去掉重複。保留中英夾雜與原意。數字保持阿拉伯數字。不要加標題、不要解釋、不要思考過程。只輸出整理後全文。"
 
@@ -25,27 +50,33 @@ enum TextPolisher {
         return 15
     }
 
-    static func polish(_ text: String, llm: LLMServerConfig, completion: @escaping (String?) -> Void) {
+    /// Resolves the polish system prompt: trimmed override if non-empty, otherwise the built-in default.
+    static func resolvedSystemPrompt(_ override: String?) -> String {
+        let trimmed = (override ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? systemPrompt : trimmed
+    }
+
+    static func polish(_ text: String, llm: LLMServerConfig, systemPromptOverride: String? = nil, completion: @escaping (String?) -> Void) {
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else { completion(nil); return }
-        // Polish has its own fixed model (endpoint / api key still come from the config's default LLM server).
-        let model = ProcessInfo.processInfo.environment["AIRTYPE_LLM_POLISH_MODEL"] ?? defaultModel
+        let model = resolvedModel(for: llm)
         var base = llm.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         while base.hasSuffix("/") { base.removeLast() }
         let urlString = base.hasSuffix("/v1") ? "\(base)/chat/completions" : "\(base)/v1/chat/completions"
         guard !model.isEmpty, let url = URL(string: urlString) else {
-            Logger.shared.log("LLM polish skipped: missing endpoint/model (endpoint=\(llm.endpoint), model=\(model))")
+            Logger.shared.log("LLM polish skipped: missing endpoint/model (profile=\(llm.name), endpoint=\(llm.endpoint), model=\(model))")
             completion(nil)
             return
         }
 
         let thinking = llm.thinking
+        let prompt = resolvedSystemPrompt(systemPromptOverride)
         let body: [String: Any] = [
             "model": model,
             "stream": false,
             "temperature": 0.2,
             "messages": [
-                ["role": "system", "content": systemPrompt],
+                ["role": "system", "content": prompt],
                 ["role": "user", "content": input],
             ],
             // Prefer config `thinking`; polish defaults to off when unset/false for speed.
@@ -89,7 +120,7 @@ enum TextPolisher {
                 completion(nil)
                 return
             }
-            Logger.shared.log("LLM polish ok in \(elapsed)s model=\(model) chars \(input.count)->\(cleaned.count)")
+            Logger.shared.log("LLM polish ok in \(elapsed)s profile=\(llm.name) model=\(model) chars \(input.count)->\(cleaned.count)")
             completion(cleaned)
         }.resume()
     }

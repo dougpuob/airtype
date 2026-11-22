@@ -11,6 +11,10 @@ enum TranscriptFormatter {
     static func format(_ raw: String, mode: String, fixEnglishCase: Bool = true) -> String {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return "" }
+        if stripLanguageTagsEnabled {
+            text = stripLanguageTags(text)
+            guard !text.isEmpty else { return "" }
+        }
         if fixEnglishCase && lowercaseEnglishEnabled {
             text = lowercaseAllCapsEnglish(text)
         }
@@ -28,6 +32,33 @@ enum TranscriptFormatter {
             text = ChineseNumerals.convert(text)
         }
         return text
+    }
+
+    // MARK: - Language tags (Qwen3-ASR echoes its prompt: "language Chinese<asr_text>")
+
+    static let stripLanguageTagsDefaultsKey = "stripLanguageTags"
+
+    /// On by default. `AIRTYPE_STRIP_LANGUAGE_TAGS=0` forces it off.
+    static var stripLanguageTagsEnabled: Bool {
+        if ProcessInfo.processInfo.environment["AIRTYPE_STRIP_LANGUAGE_TAGS"] == "0" { return false }
+        return UserDefaults.standard.object(forKey: stripLanguageTagsDefaultsKey) as? Bool ?? true
+    }
+
+    /// Drops prompt leaks such as `language Chinese<asr_text>`, a leading `assistant`, and `<|zh|>`-style tokens.
+    static func stripLanguageTags(_ input: String) -> String {
+        var text = input
+        let patterns = [
+            #"<\|[^|>]+\|>"#,
+            #"(?i)\blanguage\s+[A-Za-z]+\s*<asr_text>"#,
+            #"(?i)<asr_text>"#,
+            #"(?i)\blanguage\s+(?:Chinese|English|Japanese|Korean|Cantonese|Auto|None)\b"#,
+            #"(?i)^\s*assistant(?:\s+Function)?\s*\.?\s*"#,
+        ]
+        for pattern in patterns {
+            text = text.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+        }
+        return text.replacingOccurrences(of: #" {2,}"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - English casing (sherpa-onnx ASR emits HELLO WORLD)

@@ -18,6 +18,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     static let microphoneTabID = "localapp.microphone"
     static let localWhisperTabID = "localapp.local-whisper"
     static let recordingTabID = "localapp.recording"
+    static let onDeviceASRTabID = "voice.on-device-asr"
 
     /// (new config, use Remote ASR as the active engine)
     var onSave: ((AirTypeConfig, Bool) -> Void)?
@@ -90,6 +91,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     private let remoteProtocolPopup = NSPopUpButton()
     private let remoteAPIKeyField = NSSecureTextField()
     private let remoteModelCombo = NSComboBox()
+    private let remotePromptField = NSTextField()
     private let remoteFetchButton = NSButton()
     private let remoteFetchNote = NSTextField(wrappingLabelWithString: "")
     private var remoteEngineActive = false
@@ -146,8 +148,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     private let recordingLanguagePopup = NSPopUpButton()
     private let recordingLiveTypingCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let recordingLLMPolishCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let recordingLLMPolishProfilePopup = NSPopUpButton()
+    private let recordingLLMPolishProfileNote = NSTextField(wrappingLabelWithString: "")
+    private let recordingLLMPolishPromptField = NSTextField()
     private let recordingArabicNumeralsCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let recordingTaiwanPhrasesCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let recordingStripLanguageTagsCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let recordingLiveTypingNote = NSTextField(wrappingLabelWithString: "")
     private let recordingRemoteEndpointNote = NSTextField(wrappingLabelWithString: "")
     private let recordingDetailLabel = NSTextField(labelWithString: "Local Model")
@@ -155,9 +161,19 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     /// Local-only / Remote-only preference rows; toggled in `updateRecordingBackendUI`.
     private var recordingLiveTypingRow: NSView?
     private var recordingLLMPolishRow: NSView?
+    private var recordingLLMPolishProfileRow: NSView?
+    private var recordingLLMPolishPromptRow: NSView?
     private var recordingArabicNumeralsRow: NSView?
     private var recordingTaiwanPhrasesRow: NSView?
     private static let liveTypingDefaultsKey = "liveTypingEnabled"
+
+    private struct OnDeviceASRRow {
+        let model: LocalASRModel
+        let status: NSTextField
+        let action: NSButton
+    }
+    private var onDeviceRows: [OnDeviceASRRow] = []
+    private var onDeviceNotice: [ASREngineKind: String] = [:]
 
     // Obsidian
     private let obsidianVaultField = NSTextField()
@@ -415,13 +431,20 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         ].compactMap { $0 }
 
         var voiceLeaves: [SidebarLeaf] = [
-            leaf(
-                "Behavior",
-                Self.recordingTabID,
-                configPath: "[localapp.recording]",
-                builder: buildRecordingTab
+            SidebarLeaf(
+                title: "Local ASR",
+                sections: [Self.onDeviceASRTabID],
+                view: buildOnDeviceASRTab()
             )
-        ].compactMap { $0 }
+        ]
+        if let behavior = leaf(
+            "Behavior",
+            Self.recordingTabID,
+            configPath: "[localapp.recording]",
+            builder: buildRecordingTab
+        ) {
+            voiceLeaves.append(behavior)
+        }
         voiceLeaves.append(SidebarLeaf(title: "History", sections: ["voice.history"], view: buildVoiceHistoryTab()))
 
         let otherLeaves: [SidebarLeaf] = [
@@ -492,11 +515,17 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         if leaf.sections.contains(Self.localWhisperTabID) {
             refreshLocalWhisperServerControls()
         }
+        if leaf.sections.contains(Self.onDeviceASRTabID) {
+            refreshOnDeviceASRRows()
+        }
         if leaf.sections.contains("voice.history") {
             voiceHistoryPane?.refresh()
         }
         if leaf.sections.contains("obsidian.history") {
             obsidianHistoryPane?.refresh()
+        }
+        if leaf.sections.contains(Self.recordingTabID) {
+            refreshRecordingLLMProfiles(selected: currentLLMPolishProfileSelection())
         }
     }
 
@@ -611,6 +640,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         case "thinking": return "Thinking"
         case "remote_endpoint": return "Endpoint URL"
         case "system": return "System Prompt"
+        case "prompt": return "Prompt"
+        case "llm_polish_prompt": return "Polish Prompt"
+        case "llm_polish_profile": return "Polish Profile"
         default:
             return key.split(whereSeparator: { $0 == "_" || $0 == "-" })
                 .map { $0.prefix(1).uppercased() + $0.dropFirst() }
@@ -891,6 +923,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         remoteFetchButton.action = #selector(fetchRemoteModels)
         noteStyle(remoteFetchNote)
         let modelStack = vstack([hstack([remoteModelCombo, remoteFetchButton]), remoteFetchNote])
+        remotePromptField.usesSingleLineMode = false
+        remotePromptField.cell?.wraps = true
+        remotePromptField.cell?.isScrollable = false
+        styleEditableField(remotePromptField)
+        remotePromptField.placeholderString = "Optional OpenAI transcription prompt"
+        remotePromptField.widthAnchor.constraint(equalToConstant: 480).isActive = true
+        // ~3 visible lines (same density as LLM System Prompt, slightly shorter).
+        remotePromptField.heightAnchor.constraint(equalToConstant: 54).isActive = true
         let testStack = setupTestControls(button: remoteTestButton, spinner: remoteSpinner, result: remoteTestResult, action: #selector(testRemote))
 
                 let rows: [NSView] = [
@@ -901,6 +941,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
             row(label: "Protocol", key: "protocol", control: remoteProtocolPopup, comment: nil),
             row(label: "API Key", key: "api_key", control: remoteAPIKeyField, comment: nil),
             row(label: "Model", key: "model", control: modelStack, comment: nil),
+            row(label: "Prompt", key: "prompt", control: remotePromptField, comment: nil),
             row(label: "Test", key: nil, control: testStack, comment: nil)
         ]
         return scrollWrap(rows)
@@ -912,7 +953,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
             endpoint: Self.trim(remoteEndpointField.stringValue),
             protocolName: selectedProtocol.rawValue,
             model: Self.trim(remoteModelCombo.stringValue),
-            apiKey: Self.trim(remoteAPIKeyField.stringValue)
+            apiKey: Self.trim(remoteAPIKeyField.stringValue),
+            prompt: Self.trim(remotePromptField.stringValue)
         )
     }
 
@@ -923,6 +965,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         remoteAPIKeyField.stringValue = profile.apiKey
         remoteModelCombo.removeAllItems()
         remoteModelCombo.stringValue = profile.model
+        remotePromptField.stringValue = profile.prompt
         remoteFetchNote.stringValue = ""
         remoteTestResult.stringValue = ""
     }
@@ -946,7 +989,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
             protocolKind: selectedProtocol,
             model: Self.trim(remoteModelCombo.stringValue),
             apiKey: Self.trim(remoteAPIKeyField.stringValue),
-            auth: config.webui.auth
+            auth: config.webui.auth,
+            prompt: Self.trim(remotePromptField.stringValue)
         )
     }
 
@@ -1824,9 +1868,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
         recordingLocalModelPopup.removeAllItems()
         recordingLocalModelPopup.font = Self.fieldFont
-        for kind in ASREngineKind.localCases {
-            recordingLocalModelPopup.addItem(withTitle: kind.title)
-            recordingLocalModelPopup.lastItem?.representedObject = kind.rawValue
+        // Only models listed on Voice Input ▸ Local ASR. A model that page does not own is not offered here.
+        for model in LocalASRCatalog.models {
+            recordingLocalModelPopup.addItem(withTitle: model.title)
+            recordingLocalModelPopup.lastItem?.representedObject = model.kind.rawValue
         }
         recordingLocalModelPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
 
@@ -1872,6 +1917,42 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         let liveTypingControl = vstack([recordingLiveTypingCheckbox, recordingLiveTypingNote])
         let liveTypingRow = row(label: "Live Typing", key: "live_typing", control: liveTypingControl, comment: nil)
         let llmPolishRow = row(label: "LLM Polish", key: "llm_polish", control: recordingLLMPolishCheckbox, comment: nil)
+        recordingLLMPolishProfilePopup.removeAllItems()
+        recordingLLMPolishProfilePopup.font = Self.fieldFont
+        recordingLLMPolishProfilePopup.target = self
+        recordingLLMPolishProfilePopup.action = #selector(recordingLLMPolishProfileChanged)
+        recordingLLMPolishProfilePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 360).isActive = true
+        noteStyle(recordingLLMPolishProfileNote)
+        if let profileField = section.fields.first(where: { $0.key == "llm_polish_profile" }) {
+            sectionBindings.append(FieldBinding(
+                descriptor: profileField,
+                get: { [unowned self] in
+                    (self.recordingLLMPolishProfilePopup.selectedItem?.representedObject as? String) ?? ""
+                },
+                set: { [unowned self] value in
+                    self.selectPopup(self.recordingLLMPolishProfilePopup, represented: value)
+                    self.updateRecordingLLMPolishProfileNote()
+                }
+            ))
+        }
+        let llmPolishProfileControl = vstack([recordingLLMPolishProfilePopup, recordingLLMPolishProfileNote], spacing: 2)
+        let llmPolishProfileRow = row(label: "Polish Profile", key: "llm_polish_profile", control: llmPolishProfileControl, comment: nil)
+        recordingLLMPolishPromptField.usesSingleLineMode = false
+        recordingLLMPolishPromptField.cell?.wraps = true
+        recordingLLMPolishPromptField.cell?.isScrollable = false
+        styleEditableField(recordingLLMPolishPromptField)
+        recordingLLMPolishPromptField.placeholderString = "Empty = built-in default"
+        recordingLLMPolishPromptField.widthAnchor.constraint(equalToConstant: 480).isActive = true
+        // ~5 visible lines so the long polish default remains editable at a glance.
+        recordingLLMPolishPromptField.heightAnchor.constraint(equalToConstant: 96).isActive = true
+        if let promptField = section.fields.first(where: { $0.key == "llm_polish_prompt" }) {
+            sectionBindings.append(FieldBinding(
+                descriptor: promptField,
+                get: { [unowned self] in self.recordingLLMPolishPromptField.stringValue },
+                set: { [unowned self] in self.recordingLLMPolishPromptField.stringValue = $0 }
+            ))
+        }
+        let llmPolishPromptRow = row(label: "Polish Prompt", key: "llm_polish_prompt", control: recordingLLMPolishPromptField, comment: nil)
         let arabicNumeralsRow = row(
             label: "Arabic Numerals",
             key: "arabic_numerals",
@@ -1886,6 +1967,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         )
         recordingLiveTypingRow = liveTypingRow
         recordingLLMPolishRow = llmPolishRow
+        recordingLLMPolishProfileRow = llmPolishProfileRow
+        recordingLLMPolishPromptRow = llmPolishPromptRow
         recordingArabicNumeralsRow = arabicNumeralsRow
         recordingTaiwanPhrasesRow = taiwanPhrasesRow
 
@@ -1971,12 +2054,20 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
                 row(label: "ASR Engine", key: "asr_backend", control: recordingBackendPopup, comment: nil),
                 detailRow,
                 row(label: "Language", key: "chinese_mode", control: recordingLanguagePopup, comment: nil),
+                row(
+                    label: "Strip Language Tags",
+                    key: "strip_language_tags",
+                    control: recordingStripLanguageTagsCheckbox,
+                    comment: nil
+                ),
                 liveTypingRow,
                 llmPolishRow,
+                llmPolishProfileRow,
+                llmPolishPromptRow,
                 arabicNumeralsRow,
                 taiwanPhrasesRow
             ],
-            skipKeys: ["hotkey_trigger", "play_cues", "voice_audio_dir"],
+            skipKeys: ["hotkey_trigger", "play_cues", "llm_polish_prompt", "llm_polish_profile", "voice_audio_dir"],
             // Title already shows `[localapp.recording]` via leaf.configPath.
             showSectionHeader: false
         )
@@ -1988,7 +2079,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     private func loadRecordingPrefs(config: AirTypeConfig, remoteActive: Bool) {
         selectPopup(recordingBackendPopup, represented: remoteActive ? "remote" : "local")
         selectPopup(recordingLocalModelPopup, represented: ASREngineKind.storedLocalModel.rawValue)
-        refreshRecordingRemoteEndpoints(selected: RemoteWhisperSettings.selectedEndpoint)
+        refreshRecordingRemoteEndpoints(selected: RemoteWhisperSettings.selectedProfile.name)
         let language = config.chineseMode.mode
         if recordingLanguagePopup.itemArray.contains(where: { ($0.representedObject as? String) == language }) {
             selectPopup(recordingLanguagePopup, represented: language)
@@ -1996,7 +2087,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
             selectPopup(recordingLanguagePopup, represented: "zh-tw")
         }
         recordingLiveTypingCheckbox.state = (UserDefaults.standard.object(forKey: Self.liveTypingDefaultsKey) as? Bool ?? true) ? .on : .off
+        recordingStripLanguageTagsCheckbox.state = TranscriptFormatter.stripLanguageTagsEnabled ? .on : .off
+        recordingStripLanguageTagsCheckbox.toolTip = "Remove prompt leaks such as “language Chinese” and <asr_text>."
         recordingLLMPolishCheckbox.state = TextPolisher.enabled ? .on : .off
+        refreshRecordingLLMProfiles(selected: config.recording.llmPolishProfile)
         recordingArabicNumeralsCheckbox.state = ChineseNumerals.enabled ? .on : .off
         let openCCAvailable = TranscriptFormatter.openCCPath != nil
         recordingTaiwanPhrasesCheckbox.isEnabled = openCCAvailable
@@ -2007,24 +2101,96 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
 
     private func refreshRecordingRemoteEndpoints(selected: String) {
         recordingRemoteEndpointPopup.removeAllItems()
-        let endpoints = RemoteWhisperSettings.endpoints
-        if endpoints.isEmpty {
+        let profiles = RemoteWhisperSettings.menuProfiles
+        if profiles.isEmpty {
             let empty = NSMenuItem(title: "No Server Configured", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             recordingRemoteEndpointPopup.menu?.addItem(empty)
             recordingRemoteEndpointNote.stringValue = "Add an endpoint under Endpoint Profiles ▸ ASR Endpoints."
         } else {
-            for endpoint in endpoints {
-                recordingRemoteEndpointPopup.addItem(withTitle: endpoint)
-                recordingRemoteEndpointPopup.lastItem?.representedObject = endpoint
+            for profile in profiles {
+                recordingRemoteEndpointPopup.addItem(withTitle: RemoteWhisperSettings.title(for: profile))
+                recordingRemoteEndpointPopup.lastItem?.representedObject = profile.name
             }
             if !selected.isEmpty {
                 selectPopup(recordingRemoteEndpointPopup, represented: selected)
-            } else if let first = endpoints.first {
-                selectPopup(recordingRemoteEndpointPopup, represented: first)
+            } else if let first = profiles.first {
+                selectPopup(recordingRemoteEndpointPopup, represented: first.name)
             }
             recordingRemoteEndpointNote.stringValue = ""
         }
+    }
+
+    /// Names currently listed under Endpoint Profiles ▸ LLM Endpoints, including unsaved edits to the selected profile.
+    private func llmPolishProfileChoices() -> [LLMServerConfig] {
+        let committed = llmSession.committed().profiles
+        if !committed.isEmpty { return committed }
+        return baseConfig.webui.llmServers.isEmpty ? [baseConfig.webui.llm] : baseConfig.webui.llmServers
+    }
+
+    private func currentLLMPolishProfileSelection() -> String {
+        if let name = recordingLLMPolishProfilePopup.selectedItem?.representedObject as? String {
+            return name
+        }
+        return baseConfig.recording.llmPolishProfile
+    }
+
+    private func refreshRecordingLLMProfiles(selected: String) {
+        let profiles = llmPolishProfileChoices()
+        let keep = selected.trimmingCharacters(in: .whitespacesAndNewlines)
+        recordingLLMPolishProfilePopup.removeAllItems()
+        if profiles.isEmpty {
+            let empty = NSMenuItem(title: "No LLM Profile", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            recordingLLMPolishProfilePopup.menu?.addItem(empty)
+        } else {
+            for profile in profiles {
+                let name = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                recordingLLMPolishProfilePopup.addItem(withTitle: name.isEmpty ? profile.endpoint : name)
+                recordingLLMPolishProfilePopup.lastItem?.representedObject = name
+            }
+            if !keep.isEmpty, profiles.contains(where: { $0.name == keep }) {
+                selectPopup(recordingLLMPolishProfilePopup, represented: keep)
+            } else if !keep.isEmpty {
+                recordingLLMPolishProfilePopup.addItem(withTitle: "\(keep) (missing)")
+                recordingLLMPolishProfilePopup.lastItem?.representedObject = keep
+                selectPopup(recordingLLMPolishProfilePopup, represented: keep)
+            } else if let match = profiles.first(where: {
+                $0.selectedModel.trimmingCharacters(in: .whitespacesAndNewlines) == TextPolisher.defaultModel
+            }) {
+                // Nothing saved yet. Highlight the profile that already serves the built-in polish model.
+                selectPopup(recordingLLMPolishProfilePopup, represented: match.name)
+            } else {
+                let choose = NSMenuItem(title: "Choose a profile", action: nil, keyEquivalent: "")
+                choose.representedObject = ""
+                recordingLLMPolishProfilePopup.menu?.insertItem(choose, at: 0)
+                selectPopup(recordingLLMPolishProfilePopup, represented: "")
+            }
+        }
+        updateRecordingLLMPolishProfileNote()
+    }
+
+    @objc private func recordingLLMPolishProfileChanged() {
+        updateRecordingLLMPolishProfileNote()
+    }
+
+    private func updateRecordingLLMPolishProfileNote() {
+        let name = (recordingLLMPolishProfilePopup.selectedItem?.representedObject as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let profile = llmPolishProfileChoices().first(where: { $0.name == name }) else {
+            if llmPolishProfileChoices().isEmpty {
+                recordingLLMPolishProfileNote.stringValue = "Add a profile under Endpoint Profiles ▸ LLM Endpoints."
+            } else if name.isEmpty {
+                recordingLLMPolishProfileNote.stringValue = "Choose the LLM Endpoints profile used for LLM Polish."
+            } else {
+                recordingLLMPolishProfileNote.stringValue = "Profile “\(name)” is not in LLM Endpoints. Polish uses the default LLM profile."
+            }
+            return
+        }
+        let endpoint = profile.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = profile.selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let modelLabel = model.isEmpty ? "model \(TextPolisher.defaultModel)" : model
+        recordingLLMPolishProfileNote.stringValue = [endpoint, modelLabel].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private func selectPopup(_ popup: NSPopUpButton, represented: String) {
@@ -2054,6 +2220,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         recordingLiveTypingRow?.isHidden = remote
         recordingLiveTypingNote.stringValue = ""
         recordingLLMPolishRow?.isHidden = !remote
+        recordingLLMPolishProfileRow?.isHidden = !remote
+        recordingLLMPolishPromptRow?.isHidden = !remote
         recordingArabicNumeralsRow?.isHidden = !remote
         recordingTaiwanPhrasesRow?.isHidden = !remote
     }
@@ -2063,15 +2231,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         remoteEngineActive = remote
         ASREngineKind.persistBackend(remote: remote)
         if remote {
-            if let endpoint = recordingRemoteEndpointPopup.selectedItem?.representedObject as? String,
-               !endpoint.isEmpty {
-                RemoteWhisperSettings.select(endpoint)
+            if let name = recordingRemoteEndpointPopup.selectedItem?.representedObject as? String,
+               !name.isEmpty {
+                RemoteWhisperSettings.select(profile: name)
             }
         } else if let raw = recordingLocalModelPopup.selectedItem?.representedObject as? String,
                   let kind = ASREngineKind(rawValue: raw) {
             ASREngineKind.persistLocalModel(kind)
         }
         UserDefaults.standard.set(recordingLiveTypingCheckbox.state == .on, forKey: Self.liveTypingDefaultsKey)
+        UserDefaults.standard.set(recordingStripLanguageTagsCheckbox.state == .on, forKey: TranscriptFormatter.stripLanguageTagsDefaultsKey)
         UserDefaults.standard.set(recordingLLMPolishCheckbox.state == .on, forKey: TextPolisher.defaultsKey)
         UserDefaults.standard.set(recordingArabicNumeralsCheckbox.state == .on, forKey: ChineseNumerals.defaultsKey)
         if TranscriptFormatter.openCCPath != nil {
@@ -2082,6 +2251,149 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
     private func recordingLanguageMode() -> String {
         (recordingLanguagePopup.selectedItem?.representedObject as? String)
             ?? baseConfig.chineseMode.mode
+    }
+
+    // MARK: - Local ASR pane
+
+    private func buildOnDeviceASRTab() -> NSView {
+        LocalASRDownloader.shared.onChange = { [weak self] in
+            self?.refreshOnDeviceASRRows()
+        }
+        let folder = (AirTypeHome.asrModels.path as NSString).abbreviatingWithTildeInPath
+        let intro = NSTextField(wrappingLabelWithString:
+            "Download or remove local models. Choose which one to use under Voice Input ▸ Behavior. Files are stored in \(folder)."
+        )
+        intro.font = .systemFont(ofSize: 12)
+        intro.textColor = .secondaryLabelColor
+        intro.preferredMaxLayoutWidth = 620
+
+        let refresh = NSButton(title: "Refresh", target: self, action: #selector(onDeviceRefreshClicked))
+        refresh.bezelStyle = .rounded
+        refresh.widthAnchor.constraint(equalToConstant: 88).isActive = true
+        let refreshRow = hstack([intro, refresh], spacing: 8)
+        intro.widthAnchor.constraint(equalToConstant: 620).isActive = true
+
+        var rows: [NSView] = [refreshRow]
+        onDeviceRows = []
+        for (index, model) in LocalASRCatalog.models.enumerated() {
+            let name = NSTextField(labelWithString: model.title)
+            name.font = Self.fieldFont
+            name.lineBreakMode = .byTruncatingTail
+            name.widthAnchor.constraint(equalToConstant: 220).isActive = true
+
+            let status = NSTextField(labelWithString: "")
+            status.font = Self.fieldFont
+            status.textColor = .secondaryLabelColor
+            status.lineBreakMode = .byTruncatingTail
+            status.widthAnchor.constraint(equalToConstant: 220).isActive = true
+
+            let size = NSTextField(labelWithString: model.approximateSize)
+            size.font = .systemFont(ofSize: 12)
+            size.textColor = .secondaryLabelColor
+            size.widthAnchor.constraint(equalToConstant: 72).isActive = true
+
+            let action = NSButton(title: "Download", target: self, action: #selector(onDeviceActionClicked(_:)))
+            action.bezelStyle = .rounded
+            action.tag = index
+            action.widthAnchor.constraint(equalToConstant: 88).isActive = true
+
+            rows.append(hstack([name, status, size, action], spacing: 8))
+            onDeviceRows.append(OnDeviceASRRow(model: model, status: status, action: action))
+        }
+        refreshOnDeviceASRRows()
+        return scrollWrap(rows)
+    }
+
+    /// Re-reads each model directory. Missing files show as Not downloaded.
+    private func refreshOnDeviceASRRows() {
+        let downloader = LocalASRDownloader.shared
+        let busy = downloader.activeKind != nil
+        for row in onDeviceRows {
+            let model = row.model
+            let downloading = downloader.activeKind == model.kind
+            let installed = model.isInstalled
+            let pathTip = model.statusDirectory.path
+
+            if downloading {
+                row.status.stringValue = downloader.statusText.isEmpty ? "Downloading…" : downloader.statusText
+                row.status.toolTip = pathTip
+                row.action.title = "Cancel"
+                row.action.isEnabled = true
+                row.action.toolTip = nil
+                continue
+            }
+            if let notice = onDeviceNotice[model.kind] {
+                row.status.stringValue = notice
+                row.status.toolTip = notice
+            } else if let failure = downloader.failure(for: model.kind), !installed {
+                row.status.stringValue = "Failed: \(failure)"
+                row.status.toolTip = failure
+            } else if installed {
+                row.status.stringValue = "Downloaded"
+                row.status.toolTip = pathTip
+            } else {
+                row.status.stringValue = "Not downloaded"
+                row.status.toolTip = model.isOverridden ? "\(model.envKey) → \(pathTip)" : pathTip
+            }
+
+            if installed {
+                row.action.title = "Remove"
+                row.action.isEnabled = !busy && !model.isOverridden
+                row.action.toolTip = model.isOverridden
+                    ? "\(model.envKey) is set. This pane will not delete that directory."
+                    : nil
+            } else {
+                row.action.title = "Download"
+                row.action.isEnabled = !busy && !model.isOverridden
+                row.action.toolTip = model.isOverridden
+                    ? "\(model.envKey) is set. Put the model in that directory yourself."
+                    : nil
+            }
+        }
+    }
+
+    @objc private func onDeviceRefreshClicked() {
+        onDeviceNotice.removeAll()
+        refreshOnDeviceASRRows()
+    }
+
+    @objc private func onDeviceActionClicked(_ sender: NSButton) {
+        guard LocalASRCatalog.models.indices.contains(sender.tag) else { return }
+        let model = LocalASRCatalog.models[sender.tag]
+        onDeviceNotice[model.kind] = nil
+        if LocalASRDownloader.shared.activeKind == model.kind {
+            LocalASRDownloader.shared.cancel()
+            return
+        }
+        if model.isInstalled {
+            removeOnDeviceModel(model)
+            return
+        }
+        LocalASRDownloader.shared.download(model)
+    }
+
+    private func removeOnDeviceModel(_ model: LocalASRModel) {
+        guard model.isInstalled, !model.isOverridden else { return }
+        guard LocalASRDownloader.shared.activeKind == nil else { return }
+        let alert = NSAlert()
+        alert.messageText = "Remove \(model.title)?"
+        alert.informativeText = "Deletes the downloaded files for this model."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        guard let window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            Task { @MainActor in
+                guard let self else { return }
+                do {
+                    try LocalASRDownloader.shared.remove(model)
+                } catch {
+                    self.onDeviceNotice[model.kind] = error.localizedDescription
+                }
+                self.refreshOnDeviceASRRows()
+            }
+        }
     }
 
     // MARK: - Microphone pane (live device list)
@@ -2327,8 +2639,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         onSave?(config, remoteEngineActive)
         reloadSessions(from: config, keepSelection: true)
         // Endpoint list may change after ASR profile Apply; keep Behavior in sync.
-        refreshRecordingRemoteEndpoints(selected: RemoteWhisperSettings.selectedEndpoint)
+        refreshRecordingRemoteEndpoints(selected: RemoteWhisperSettings.selectedProfile.name)
+        refreshRecordingLLMProfiles(selected: config.recording.llmPolishProfile)
         updateRecordingBackendUI()
+        refreshOnDeviceASRRows()
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         footerStatus.stringValue = "Saved \(formatter.string(from: Date()))"

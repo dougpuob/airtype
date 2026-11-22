@@ -98,8 +98,10 @@ final class BackendClient {
         var fields = ["response_format": "json"]
         if !target.model.isEmpty { fields["model"] = target.model }
         if let language { fields["language"] = language }
+        let prompt = target.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !prompt.isEmpty { fields["prompt"] = prompt }
         request.httpBody = multipartBody(boundary: boundary, fields: fields, wavData: wavData)
-        Logger.shared.log("ASR request started (openai): url=\(url.absoluteString), model=\(target.model), wav_bytes=\(wavData.count), language=\(language ?? "auto")")
+        Logger.shared.log("ASR request started (openai): url=\(url.absoluteString), model=\(target.model), wav_bytes=\(wavData.count), language=\(language ?? "auto"), prompt_chars=\(prompt.count)")
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {

@@ -15,9 +15,7 @@ final class ParaformerStreamingEngine: ASREngine, @unchecked Sendable {
         if let override = ProcessInfo.processInfo.environment["AIRTYPE_PARAFORMER_MODEL_DIR"], !override.isEmpty {
             return URL(fileURLWithPath: override)
         }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".airtype/models/asr")
-            .appendingPathComponent(defaultModelName)
+        return AirTypeHome.asrModels.appendingPathComponent(defaultModelName)
     }
 
     private let queue = DispatchQueue(label: "airtype.paraformer.engine", qos: .userInitiated)
