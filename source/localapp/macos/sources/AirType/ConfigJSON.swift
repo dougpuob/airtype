@@ -65,6 +65,7 @@ enum ConfigJSON {
             }
         }
         struct Recording: Codable {
+            var hotkeyEnabled: Bool?
             var hotkeyPressCount: String?
             var hotkeyTrigger: String?
             var playCues: Bool?
@@ -72,6 +73,7 @@ enum ConfigJSON {
             var llmPolishProfile: String?
             var voiceAudioDir: String?
             enum CodingKeys: String, CodingKey {
+                case hotkeyEnabled = "hotkey_enabled"
                 case hotkeyPressCount = "hotkey_press_count"
                 case hotkeyTrigger = "hotkey_trigger"
                 case playCues = "play_cues"
@@ -318,6 +320,7 @@ enum ConfigJSON {
                 moveLock: nil
             ),
             recording: .init(
+                hotkeyEnabled: config.recording.hotkeyEnabled,
                 hotkeyPressCount: config.recording.hotkeyPressCount,
                 hotkeyTrigger: config.recording.hotkeyTrigger,
                 playCues: config.recording.playCues,
@@ -434,6 +437,7 @@ enum ConfigJSON {
                 // move_lock is legacy and ignored; pill is always movable.
             }
             if let r = la.recording {
+                if let v = r.hotkeyEnabled { config.recording.hotkeyEnabled = v }
                 if let v = r.hotkeyPressCount { config.recording.hotkeyPressCount = v }
                 if let v = r.hotkeyTrigger {
                     // Keep in sync with ConfigStore.normalizeHotkeyTrigger / HotkeyKey.triggers(fromConfig:).

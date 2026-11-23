@@ -184,6 +184,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
             }
         )
         hotkeyMonitor?.start()
+        hotkeyMonitor?.setEnabled(recording.hotkeyEnabled)
     }
 
     private static func hotkeyPressMode(from value: String) -> HotkeyGestureTracker.Mode {
@@ -194,6 +195,7 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         let recording = configStore.config.recording
         hotkeyMonitor?.setPressCount(Self.hotkeyPressMode(from: recording.hotkeyPressCount))
         hotkeyMonitor?.setTriggers(HotkeyKey.triggers(fromConfig: recording.hotkeyTrigger))
+        hotkeyMonitor?.setEnabled(recording.hotkeyEnabled)
     }
 
     private func migrateLegacyMicrophoneSelection() {
@@ -898,6 +900,12 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         menu.addItem(microphoneItem)
         menu.addItem(.separator())
 
+        let hotkeyItem = NSMenuItem(title: "Hotkey", action: #selector(toggleHotkey(_:)), keyEquivalent: "")
+        hotkeyItem.target = self
+        hotkeyItem.state = configStore.config.recording.hotkeyEnabled ? .on : .off
+        hotkeyItem.toolTip = "Turn the recording hotkey on or off"
+        menu.addItem(hotkeyItem)
+
         // Remote-only prefs (LLM Polish / Arabic Numerals / Taiwan Phrases) live in Settings only.
         if !isRemote {
             let liveItem = NSMenuItem(title: "Live Typing", action: #selector(toggleLiveTyping), keyEquivalent: "")
@@ -1086,6 +1094,14 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         rebuildMenu()
     }
 
+    @objc private func toggleHotkey(_ sender: NSMenuItem) {
+        let enabled = sender.state != .on
+        configStore.updateHotkeyEnabled(enabled)
+        settingsWindow?.adoptHotkeyEnabled(enabled)
+        applyHotkeySettingsFromConfig()
+        rebuildMenu()
+    }
+
     @objc private func toggleLiveTyping() {
         liveTypingEnabled.toggle()
         rebuildMenu()
@@ -1115,6 +1131,8 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         do {
             try configStore.load()
             migrateLegacyMicrophoneSelection()
+            applyHotkeySettingsFromConfig()
+            settingsWindow?.adoptHotkeyEnabled(configStore.config.recording.hotkeyEnabled)
             applyMicrophoneRuntimeSettings(reason: "reload_config")
             floatingPanel?.applyConfig()
             configureRemoteSettings()
@@ -1183,7 +1201,8 @@ final class AirTypeCoordinator: NSObject, ObservableObject, NSMenuDelegate {
         floatingPanel?.applyConfig()
 
         if previousRecording.hotkeyPressCount != newConfig.recording.hotkeyPressCount
-            || previousRecording.hotkeyTrigger != newConfig.recording.hotkeyTrigger {
+            || previousRecording.hotkeyTrigger != newConfig.recording.hotkeyTrigger
+            || previousRecording.hotkeyEnabled != newConfig.recording.hotkeyEnabled {
             applyHotkeySettingsFromConfig()
         }
         if previousMic != newConfig.microphone {

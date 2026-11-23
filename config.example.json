@@ -17,6 +17,7 @@
       "position_y_ratio": 0.62
     },
     "recording": {
+      "hotkey_enabled": true,
       "hotkey_press_count": "single",
       "hotkey_trigger": "auto",
       "play_cues": true

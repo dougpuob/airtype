@@ -100,6 +100,8 @@ struct FloatingDialogConfig {
 
 /// [localapp.recording]: hotkey gesture + optional start/end cues.
 struct RecordingConfig {
+    /// When false, the menu-bar hotkey does not start or stop voice input. Escape can still cancel a recording already in progress.
+    var hotkeyEnabled = true
     /// "single" (default) or "double" — how many exclusive Right Ctrl/Option presses start/stop.
     var hotkeyPressCount = "single"
     /// Which physical key(s) fire the gesture: right_ctrl / right_option / right_alt / right_command / auto.
@@ -294,7 +296,8 @@ final class ConfigStore: ObservableObject {
             + "floating_dialog=(x=\(config.floatingDialog.positionXRatio), y=\(config.floatingDialog.positionYRatio))"
         )
         Logger.shared.log(
-            "Config localapp.recording: hotkey_press_count=\(config.recording.hotkeyPressCount), "
+            "Config localapp.recording: hotkey_enabled=\(config.recording.hotkeyEnabled), "
+            + "hotkey_press_count=\(config.recording.hotkeyPressCount), "
             + "hotkey_trigger=\(config.recording.hotkeyTrigger), "
             + "play_cues=\(config.recording.playCues), "
             + "llm_polish_profile=\(config.recording.llmPolishProfile.isEmpty ? "(default)" : config.recording.llmPolishProfile), "
@@ -360,6 +363,12 @@ final class ConfigStore: ObservableObject {
     static func apply(section: String, key: String, value: String, to config: inout AirTypeConfig) {
         guard let field = schema.first(where: { $0.name == section })?.fields.first(where: { $0.key == key }) else { return }
         field.apply(&config, value.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func updateHotkeyEnabled(_ enabled: Bool) {
+        config.recording.hotkeyEnabled = enabled
+        save()
+        Logger.shared.log("Config localapp.recording: hotkey_enabled=\(enabled)")
     }
 
     func updateChineseMode(_ mode: String) {
@@ -581,6 +590,10 @@ final class ConfigStore: ObservableObject {
             group: "Local App Settings",
             name: "localapp.recording",
             fields: [
+                boolField("localapp.recording", "hotkey_enabled",
+                          comment: "When false, the menu-bar Hotkey item is off and the hotkey does not start or stop voice input.",
+                          apply: { $0.recording.hotkeyEnabled = parseBool($1, defaultValue: true) },
+                          render: { $0.recording.hotkeyEnabled ? "true" : "false" }),
                 stringField("localapp.recording", "hotkey_press_count",
                             comment: #"Hotkey presses to start/stop. Options: "single", "double". Default single."#,
                             options: ["single", "double"],

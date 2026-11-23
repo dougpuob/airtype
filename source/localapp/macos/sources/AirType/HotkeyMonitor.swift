@@ -103,6 +103,8 @@ final class HotkeyMonitor {
     private var escapeHandlerRef: EventHandlerRef?
     private var escapeArmed = false
     private var lastEscapeEmit: TimeInterval = 0
+    /// When false, trigger keys are ignored. Escape still cancels a recording already in progress.
+    private var enabled = true
 
     init(
         pressCount: HotkeyGestureTracker.Mode,
@@ -122,6 +124,25 @@ final class HotkeyMonitor {
         tracker.resetTransientState()
         stateLock.unlock()
         Logger.shared.log("Hotkey press count mode=\(mode.rawValue)")
+    }
+
+    func setEnabled(_ enabled: Bool) {
+        stateLock.lock()
+        let changed = self.enabled != enabled
+        self.enabled = enabled
+        if !enabled {
+            tracker.resetTransientState()
+        }
+        stateLock.unlock()
+        if changed {
+            Logger.shared.log("Hotkey enabled=\(enabled)")
+        }
+    }
+
+    private func listeningEnabled() -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return enabled
     }
 
     func setTriggers(_ triggers: Set<HotkeyKey>) {
@@ -200,6 +221,7 @@ final class HotkeyMonitor {
             handleEscapePress(source: source)
             return
         }
+        guard listeningEnabled() else { return }
         guard event.type == .flagsChanged else { return }
         let keycode = Int64(event.keyCode)
         let flags = event.modifierFlags
@@ -283,6 +305,7 @@ final class HotkeyMonitor {
             return
         }
 
+        guard listeningEnabled() else { return }
         guard type == .flagsChanged else { return }
         let keycode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
@@ -311,6 +334,7 @@ final class HotkeyMonitor {
     }
 
     private func handleEdge(_ key: HotkeyKey, isDown: Bool, hasExtra: Bool, source: String) {
+        guard listeningEnabled() else { return }
         let now = Date().timeIntervalSinceReferenceDate
         Logger.shared.log(
             "\(key.displayName) \(isDown ? "down" : "up") detected by \(source)"

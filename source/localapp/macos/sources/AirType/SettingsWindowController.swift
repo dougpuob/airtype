@@ -214,6 +214,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
         window.makeKeyAndOrderFront(nil)
     }
 
+    /// Menu-bar Hotkey toggle writes config.json directly. Keep the open settings snapshot in step so Save does not restore the previous value.
+    func adoptHotkeyEnabled(_ enabled: Bool) {
+        baseConfig.recording.hotkeyEnabled = enabled
+    }
+
     private func load(config: AirTypeConfig, remoteActive: Bool) {
         baseConfig = config
         for binding in sectionBindings {
@@ -2067,7 +2072,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSOutlineViewD
                 arabicNumeralsRow,
                 taiwanPhrasesRow
             ],
-            skipKeys: ["hotkey_trigger", "play_cues", "llm_polish_prompt", "llm_polish_profile", "voice_audio_dir"],
+            skipKeys: ["hotkey_enabled", "hotkey_trigger", "play_cues", "llm_polish_prompt", "llm_polish_profile", "voice_audio_dir"],
             // Title already shows `[localapp.recording]` via leaf.configPath.
             showSectionHeader: false
         )
